@@ -1,0 +1,545 @@
+{
+  "version": 1,
+  "projectId": "project-c84036f4f6d947c3",
+  "revision": 63,
+  "updatedAt": "2026-08-03T07:10:12.374Z",
+  "modules": [
+    {
+      "id": "domain-runtime",
+      "name": "Canonical Domain and Durable Runtime",
+      "evidence": [
+        "docs/ARCHITECTURE.md",
+        "tests/integration"
+      ]
+    },
+    {
+      "id": "project-console",
+      "name": "Project Console",
+      "evidence": [
+        "web/src/app/components/ProjectConsole.tsx",
+        "web:production-build",
+        "browser:20-event-live-projection"
+      ]
+    },
+    {
+      "id": "deepagents-core",
+      "name": "Aidison-owned Deep Agents Core",
+      "evidence": [
+        "UPSTREAM_MAP.md",
+        "packages/deepagents/.venv: 2398 passed, 122 skipped, 4 xfailed",
+        "packages/deepagents filesystem: 169 passed"
+      ]
+    },
+    {
+      "id": "operational-recovery",
+      "name": "Operational Backup and Recovery",
+      "path": "src/aidison/operations",
+      "kind": "tooling",
+      "responsibility": "Read-only Artifact integrity plus paired PostgreSQL/Artifact backup and isolated restore.",
+      "technologies": [
+        "PowerShell",
+        "Docker Compose",
+        "PostgreSQL"
+      ],
+      "evidence": [
+        "src/aidison/operations/artifact_integrity.py",
+        "ops/backup.ps1",
+        "ops/restore.ps1"
+      ]
+    }
+  ],
+  "workItems": [
+    {
+      "id": "governance-blueprint-revision",
+      "title": "Reconcile multi-Agent, memory and collaboration governance",
+      "description": "durable delegation, seven-layer memory, model routing, Skill availability, fact sources and ownership are finalized.",
+      "status": "done",
+      "priority": "critical",
+      "progress": 100,
+      "moduleId": "architecture",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "Phase gates V-019..V-031",
+        "Job has waiting_children",
+        "Skill no unavailable stale names",
+        "ADR and Mai consistent"
+      ],
+      "evidence": [
+        "docs/adr/0001-single-runtime-durable-agent-delegation.md",
+        "docs/adr/0002-seven-layer-governed-memory.md",
+        "docs/status/team.json",
+        "final-review:P0=0"
+      ]
+    },
+    {
+      "id": "windows-container-environment",
+      "title": "Windows Docker Desktop environment",
+      "description": "Docker Desktop Linux daemon and Compose are running; Aidison postgres/api/worker/web are healthy and migration exited 0.",
+      "status": "done",
+      "priority": "critical",
+      "progress": 100,
+      "moduleId": "infrastructure",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "docker client/server healthy",
+        "compose healthy",
+        "all Aidison services start"
+      ],
+      "evidence": [
+        "compose.yaml",
+        "docker compose ps",
+        "docs/STATUS.md"
+      ]
+    },
+    {
+      "id": "aidison-minimal-closed-loop",
+      "title": "Aidison minimal closed loop",
+      "description": "四旋翼 Pilot 的需求、研究、证据、决策、方案与反馈闭环。",
+      "status": "in_progress",
+      "priority": "critical",
+      "progress": 97,
+      "phaseId": "s0",
+      "moduleId": "canonical-domain-runtime",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "Bailian + Tavily ResearchWorker 到 Decision 的可重复真实成功路径；浏览器展示；可恢复状态"
+      ],
+      "evidence": [
+        "75 passed 2 deselected",
+        "one live business closure observed",
+        "Docker API and worker healthy"
+      ]
+    },
+    {
+      "id": "crash-replay-hardening",
+      "title": "Receipt-aware crash replay hardening",
+      "description": "Reclaim reuses committed JoinReceipt and deterministically replays the canonical Domain command; open waves are cancelled before retry.",
+      "status": "done",
+      "priority": "critical",
+      "progress": 100,
+      "moduleId": "canonical-domain-runtime",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "Four crash windows converge without duplicate committed JoinReceipt or DecisionRequest; stale generation cannot complete root."
+      ],
+      "evidence": [
+        "tests/integration/test_research_worker.py",
+        "tests/integration/test_postgres_runtime.py"
+      ]
+    },
+    {
+      "id": "deepagents-windows-compat",
+      "title": "Deep Agents Windows compatibility",
+      "description": "Windows path separator, Unicode, ripgrep CRLF/UTF-8 and zero-timeout regressions are fixed; media failure was an incorrect-environment false positive.",
+      "status": "done",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "deepagents-core-adoption",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "packages/deepagents complete unit_tests suite has zero failures on the target Windows environment."
+      ],
+      "evidence": [
+        "packages/deepagents/.venv: 2398 passed, 122 skipped, 4 xfailed",
+        "packages/deepagents filesystem: 169 passed",
+        "modified backend: Ruff and Ty passed"
+      ]
+    },
+    {
+      "id": "agent-profile-budget-ledger",
+      "title": "Persistent AgentProfile and durable budget ledger",
+      "description": "Immutable profile revisions, frozen root bindings and PostgreSQL token/tool operation accounting are implemented and verified.",
+      "status": "done",
+      "priority": "critical",
+      "progress": 100,
+      "moduleId": "canonical-domain-runtime",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "Immutable profile revisions and active-pointer freezing; concurrent and replayed operations cannot overspend; stale claims cannot charge."
+      ],
+      "evidence": [
+        "docs/specs/0002-agent-profile-budget-ledger.md",
+        "tests/integration/test_profile_budget_ledger.py",
+        "tests/integration/test_postgres_runtime.py",
+        "tests/integration/test_research_worker.py",
+        "57 non-live tests passed",
+        "Alembic 9f6a3c1d8e42 no drift"
+      ]
+    },
+    {
+      "id": "structured-solution-revision-closure",
+      "title": "Server-owned structured solution and revision closure",
+      "description": "Server generates SolutionProposal, ImpactAnalysis and PatchSet; DecisionOption binds candidates/evidence; unaffected module snapshots are reused.",
+      "status": "done",
+      "priority": "critical",
+      "progress": 100,
+      "moduleId": "canonical-domain-runtime",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "Decision options bind candidates and evidence; server freezes SolutionVersion; Observation produces deterministic impact closure and approved PatchSet; unaffected modules are reused in v2."
+      ],
+      "evidence": [
+        "docs/specs/0003-structured-solution-revision-closure.md",
+        "migration 9f6a3c1d8e42 applied",
+        "57 tests passed",
+        "strict rejection matrix passed",
+        "mypy 35 files passed",
+        "ruff passed"
+      ]
+    },
+    {
+      "id": "operational-backup-restore",
+      "title": "Paired PostgreSQL and Artifact backup/restore",
+      "description": "Write paths pause before a read-only integrity gate; backup creates a custom dump and SHA-256 Artifact manifest; restore is limited to a new Compose project.",
+      "status": "done",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "operational-recovery",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "Corrupt runtime source fails closed without a backup",
+        "Clean source restores to an isolated project with matching revision and bytes",
+        "Source and existing targets cannot be overwritten"
+      ],
+      "evidence": [
+        "ops/backup.ps1",
+        "ops/restore.ps1",
+        "tests/unit/test_artifact_integrity.py",
+        "aidison-restore-verify:55434",
+        "56 non-live tests passed"
+      ]
+    },
+    {
+      "id": "tavily-remote-mcp",
+      "title": "Tavily Remote MCP 搜索闭环",
+      "description": "官方 Remote MCP 薄适配、有界结果映射、受控 HTTP 取证与 Artifact/EvidenceBinding 闭环。",
+      "status": "done",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "research-agent-tools",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "只调用 tavily_search；官方 endpoint allowlist；真实证据页 hash 绑定；预算事件闭环"
+      ],
+      "evidence": [
+        "src/aidison/tools/web_search.py",
+        "tests/unit/test_controlled_web_search.py",
+        "tests/integration/test_research_worker.py",
+        "61 passed 1 deselected"
+      ]
+    },
+    {
+      "id": "deepagents-harness-profile-migration",
+      "title": "Deep Agents 官方 HarnessProfile 迁移",
+      "description": "三个 Aidison Agent 已消除 vendor-only 构造参数，使用官方 profile 禁用原生 subagent 和非 allowlist 工具。",
+      "status": "done",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "research-agent-tools",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "官方 HarnessProfile；原生 subagent fail closed；项目回归通过"
+      ],
+      "evidence": [
+        "17 focused tests passed",
+        "mypy 35 files passed",
+        "75 non-live passed"
+      ]
+    },
+    {
+      "id": "github-readonly-mcp",
+      "title": "GitHub 官方只读 MCP",
+      "description": "按 spec 0005 通过官方 MCP Server 薄适配器接入 search_repositories、search_code、get_file_contents，并保留 Aidison 安全/预算/Artifact/Evidence 边界。",
+      "status": "in_progress",
+      "priority": "high",
+      "progress": 20,
+      "moduleId": "research-agent-tools",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "缺 Key fail closed",
+        "精确三工具 allowlist",
+        "最小子进程环境",
+        "参数与 256 KiB 上限",
+        "unit/fake integration 通过"
+      ],
+      "evidence": [
+        "docs/specs/0005-github-readonly-mcp.md",
+        "docs/status/team.json"
+      ]
+    },
+    {
+      "id": "research-worker-error-taxonomy",
+      "title": "ResearchWorker 安全错误分类",
+      "description": "主控接管 GLM 连续 systemError 后的实现，在不增加 live 预算或泄露异常细节的前提下收敛持久化错误代码。",
+      "status": "in_progress",
+      "priority": "high",
+      "progress": 15,
+      "moduleId": "research-agent-tools",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "固定分类表",
+        "错误消息不含原异常或秘密",
+        "fake/unit/integration 回归通过",
+        "保持 replay 与预算语义"
+      ],
+      "evidence": [
+        "src/aidison/application/research.py",
+        "tests/integration/test_research_worker.py",
+        "docs/status/team.json"
+      ]
+    },
+    {
+      "id": "live-closure-stability-audit",
+      "title": "真实闭环稳定性审计",
+      "description": "只读定位 Bailian、Tavily MCP、GitHub MCP 四旋翼闭环重复运行不稳定的根因，不增加调用预算。",
+      "status": "in_progress",
+      "priority": "high",
+      "progress": 5,
+      "moduleId": "research-agent-tools",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "给出证据、反证、未知项、最小修复清单和确定性验证矩阵"
+      ],
+      "evidence": [
+        "docs/status/team.json",
+        "tests/live/test_research_worker_live.py"
+      ]
+    },
+    {
+      "id": "project-console-v0-audit",
+      "title": "前端交互控制台 V0 审计",
+      "description": "只读确定面试展示最值得补的 1 至 2 个交互亮点及最小后端契约。",
+      "status": "in_progress",
+      "priority": "high",
+      "progress": 5,
+      "moduleId": "project-console",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "区分已有和缺失能力并给出 P0/P1、验收场景及最小线框"
+      ],
+      "evidence": [
+        "docs/status/team.json",
+        "web/src/app/components/ProjectConsole.tsx"
+      ]
+    },
+    {
+      "id": "deepagents-vendor-exit-audit",
+      "title": "Deep Agents vendor 退出门禁",
+      "description": "只读核验真实依赖、Windows 差异、官方 HarnessProfile 迁移与删除 vendor 的回归门。",
+      "status": "in_progress",
+      "priority": "medium",
+      "progress": 5,
+      "moduleId": "deepagents-core-adoption",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "给出依赖清单、迁移顺序、回归门与回滚点；不执行删除"
+      ],
+      "evidence": [
+        "docs/status/team.json",
+        "tests/unit/test_deepagents_harness_migration.py"
+      ]
+    },
+    {
+      "id": "runtime-data-consistency-audit",
+      "title": "运行数据一致性与测试库漂移审计",
+      "description": "只读比较历史 Artifact 缺字节和长期测试库 stale profile 的保留、隔离、修复与清理方案。",
+      "status": "in_progress",
+      "priority": "high",
+      "progress": 5,
+      "moduleId": "compose-delivery",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "分别评估运行库与测试库并给出不改数据的推荐及授权边界"
+      ],
+      "evidence": [
+        "docs/status/team.json",
+        "docs/STATUS.md",
+        "ops"
+      ]
+    },
+    {
+      "id": "qwen-long-chain-health-probe",
+      "title": "Qwen 长链健康检查",
+      "description": "只读八步链路未执行；Qwen 收到无关 UserIntakeAgent 任务并产生越界未跟踪文件。",
+      "status": "blocked",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "agent-handoffs",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "收到正确契约并完成代码追踪、聚焦测试、反证和零写入核验"
+      ],
+      "evidence": [
+        "docs/status/team.json",
+        "tests/unit/test_user_intake_agent.py"
+      ]
+    },
+    {
+      "id": "glm-long-chain-health-probe",
+      "title": "GLM 长链健康检查",
+      "description": "初始和唯一一次定向补发均为空 payload，长链任务无法开始，已中断。",
+      "status": "blocked",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "agent-handoffs",
+      "dependsOn": [],
+      "acceptanceCriteria": [
+        "收到完整契约并完成八步只读链路"
+      ],
+      "evidence": [
+        "docs/status/team.json"
+      ]
+    }
+  ],
+  "phases": [],
+  "milestones": [],
+  "decisions": [
+    {
+      "id": "D3-009",
+      "title": "Multi-Agent uses versioned Profile and durable delegation",
+      "status": "accepted",
+      "outcome": "Reuse single LangGraph and Job runtime Delegation/Join/Fencing/Cancel/Evaluator",
+      "evidence": [
+        "adr:docs/adr/0001-single-runtime-durable-agent-delegation.md",
+        "doc:research/aidison-final-preimplementation-research/MULTI_AGENT_ORCHESTRATION.md"
+      ]
+    },
+    {
+      "id": "D3-010",
+      "title": "Memory uses seven-layer Owner contract",
+      "status": "accepted",
+      "outcome": "Working/Episodic/Canonical/Evidence/Preference/Procedural/Artifact layered governance",
+      "evidence": [
+        "adr:docs/adr/0002-seven-layer-governed-memory.md",
+        "doc:research/aidison-final-preimplementation-research/MEMORY_SYSTEM.md"
+      ]
+    },
+    {
+      "id": "D3-011",
+      "title": "First real pilot is quadrotor drone",
+      "status": "accepted",
+      "evidence": [
+        "user-confirmed",
+        "CONTEXT.md",
+        "docs/STATUS.md"
+      ]
+    },
+    {
+      "id": "D3-012",
+      "title": "Qwen and GLM are full functional Writers with file ownership",
+      "status": "accepted",
+      "outcome": "Qwen-local and GLM-5-2 can implement, test and deliver modules; GPT-5.6-Sol reserved for architecture, security, migration and high-risk review.",
+      "evidence": [
+        "AGENTS.md",
+        "codex-team-workflow SKILL.md"
+      ]
+    }
+  ],
+  "risks": [
+    {
+      "id": "risk-windows-restart",
+      "title": "Windows container environment verified",
+      "status": "closed",
+      "evidence": [
+        "compose.yaml",
+        "docker compose ps",
+        "docs/STATUS.md"
+      ]
+    },
+    {
+      "id": "risk-live-search-key",
+      "title": "Live research requires a supported search key",
+      "status": "open",
+      "evidence": [
+        "docs/STATUS.md",
+        "browser:search_unavailable"
+      ]
+    },
+    {
+      "id": "risk-crash-replay",
+      "title": "Parent reclaim around downstream receipts is fully proven",
+      "status": "closed",
+      "moduleId": "canonical-domain-runtime",
+      "evidence": [
+        "tests/integration/test_research_worker.py",
+        "tests/integration/test_postgres_runtime.py"
+      ]
+    },
+    {
+      "id": "risk-deepagents-windows-regression",
+      "title": "Deep Agents Windows unit regression gate",
+      "status": "closed",
+      "moduleId": "deepagents-core-adoption",
+      "evidence": [
+        "packages/deepagents/.venv: 2398 passed, 122 skipped, 4 xfailed",
+        "packages/deepagents filesystem: 169 passed"
+      ]
+    },
+    {
+      "id": "risk-test-database-isolation",
+      "title": "Destructive integration test must not target runtime database",
+      "status": "closed",
+      "probability": "low",
+      "impact": "critical",
+      "mitigation": "Pytest rejects runtime/equal DATABASE_URL before collection; isolated localhost:55432/aidison_test used.",
+      "owner": "controller:rick",
+      "moduleId": "infrastructure",
+      "evidence": [
+        "tests/conftest.py",
+        "localhost:55432/aidison_test",
+        "56 non-live tests passed"
+      ]
+    },
+    {
+      "id": "risk-subagent-payload-compatibility",
+      "title": "Qwen/GLM child-visible task Payload is empty",
+      "status": "mitigating",
+      "probability": "high",
+      "impact": "critical",
+      "mitigation": "Pause functional Writer delegation; require a serial read-only nonce canary after runtime/CCSwitch adapter repair before any write ownership.",
+      "owner": "controller:rick",
+      "moduleId": "architecture",
+      "evidence": [
+        "task:019fc1d5-e7d9-73e0-b655-47d4e0b8bf18",
+        "AGENTS.md"
+      ]
+    },
+    {
+      "id": "risk-runtime-artifact-history",
+      "title": "Historical runtime Artifact metadata has missing bytes",
+      "status": "mitigating",
+      "probability": "high",
+      "impact": "high",
+      "mitigation": "Backup fails closed; keep immutable history unchanged until an explicit reconciliation decision.",
+      "owner": "controller:rick",
+      "moduleId": "operational-recovery",
+      "evidence": [
+        "runtime audit: 5 present rows/0 files",
+        "docs/STATUS.md",
+        "ops/backup.ps1"
+      ]
+    },
+    {
+      "id": "risk-subagent-scope-violation",
+      "title": "Subagent scope and Git integration violations",
+      "status": "mitigating",
+      "probability": "medium",
+      "impact": "critical",
+      "mitigation": "Controller-only Git integration; first-response contract echo gate; exact diff audit before accepting Writer output.",
+      "owner": "controller:rick",
+      "moduleId": "architecture",
+      "evidence": [
+        "commit b68afa3",
+        "task:019fc1b6-5c71-7c61-8b38-b071fb58b9f3",
+        "task:019fc1d5-e7d9-73e0-b655-47d4e0b8bf18",
+        "AGENTS.md"
+      ]
+    }
+  ],
+  "interfaces": [],
+  "architecture": {
+    "nodes": [],
+    "edges": []
+  },
+  "sourceDocuments": []
+}

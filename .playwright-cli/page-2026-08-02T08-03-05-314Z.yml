@@ -1,0 +1,36 @@
+- generic [active] [ref=e1]:
+  - main [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: Local engineering workspace
+      - heading "把 DIY 想法变成 可验证的工程方案" [level=1] [ref=e6]:
+        - text: 把 DIY 想法变成
+        - generic [ref=e7]: 可验证的工程方案
+      - paragraph [ref=e8]: Aidison 把需求、研究证据、候选方案、用户决策和现场反馈串成一条可审计闭环。 Agent 提建议，只有你的确认才能写入项目事实。
+      - generic [ref=e9]:
+        - button "创建项目" [ref=e10] [cursor=pointer]
+        - button "打开项目" [ref=e11] [cursor=pointer]
+    - complementary "Aidison workflow preview" [ref=e12]:
+      - generic [ref=e13]:
+        - generic [ref=e14]: PROJECT / QUAD-01
+        - generic [ref=e15]: REV 07
+      - generic [ref=e16]:
+        - generic [ref=e17]:
+          - generic [ref=e18]: "01"
+          - strong [ref=e19]: 需求冻结
+        - generic [ref=e23]:
+          - generic [ref=e24]: "02"
+          - strong [ref=e25]: 并行研究
+        - generic [ref=e29]:
+          - generic [ref=e30]: "03"
+          - strong [ref=e31]: 兼容决策
+        - generic [ref=e35]:
+          - generic [ref=e36]: "04"
+          - strong [ref=e37]: 方案版本
+        - generic [ref=e41]:
+          - generic [ref=e42]: "05"
+          - strong [ref=e43]: 反馈修订
+      - generic [ref=e47]:
+        - code [ref=e48]: PostgreSQL canonical truth
+        - generic [ref=e49]: Agent output → Proposal → Human decision
+  - region "Notifications alt+T"
+  - alert [ref=e50]

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mai Sync"
+  short_description: "同步项目扫描与详细开发进展到 Mai"
+  default_prompt: "Use $mai-sync to scan this project and keep Mai updated with detailed milestone events."

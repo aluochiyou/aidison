@@ -1,0 +1,475 @@
+﻿{
+  "schema_version": 1,
+  "updated_at": "2026-08-03T16:57:09+08:00",
+  "overall": {
+    "state": "ready",
+    "summary": "用户已暂停新增开发；当前 dirty worktree、开发前研究资料和运行环境保持不动，中文交接包已建立。最后 non-live 回归为 107 passed、2 deselected；live 重复性仍未关闭。"
+  },
+  "modules": [
+    {
+      "id": "canonical-domain-runtime",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "ready",
+      "progress": 96,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "PostgreSQL integration", "status": "passed", "evidence": "107-test non-live suite passed on a fresh disposable PostgreSQL 17 aidison_test; Alembic reached 2b7c4d8e1f03 with no drift."},
+        {"name": "crash replay matrix", "status": "passed", "evidence": "Wave-created, one-child-result, post-JoinReceipt and post-Domain-receipt reclaim tests passed; no duplicate committed join or DecisionRequest."}
+      ],
+      "dependencies": [],
+      "risks": [],
+      "next": "Preserve runtime/profile/budget invariants in downstream proposal jobs."
+    },
+    {
+      "id": "research-agent-tools",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "ready",
+      "progress": 99,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "fake closed loop", "status": "passed", "evidence": "Real PostgreSQL + Artifact ResearchWorker integration passed."},
+        {"name": "missing search key", "status": "passed", "evidence": "Browser shows search_unavailable on both durable child Attempts."},
+        {"name": "Tavily MCP dependency", "status": "passed", "evidence": "uv lock resolves langchain-mcp-adapters 0.3.1 with mcp 1.29.0 under the >=1.24,<2 compatibility bound; tavily-python was removed."},
+        {"name": "live web search", "status": "passed", "evidence": "Official Tavily Remote MCP returned a bounded PX4 source; JSON mapping passed."},
+        {"name": "live evidence artifact", "status": "passed", "evidence": "MAVSDK page produced a 212,691-byte hash-matching Artifact and EvidenceBinding with reserved/dispatched/settled budget events."},
+        {"name": "live business closure", "status": "passed", "evidence": "One bounded run reached root plus two child succeeded and passed Decision/Evidence/Candidate/Artifact/hash assertions; its pytest failure was only an over-strict ambiguous-ledger assertion."},
+        {"name": "live repeatability", "status": "failed", "evidence": "A later frozen-version repeat produced one succeeded child and one worker_error; further external calls were stopped rather than blindly retried."},
+        {"name": "safe failure taxonomy", "status": "passed", "evidence": "Fixed provider/search-contract/no-source/GitHub/budget/runtime/invalid-output/unknown codes passed 17 unit and PostgreSQL integration tests without persisting exception details."},
+        {"name": "GitHub MCP live read", "status": "passed", "evidence": "Pinned v1.8.0 official stdio server read public README.md@v1.8.0 as 103,039 bounded bytes with SHA-256 36586588...0b1cbd; no body or key was printed."}
+      ],
+      "dependencies": ["canonical-domain-runtime"],
+      "risks": ["Tavily schema and public URL availability are provider-owned; the repeatable live gate remains flaky despite bounded candidate fallback."],
+      "next": "Development paused by user; preserve evidence and do not rerun the live gate automatically."
+    },
+    {
+      "id": "tavily-mcp-backend-writer",
+      "owner": {"kind": "subagent", "id": "/root/tavily_mcp_backend"},
+      "state": "failed",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "backend delivery", "status": "failed", "evidence": "The Qwen writer returned plans twice without a code artifact; the controller implemented and verified the backend."}],
+      "dependencies": [],
+      "risks": [],
+      "next": "Closed; controller-owned implementation passed project verification."
+    },
+    {
+      "id": "tavily-mcp-test-writer",
+      "owner": {"kind": "subagent", "id": "/root/tavily_mcp_tests"},
+      "state": "canceled",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "test delivery", "status": "failed", "evidence": "Writer created an out-of-scope legacy SDK test; the controller removed only that newly created file and implemented the MCP regressions in the owned test file."}],
+      "dependencies": [],
+      "risks": [],
+      "next": "Closed; controller tests are canonical."
+    },
+    {
+      "id": "tavily-mcp-impact-review",
+      "owner": {"kind": "subagent", "id": "/root/tavily_mcp_impact"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "read-only impact review", "status": "passed", "evidence": "Reviewer identified construction, import and regression surfaces; controller reconciled the report against the integrated workspace."}],
+      "dependencies": [],
+      "risks": [],
+      "next": "Closed."
+    },
+    {
+      "id": "live-research-closed-loop-writer",
+      "owner": {"kind": "subagent", "id": "/root/live_research_closed_loop"},
+      "state": "failed",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "live test delivery", "status": "failed", "evidence": "Initial child payload was empty; one full-contract follow-up ended with a plan-only FINAL and no file or checks."}],
+      "dependencies": ["research-agent-tools"],
+      "risks": ["Subagent contract transport/closure remains unreliable despite the user removing procedural canary gates."],
+      "next": "主控接管 tests/live/test_research_worker_live.py，不再重试该 Subagent。"
+    },
+    {
+      "id": "project-console",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "ready",
+      "progress": 90,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "production build", "status": "passed", "evidence": "Next.js standalone build passed; lint has 0 errors and 4 upstream warnings."},
+        {"name": "browser vertical slice", "status": "passed", "evidence": "Create, requirements, URL restore, event replay and live runtime updates verified."},
+        {"name": "historical compatibility", "status": "passed", "evidence": "Browser rendered legacy Decision as disabled legacy-* options and legacy V1→V2 as changed/reused without a new console error."}
+      ],
+      "dependencies": ["canonical-domain-runtime", "research-agent-tools"],
+      "risks": ["The complete journey exists but the repeatable live backend gate is not stable."],
+      "next": "Render the already verified successful business state; do not present flaky repetition as deterministic."
+    },
+    {
+      "id": "compose-delivery",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "ready",
+      "progress": 96,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "docker compose", "status": "passed", "evidence": "API/Worker/Migrate share backend image 0e164e46eb19; API/Worker are healthy and migrate exited 0 at 2b7c4d8e1f03."},
+        {"name": "test database isolation", "status": "passed", "evidence": "Runtime DB guard rejected 5432 before collection; fresh 55432/aidison_test migrated to head and ran 56 tests."},
+        {"name": "backup and isolated restore", "status": "passed", "evidence": "ops backup created a custom dump plus SHA-256 Artifact manifest; aidison-restore-verify:55434 restored revision 9f6a3c1d8e42 with 1 project/1 Artifact and clean byte audit. Source/existing-target refusals passed."},
+        {"name": "runtime backup fail-closed", "status": "passed", "evidence": "Read-only audit found five present metadata rows and zero Artifact files; backup/staging were not produced and API/Worker returned healthy."}
+      ],
+      "dependencies": [],
+      "risks": ["Five historical runtime Artifact rows require an explicit audit-history reconciliation decision.", "Destructive tests must use 55432."],
+      "next": "Keep V0 retain-all semantics; decide how to reconcile the five historical missing-byte runtime rows."
+    },
+    {
+      "id": "deepagents-core-adoption",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "ready",
+      "progress": 96,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "Deep Agents Windows unit suite", "status": "passed", "evidence": "2398 passed, 122 skipped, 4 xfailed in packages/deepagents/.venv; zero failures."},
+        {"name": "Aidison constrained graph usage", "status": "passed", "evidence": "Targeted Research Agent and root project tests pass with native subagents/checkpointer/store disabled."}
+      ],
+      "dependencies": [],
+      "risks": [],
+      "next": "Keep the imported Core regression-green while product capabilities continue."
+    },
+    {
+      "id": "deepagents-windows-filesystem",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "done",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "Windows filesystem regressions", "status": "passed", "evidence": "169 targeted tests passed; modified backend passed Ruff, format check and Ty."}
+      ],
+      "dependencies": ["deepagents-core-adoption"],
+      "risks": [],
+      "next": "Closed; full Core suite also passed."
+    },
+    {
+      "id": "deepagents-windows-media",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "canceled",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "video media ordering", "status": "passed", "evidence": "Video regression and complete unit suite pass in packages/deepagents/.venv; prior failure came from the wrong environment."}
+      ],
+      "dependencies": ["deepagents-core-adoption"],
+      "risks": [],
+      "next": "No media source change required; false-positive work item closed."
+    },
+    {
+      "id": "agent-profile-budget-ledger",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "done",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "change boundary", "status": "passed", "evidence": "docs/specs/0002-agent-profile-budget-ledger.md accepted and implemented."},
+        {"name": "profile/budget integration", "status": "passed", "evidence": "Immutable revisions, active pointer freeze, concurrent caps and operation idempotency passed; replay preserves child allocation IDs, reclaim releases reserved calls and fully charges dispatched unknowns, and Worker operations settle provider token usage."},
+        {"name": "migration/runtime/UI", "status": "passed", "evidence": "Alembic 9f6a3c1d8e42 has no drift; Compose is healthy; snapshot and console expose root accounts, allocations and operations."}
+      ],
+      "dependencies": ["canonical-domain-runtime", "deepagents-core-adoption"],
+      "risks": ["Provider-side reconciliation and exact vendor bill equality remain not_checked."],
+      "next": "Closed for P0; preserve its replay and budget invariants in downstream proposal jobs."
+    },
+    {
+      "id": "profile-budget-arch-review",
+      "owner": {"kind": "subagent", "id": "/root/profile_budget_arch_review"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [
+        {"name": "architecture review", "status": "passed", "evidence": "gpt-5.6-sol read-only review delivered schema, transaction/replay invariants and test matrix."}
+      ],
+      "dependencies": ["agent-profile-budget-ledger"],
+      "risks": [],
+      "next": "Closed; implementation and project regression passed."
+    },
+    {
+      "id": "structured-solution-revision-closure",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "done",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "architecture gap review", "status": "passed", "evidence": "gpt-5.6-sol selected server-owned Decision/Solution/Observation/Impact/Patch v2 closure as the unique next interview-value milestone."},
+        {"name": "change specification", "status": "passed", "evidence": "docs/specs/0003 freezes typed proposal, basis, dependency-closure and semantic-reuse acceptance rules."},
+        {"name": "solution proposal backend", "status": "passed", "evidence": "Module graph, canonical SolutionProposal, strict proposal approval and durable solution-proposer passed."},
+        {"name": "impact proposal backend", "status": "passed", "evidence": "Typed Impact contracts, strict server-owned approval and durable worker path implemented; integration tests passed."},
+        {"name": "strict contract rejection matrix", "status": "passed", "evidence": "Unit tests cover self-dependency, missing/duplicate module selection, unknown/cross-project Candidate, uncovered needs_test, incompatible freeze and stale proposal basis."},
+        {"name": "decision option", "status": "passed", "evidence": "DecisionOption with option_id, candidate/evidence binding, legacy_unbound migration; API uses selected_option_id + basis_hash."},
+        {"name": "profile revision 3", "status": "passed", "evidence": "Migration 9f6a3c1d8e42 adds research-worker-ro@3 with evidence-bound decision options; idempotent; active pointer set to 3."}
+      ],
+      "dependencies": ["canonical-domain-runtime", "agent-profile-budget-ledger", "project-console"],
+      "risks": [],
+      "next": "Closed for P0; deferred items: auto-shopping, A2A, Langfuse/LangSmith."
+    },
+    {
+      "id": "agent-handoffs",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "ready",
+      "progress": 100,
+      "branch": null,
+      "worktree": null,
+      "last_commit": null,
+      "checks": [
+        {"name": "worker-integration-arch", "status": "passed", "evidence": "gpt-5.6-sol architecture review completed."},
+        {"name": "frontend writer handoffs", "status": "failed", "evidence": "frontend_project_console, frontend_console_writer and frontend_console_writer_v2 did not produce qualified final handoffs; controller adopted surviving files."},
+        {"name": "Writer contract delivery", "status": "failed", "evidence": "Historical tasks exposed empty child-visible payload and one GLM 429; this is retained as delivery-quality evidence, not a global pause gate."},
+        {"name": "delivery acceptance policy", "status": "passed", "evidence": "User removed nonce/canary and first-packet echo gates; controller now accepts work only through scope ownership, frozen Diff and executed checks."},
+        {"name": "out-of-scope checkpoint audit", "status": "passed", "evidence": "Task 019fc1b6-5c71-7c61-8b38-b071fb58b9f3 found b68afa3 was a process violation but a faithful checkpoint; retain without reset/revert."}
+      ],
+      "dependencies": [],
+      "risks": ["Recent Qwen writers produced one plan-only result and one out-of-scope legacy test; main-controller review remains mandatory."],
+      "next": "Use 2-3 non-overlapping Writers plus independent tests/review, with immediate controller takeover on unqualified delivery."
+    },
+    {
+      "id": "deepagents-upstream-compatibility-gate",
+      "owner": {"kind": "thread", "id": "019fc355-7d65-7483-a12b-ee07592e9d05"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "read-only upstream audit", "status": "passed", "evidence": "Verified 0d38eb2d is an ancestor of 46ee772b (ahead 18, behind 0) and libs/deepagents has zero upstream file changes; classified Aidison graph and Windows filesystem deltas."}],
+      "dependencies": ["deepagents-core-adoption"],
+      "risks": ["Vendored directory deletion remains destructive and requires a full compatibility gate plus user confirmation."],
+      "next": "Migrate M1/M2 through the official HarnessProfile path; retain vendor until Windows and project regressions pass and the user confirms deletion."
+    },
+    {
+      "id": "deepagents-harness-profile-migration",
+      "owner": {"kind": "thread", "id": "019fc361-517c-72a0-b3a6-1af9dadbb091"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "official harness migration", "status": "passed", "evidence": "Three Agent builders use HarnessProfile and GeneralPurposeSubagentProfile(enabled=False); 17 focused tests, Ruff and mypy 35 files passed."}],
+      "dependencies": ["deepagents-upstream-compatibility-gate"],
+      "risks": ["A future non-OpenAI-compatible model family requires an equivalent registered profile."],
+      "next": "Keep vendor until upstream Windows filesystem behavior passes and the user confirms deletion."
+    },
+    {
+      "id": "frontend-archived-chat-cleanup-gate",
+      "owner": {"kind": "thread", "id": "019fc355-8ba5-7c72-8074-7efd40da257e"},
+      "state": "review",
+      "progress": 85,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "static reachability", "status": "passed", "evidence": "Read-only audit identified a closed 26-file archived chat graph and a dependency-pruning candidate set while preserving current ProjectConsole/types changes."}],
+      "dependencies": ["project-console"],
+      "risks": ["Deletion and lockfile pruning have not been executed or browser-verified; the report's suggested hard reset is rejected by project policy."],
+      "next": "Controller verifies the manifest, then requests/uses explicit deletion authority before a small atomic cleanup."
+    },
+    {
+      "id": "github-readonly-mcp-contract",
+      "owner": {"kind": "thread", "id": "019fc355-98ea-7ba0-8f56-90c7850e47c2"},
+      "state": "failed",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "read-only contract research", "status": "failed", "evidence": "Initial and focused completion turns both ended with source-discovery plans and no contract artifact."}],
+      "dependencies": ["research-agent-tools"],
+      "risks": ["Runtime GitHub MCP availability and exact official tool names remain not_checked."],
+      "next": "Superseded by replacement task 019fc35f-1cb1-7563-8700-eb72bf5cc820; do not retry."
+    },
+    {
+      "id": "github-readonly-mcp-contract-replacement",
+      "owner": {"kind": "thread", "id": "019fc35f-1cb1-7563-8700-eb72bf5cc820"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "replacement read-only contract", "status": "passed", "evidence": "Frozen GitHub MCP Server v1.8.0 tag/commit/OCI digest, exact three-tool allowlist, stdio secret boundary, budget/Artifact/Evidence contract and test matrix in docs/specs/0005-github-readonly-mcp.md."}],
+      "dependencies": ["research-agent-tools"],
+      "risks": ["Official binary startup, tool annotations and live public read remain not_checked until implementation."],
+      "next": "Implement spec 0005 in controller-owned infrastructure order; do not add a GitHub REST client."
+    },
+    {
+      "id": "github-readonly-mcp-implementation",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "done",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [
+        {"name": "Qwen writer delivery", "status": "failed", "evidence": "Task 019fc383-24b9-77f1-b1d4-f8f2c75819ff ended with 27 failed tests, 13 Ruff findings and 12 mypy errors; controller replaced only its two new invalid files."},
+        {"name": "unit and fake stdio", "status": "passed", "evidence": "15 GitHub unit tests plus a real langchain-mcp-adapters fake stdio subprocess passed allowlist, annotation, budget and Artifact/hash gates."},
+        {"name": "profile and migration", "status": "passed", "evidence": "Fresh PostgreSQL migrated from zero through 2b7c4d8e1f03 with no Alembic drift; revision 4 preserves revisions 1/3."},
+        {"name": "official image", "status": "passed", "evidence": "Pinned v1.8.0 OCI digest copied into the shared backend image; initialize/tools/list contract passed as non-root."},
+        {"name": "project regression", "status": "passed", "evidence": "107 passed, 2 live deselected; Ruff passed; mypy passed for 36 source files; git diff --check passed."}
+      ],
+      "dependencies": ["github-readonly-mcp-contract-replacement"],
+      "risks": ["Full Agent live selection of GitHub tools is not yet repeatably proven; the bounded public file read itself passed."],
+      "next": "Closed for V0 implementation; include GitHub in the bounded four-rotor end-to-end live gate."
+    },
+    {
+      "id": "research-worker-error-taxonomy-glm",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "failed",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "GLM writer startup", "status": "failed", "evidence": "Tasks 019fc383-32a2-7721-ad00-618ddc51e40e and 019fc384-04ba-7bc1-8b9f-6de42954ba20 both ended in systemError within five seconds with no assistant output or file write."}],
+      "dependencies": ["research-agent-tools"],
+      "risks": ["glm-5-2 sidebar runtime is unavailable for this module; diagnostics were escalated to task 019fc1d5-e7d9-73e0-b655-47d4e0b8bf18."],
+      "next": "Closed as an execution route; controller takes ownership of the error-taxonomy implementation and does not retry GLM blindly."
+    },
+    {
+      "id": "research-worker-error-taxonomy",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "done",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [
+        {"name": "taxonomy unit", "status": "passed", "evidence": "10 parameterized cases cover provider, search contract, no source, GitHub, budget, runtime, invalid output and unknown fallback without leaking exception details."},
+        {"name": "ResearchWorker integration", "status": "passed", "evidence": "17 focused unit/PostgreSQL tests passed on isolated aidison_test; replay and successful business paths stayed green."}
+      ],
+      "dependencies": ["research-agent-tools"],
+      "risks": [],
+      "next": "Closed; use the fixed codes to diagnose the next bounded live run."
+    },
+    {
+      "id": "live-closure-stability-audit",
+      "owner": {"kind": "thread", "id": "019fc3b4-2268-7873-a42c-6710d9464ab7"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "read-only audit", "status": "passed", "evidence": "Task traced the likely live failure to a three-call child tool budget plus unclassified BudgetLimitExceededError, and identified prompt-freeze and GitHub-aware live-test gaps; 46 focused non-live tests passed."}],
+      "dependencies": ["research-agent-tools", "github-readonly-mcp-implementation"],
+      "risks": [],
+      "next": "Implement the minimal taxonomy, prompt-freeze and GitHub-aware live-gate fixes before one bounded live rerun."
+    },
+    {
+      "id": "project-console-v0-audit",
+      "owner": {"kind": "thread", "id": "019fc3b4-2fc6-7dc2-a002-0fb027e89716"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "read-only audit", "status": "passed", "evidence": "Task verified the existing vertical slice and selected a module-scoped causal lens as the smallest interview-value P0 interaction; no file changes."}],
+      "dependencies": ["project-console", "research-agent-tools"],
+      "risks": [],
+      "next": "After backend live stability, implement Module Lens with existing snapshot data before considering an Artifact proof drawer."
+    },
+    {
+      "id": "deepagents-vendor-exit-audit",
+      "owner": {"kind": "thread", "id": "019fc3b4-3cef-7981-899a-7d2d1431ef7f"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "read-only audit", "status": "passed", "evidence": "Current host and Compose still resolve the editable vendored package; 12 HarnessProfile, 145 filesystem and 20 media tests passed without changing the workspace."}],
+      "dependencies": ["deepagents-harness-profile-migration"],
+      "risks": ["Vendor deletion remains explicitly out of scope and requires a later confirmed destructive action."],
+      "next": "Defer vendor exit until an official pinned version proves equivalent Windows behavior and the user confirms deletion."
+    },
+    {
+      "id": "runtime-data-consistency-audit",
+      "owner": {"kind": "thread", "id": "019fc3b4-49c5-7e41-8172-a6600f3547b5"},
+      "state": "done",
+      "progress": 100,
+      "branch": null,
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "read-only audit", "status": "passed", "evidence": "Read-only SQL confirmed five referenced runtime Artifact rows missing bytes and an unreferenced stale v4 profile in the long-lived test database; no mutation occurred."}],
+      "dependencies": ["compose-delivery", "agent-profile-budget-ledger"],
+      "risks": ["Any database or Artifact cleanup requires explicit target confirmation and recovery evidence."],
+      "next": "Keep the stale test database isolated; defer any runtime present-to-missing reconciliation until explicit data-change authorization."
+    },
+    {
+      "id": "qwen-long-chain-health-probe",
+      "owner": {"kind": "subagent", "id": "/root/qwen_long_chain_probe"},
+      "state": "failed",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "long-chain delivery", "status": "failed", "evidence": "Qwen returned an unrelated UserIntakeAgent task and created the out-of-scope untracked tests/unit/test_user_intake_agent.py; the requested eight-step read-only chain was not executed."}],
+      "dependencies": ["live-closure-stability-audit"],
+      "risks": ["Task payload routing appears contaminated by a stale or cross-task message; Qwen delegation is not currently trustworthy."],
+      "next": "Do not retry until the Agent bridge is diagnosed; controller must decide whether to remove the isolated untracked file."
+    },
+    {
+      "id": "glm-long-chain-health-probe",
+      "owner": {"kind": "subagent", "id": "/root/glm_long_chain_probe"},
+      "state": "failed",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": null,
+      "checks": [{"name": "long-chain delivery", "status": "failed", "evidence": "GLM received an empty payload on initial spawn and again after the single allowed full-contract follow-up; it was interrupted without a file write."}],
+      "dependencies": ["live-closure-stability-audit"],
+      "risks": ["Parent-to-child message bodies are not delivered on the GLM route, so long-chain execution cannot start."],
+      "next": "Do not retry until the Agent bridge is diagnosed; use no substitute model for this probe."
+    },
+    {
+      "id": "memory-and-dashboard",
+      "owner": {"kind": "controller", "id": "rick"},
+      "state": "done",
+      "progress": 100,
+      "branch": "main",
+      "worktree": "D:/agent_project/codex/aidison",
+      "last_commit": "b68afa3e8153bcfa08d63773d1bd76a43755654d",
+      "checks": [
+        {"name": "project memory sync", "status": "passed", "evidence": "ARCHITECTURE, STATUS, team coordination and dashboard corrected."},
+        {"name": "Mai projection", "status": "passed", "evidence": "Mai API records Tavily completion and minimal closed-loop progress; project memory and team dashboard reflect the latest verified checkpoint."}
+      ],
+      "dependencies": ["canonical-domain-runtime", "project-console", "compose-delivery"],
+      "risks": [],
+      "next": "Closed for this checkpoint; sync after GitHub MCP implementation or live-gate stabilization."
+    }
+  ],
+  "checks": [
+    {"name": "ruff", "status": "passed", "evidence": "All checks passed for src/tests/migrations."},
+    {"name": "mypy", "status": "passed", "evidence": "No issues in 36 source files."},
+    {"name": "pytest non-live", "status": "passed", "evidence": "107 passed, 2 live deselected on a fresh disposable PostgreSQL 17 aidison_test database."},
+    {"name": "alembic", "status": "passed", "evidence": "Fresh database reached 2b7c4d8e1f03 with no drift; runtime DB is at the same revision with research-worker-ro active revision 4."},
+    {"name": "web production", "status": "passed", "evidence": "Build passed; lint 0 errors, 4 upstream warnings."},
+    {"name": "Deep Agents Windows unit", "status": "passed", "evidence": "2398 passed, 122 skipped, 4 xfailed; zero failures."},
+    {"name": "live search", "status": "passed", "evidence": "Tavily Remote MCP returned a bounded PX4 result; MAVSDK evidence page produced a hash-matching 212,691-byte Artifact."},
+    {"name": "live research repeatability", "status": "failed", "evidence": "A complete business closure was observed once, but the final frozen-version repeat failed one child with worker_error; no further blind retry."},
+    {"name": "GitHub MCP", "status": "passed", "evidence": "15 unit, real fake stdio, official image contract and one bounded live public README read passed."},
+    {"name": "docker compose", "status": "passed", "evidence": "API/Worker/Migrate share image 0e164e46eb19; API/Worker healthy; migrate exited 0 at 2b7c4d8e1f03; GitHub Key is worker-only."},
+    {"name": "backup restore", "status": "passed", "evidence": "Valid SHA-256 manifest restored into isolated aidison-restore-verify; source and existing-target overwrite gates passed."}
+  ],
+  "next": "Use the new diagnostics to stabilize the bounded Bailian + Tavily/GitHub live closure, then decide historical runtime Artifact reconciliation, stale long-lived test DB cleanup and vendor deletion."
+}

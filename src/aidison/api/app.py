@@ -1,0 +1,689 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from collections.abc import AsyncIterator
+from typing import Annotated, Any, cast
+from uuid import UUID
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, StreamingResponse
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from aidison.api.schemas import (
+    ApprovePatchRequest,
+    ApproveRequirementsRequest,
+    CreateProjectRequest,
+    FreezeSolutionRequest,
+    ResearchProposalRequest,
+    ResolveDecisionRequest,
+    SubmitObservationRequest,
+)
+from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
+from aidison.application.service import (
+    DomainConflictError,
+    DomainNotFoundError,
+    PreconditionFailedError,
+    ProjectApplication,
+    canonical_hash,
+)
+from aidison.domain.models import DecisionRequest as DomainDecisionRequest
+from aidison.domain.models import ImpactAnalysis
+from aidison.infrastructure.database import create_session_factory
+from aidison.infrastructure.orm import (
+    AttemptRow,
+    BudgetAccountRow,
+    BudgetAllocationRow,
+    BudgetOperationRow,
+    DecisionRequestRow,
+    DelegationRow,
+    ImpactAnalysisRow,
+    JobRow,
+    JoinGroupRow,
+)
+from aidison.infrastructure.runtime import (
+    PostgresRuntime,
+    RuntimeConflictError,
+    RuntimeNotFoundError,
+)
+from aidison.infrastructure.store import PostgresDomainStore
+
+SessionDependency = Annotated[AsyncSession, Depends()]
+
+
+def _error(status_code: int, code: str, message: str, details: Any = None) -> JSONResponse:
+    payload: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if details is not None:
+        payload["error"]["details"] = jsonable_encoder(details)
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+def _parse_revision(value: str) -> int:
+    normalized = value.strip()
+    if normalized.startswith("W/"):
+        normalized = normalized[2:]
+    normalized = normalized.strip('"')
+    try:
+        revision = int(normalized)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="If-Match must contain a revision") from exc
+    if revision < 1:
+        raise HTTPException(status_code=422, detail="If-Match revision must be positive")
+    return revision
+
+
+def _parse_cursor(value: str | None, project_id: UUID) -> int:
+    if value is None or value == "":
+        return 0
+    sequence_text = value
+    if ":" in value:
+        project_text, sequence_text = value.rsplit(":", 1)
+        if project_text != str(project_id):
+            raise HTTPException(status_code=422, detail="event cursor belongs to another project")
+    try:
+        sequence = int(sequence_text)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="invalid event cursor") from exc
+    if sequence < 0:
+        raise HTTPException(status_code=422, detail="event cursor cannot be negative")
+    return sequence
+
+
+async def _session_dependency(request: Request) -> AsyncIterator[AsyncSession]:
+    factory = cast(async_sessionmaker[AsyncSession], request.app.state.session_factory)
+    async with factory() as session:
+        try:
+            yield session
+        except BaseException:
+            if session.in_transaction():
+                await session.rollback()
+            raise
+
+
+DbSession = Annotated[AsyncSession, Depends(_session_dependency)]
+IdempotencyKey = Annotated[
+    str,
+    Header(alias="Idempotency-Key", min_length=1, max_length=300),
+]
+IfMatch = Annotated[str, Header(alias="If-Match", min_length=1)]
+
+
+def create_app(
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> FastAPI:
+    api = FastAPI(title="Aidison API", version="0.1.0")
+    api.state.session_factory = session_factory or create_session_factory()
+
+    @api.exception_handler(RequestValidationError)
+    async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        return _error(422, "validation_error", "request validation failed", exc.errors())
+
+    @api.exception_handler(HTTPException)
+    async def http_error(_: Request, exc: HTTPException) -> JSONResponse:
+        return _error(exc.status_code, "http_error", str(exc.detail))
+
+    @api.exception_handler(DomainNotFoundError)
+    async def not_found(_: Request, exc: DomainNotFoundError) -> JSONResponse:
+        return _error(404, "not_found", str(exc))
+
+    @api.exception_handler(PreconditionFailedError)
+    @api.exception_handler(OptimisticConcurrencyError)
+    async def precondition_failed(_: Request, exc: Exception) -> JSONResponse:
+        return _error(412, "precondition_failed", str(exc))
+
+    @api.exception_handler(DuplicateCommandError)
+    async def duplicate_command(_: Request, exc: DuplicateCommandError) -> JSONResponse:
+        return _error(409, "idempotency_conflict", str(exc))
+
+    @api.exception_handler(DomainConflictError)
+    @api.exception_handler(RuntimeConflictError)
+    async def domain_conflict(
+        _: Request,
+        exc: DomainConflictError | RuntimeConflictError,
+    ) -> JSONResponse:
+        return _error(409, "domain_conflict", str(exc))
+
+    @api.exception_handler(RuntimeNotFoundError)
+    async def runtime_not_found(_: Request, exc: RuntimeNotFoundError) -> JSONResponse:
+        return _error(404, "not_found", str(exc))
+
+    @api.exception_handler(IntegrityError)
+    async def persistence_conflict(_: Request, __: IntegrityError) -> JSONResponse:
+        return _error(409, "persistence_conflict", "canonical write violates a constraint")
+
+    @api.get("/health")
+    async def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    @api.post("/api/projects", status_code=status.HTTP_201_CREATED)
+    async def create_project(
+        body: CreateProjectRequest,
+        idempotency_key: IdempotencyKey,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+            name=body.name,
+            goal=body.goal,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{project.revision}"'
+        return project
+
+    @api.get("/api/projects/{project_id}")
+    async def get_project(project_id: UUID, response: Response, session: DbSession) -> Any:
+        project = await PostgresDomainStore(session).get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        response.headers["ETag"] = f'"{project.revision}"'
+        return project
+
+    @api.post("/api/projects/{project_id}/requirements")
+    async def approve_requirements(
+        project_id: UUID,
+        body: ApproveRequirementsRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        requirement, modules = await ProjectApplication(
+            PostgresDomainStore(session)
+        ).approve_requirements(
+            project_id=project_id,
+            expected_project_revision=revision,
+            goal=body.goal,
+            hard_constraints=body.hard_constraints,
+            preferences=body.preferences,
+            available_resources=body.available_resources,
+            unknowns=body.unknowns,
+            modules=tuple(item.model_dump() for item in body.modules),
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return {
+            "requirement": requirement,
+            "modules": modules,
+            "project_revision": revision + 1,
+        }
+
+    @api.get("/api/projects/{project_id}/modules")
+    async def list_modules(project_id: UUID, session: DbSession) -> Any:
+        store = PostgresDomainStore(session)
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        return await store.list_modules(
+            project_id,
+            requirement_revision_id=project.active_requirement_revision_id,
+        )
+
+    @api.post("/api/projects/{project_id}/research-proposals")
+    async def submit_research_proposal(
+        project_id: UUID,
+        body: ResearchProposalRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        decision = await ProjectApplication(PostgresDomainStore(session)).submit_research_proposal(
+            project_id=project_id,
+            expected_project_revision=revision,
+            evidence=body.evidence,
+            candidates=body.candidates,
+            findings=body.findings,
+            decision_question=body.decision_question,
+            decision_options=body.decision_options,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return {"decision": decision, "project_revision": revision + 1}
+
+    @api.post(
+        "/api/projects/{project_id}/research-runs",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def start_research_run(
+        project_id: UUID,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        store = PostgresDomainStore(session)
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        if project.revision != revision:
+            raise PreconditionFailedError("project revision is stale")
+        if project.active_requirement_revision_id is None:
+            raise DomainConflictError("requirements must be approved before research")
+        modules = tuple(
+            await store.list_modules(
+                project_id,
+                requirement_revision_id=project.active_requirement_revision_id,
+            )
+        )
+        if not modules:
+            raise DomainConflictError("research requires at least one active module")
+        basis_hash = canonical_hash(project.active_requirement_revision_id, modules)
+        job_id = await PostgresRuntime(session).create_job(
+            project_id=project_id,
+            kind="research_wave",
+            basis_hash=basis_hash,
+            basis_project_revision=revision,
+            profile_id="research-orchestrator",
+            profile_revision=1,
+            idempotency_key=f"research-run:{idempotency_key}",
+        )
+        response.headers["ETag"] = f'"{revision}"'
+        return {
+            "job_id": job_id,
+            "status": "queued",
+            "basis_hash": basis_hash,
+            "project_revision": revision,
+        }
+
+    @api.post("/api/decisions/{decision_id}/resolve")
+    async def resolve_decision(
+        decision_id: UUID,
+        body: ResolveDecisionRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        decision = await ProjectApplication(PostgresDomainStore(session)).resolve_decision(
+            decision_id=decision_id,
+            expected_project_revision=revision,
+            selected_option_id=body.selected_option_id,
+            basis_hash=body.basis_hash,
+            idempotency_key=idempotency_key,
+        )
+        solution_job_id = await PostgresRuntime(session).create_job(
+            project_id=decision.project_id,
+            kind="solution_wave",
+            basis_hash=canonical_hash(decision),
+            basis_project_revision=revision + 1,
+            profile_id="solution-orchestrator",
+            profile_revision=1,
+            idempotency_key=f"solution-run:{decision.id}",
+            request_payload={"decision_id": str(decision.id)},
+            token_budget_cap=16_000,
+            tool_call_budget_cap=0,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return {
+            "decision": decision,
+            "solution_job_id": solution_job_id,
+            "project_revision": revision + 1,
+        }
+
+    @api.post("/api/projects/{project_id}/solutions")
+    async def freeze_solution(
+        project_id: UUID,
+        body: FreezeSolutionRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        solution = await ProjectApplication(PostgresDomainStore(session)).freeze_solution(
+            project_id=project_id,
+            expected_project_revision=revision,
+            solution_proposal_id=body.solution_proposal_id,
+            basis_hash=body.basis_hash,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return {"solution": solution, "project_revision": revision + 1}
+
+    @api.post("/api/projects/{project_id}/observations")
+    async def submit_observation(
+        project_id: UUID,
+        body: SubmitObservationRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        observation = await ProjectApplication(PostgresDomainStore(session)).submit_observation(
+            project_id=project_id,
+            expected_project_revision=revision,
+            statement=body.statement,
+            affected_module_ids=body.affected_module_ids,
+            idempotency_key=idempotency_key,
+        )
+        impact_job_id = await PostgresRuntime(session).create_job(
+            project_id=project_id,
+            kind="impact_wave",
+            basis_hash=canonical_hash(observation),
+            basis_project_revision=revision + 1,
+            profile_id="impact-orchestrator",
+            profile_revision=1,
+            idempotency_key=f"impact-run:{observation.id}",
+            request_payload={"observation_id": str(observation.id)},
+            token_budget_cap=16_000,
+            tool_call_budget_cap=0,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return {
+            "observation": observation,
+            "impact_job_id": impact_job_id,
+            "project_revision": revision + 1,
+        }
+
+    @api.post("/api/impacts/{impact_id}/approve")
+    async def approve_impact(
+        impact_id: UUID,
+        body: ApprovePatchRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        patch_set, solution = await ProjectApplication(
+            PostgresDomainStore(session)
+        ).approve_impact_and_patch(
+            impact_id=impact_id,
+            expected_project_revision=revision,
+            basis_hash=body.basis_hash,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return {
+            "patch_set": patch_set,
+            "solution": solution,
+            "project_revision": revision + 1,
+        }
+
+    @api.get("/api/projects/{project_id}/snapshot")
+    async def project_snapshot(project_id: UUID, session: DbSession) -> dict[str, Any]:
+        store = PostgresDomainStore(session)
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        decisions = list(
+            await session.scalars(
+                select(DecisionRequestRow).where(DecisionRequestRow.project_id == project_id)
+            )
+        )
+        impacts = list(
+            await session.scalars(
+                select(ImpactAnalysisRow).where(ImpactAnalysisRow.project_id == project_id)
+            )
+        )
+        jobs = list(
+            await session.scalars(
+                select(JobRow)
+                .where(JobRow.project_id == project_id)
+                .order_by(JobRow.created_at, JobRow.id)
+            )
+        )
+        job_ids = [item.id for item in jobs]
+        attempts = (
+            list(
+                await session.scalars(
+                    select(AttemptRow)
+                    .where(AttemptRow.job_id.in_(job_ids))
+                    .order_by(AttemptRow.started_at, AttemptRow.id)
+                )
+            )
+            if job_ids
+            else []
+        )
+        delegations = (
+            list(
+                await session.scalars(
+                    select(DelegationRow)
+                    .where(DelegationRow.parent_job_id.in_(job_ids))
+                    .order_by(DelegationRow.created_at, DelegationRow.id)
+                )
+            )
+            if job_ids
+            else []
+        )
+        join_groups = (
+            list(
+                await session.scalars(
+                    select(JoinGroupRow)
+                    .where(JoinGroupRow.parent_job_id.in_(job_ids))
+                    .order_by(JoinGroupRow.created_at, JoinGroupRow.id)
+                )
+            )
+            if job_ids
+            else []
+        )
+        budget_accounts = list(
+            await session.scalars(
+                select(BudgetAccountRow)
+                .where(BudgetAccountRow.project_id == project_id)
+                .order_by(BudgetAccountRow.created_at, BudgetAccountRow.id)
+            )
+        )
+        account_ids = [item.id for item in budget_accounts]
+        budget_allocations = (
+            list(
+                await session.scalars(
+                    select(BudgetAllocationRow)
+                    .where(BudgetAllocationRow.account_id.in_(account_ids))
+                    .order_by(BudgetAllocationRow.created_at, BudgetAllocationRow.id)
+                )
+            )
+            if account_ids
+            else []
+        )
+        allocation_ids = [item.id for item in budget_allocations]
+        budget_operations = (
+            list(
+                await session.scalars(
+                    select(BudgetOperationRow)
+                    .where(BudgetOperationRow.allocation_id.in_(allocation_ids))
+                    .order_by(BudgetOperationRow.created_at, BudgetOperationRow.id)
+                )
+            )
+            if allocation_ids
+            else []
+        )
+        return {
+            "project": project,
+            "requirements": await store.list_requirement_revisions(project_id),
+            "modules": await store.list_modules(
+                project_id,
+                requirement_revision_id=project.active_requirement_revision_id,
+            ),
+            "evidence": await store.list_evidence_bindings(project_id),
+            "candidates": await store.list_candidates(project_id),
+            "compatibility_findings": await store.list_compatibility_findings(project_id),
+            "decisions": [
+                DomainDecisionRequest.model_validate(item.payload) for item in decisions
+            ],
+            "solution_proposals": await store.list_solution_proposals(project_id),
+            "solutions": await store.list_solution_versions(project_id),
+            "observations": await store.list_observations(project_id),
+            "impacts": [ImpactAnalysis.model_validate(item.payload) for item in impacts],
+            "patch_sets": await store.list_patch_sets(project_id),
+            "runtime": {
+                "jobs": [
+                    {
+                        "id": item.id,
+                        "parent_job_id": item.parent_job_id,
+                        "kind": item.kind,
+                        "status": item.status,
+                        "profile_id": item.profile_id,
+                        "profile_revision": item.profile_revision,
+                        "basis_project_revision": item.basis_project_revision,
+                        "generation": item.current_generation,
+                        "created_at": item.created_at,
+                        "completed_at": item.completed_at,
+                    }
+                    for item in jobs
+                ],
+                "attempts": [
+                    {
+                        "id": item.id,
+                        "job_id": item.job_id,
+                        "number": item.number,
+                        "generation": item.claim_generation,
+                        "status": item.status,
+                        "started_at": item.started_at,
+                        "completed_at": item.completed_at,
+                        "normalized_error": item.normalized_error,
+                    }
+                    for item in attempts
+                ],
+                "delegations": [
+                    {
+                        "id": item.id,
+                        "parent_job_id": item.parent_job_id,
+                        "child_job_id": item.child_job_id,
+                        "join_group_id": item.join_group_id,
+                        "profile_id": item.profile_id,
+                        "profile_revision": item.profile_revision,
+                        "shard_key": item.shard_key,
+                        "status": item.status,
+                    }
+                    for item in delegations
+                ],
+                "join_groups": [
+                    {
+                        "id": item.id,
+                        "parent_job_id": item.parent_job_id,
+                        "status": item.status,
+                        "expected_count": item.expected_count,
+                        "created_at": item.created_at,
+                    }
+                    for item in join_groups
+                ],
+                "budget_accounts": [
+                    {
+                        "id": item.id,
+                        "root_job_id": item.root_job_id,
+                        "status": item.status,
+                        "token_cap": item.token_cap,
+                        "token_committed": item.token_committed,
+                        "tool_call_cap": item.tool_call_cap,
+                        "tool_calls_committed": item.tool_calls_committed,
+                    }
+                    for item in budget_accounts
+                ],
+                "budget_allocations": [
+                    {
+                        "id": item.id,
+                        "account_id": item.account_id,
+                        "owner_kind": item.owner_kind,
+                        "owner_ref": item.owner_ref,
+                        "status": item.status,
+                        "token_grant": item.token_grant,
+                        "token_reserved": item.token_reserved,
+                        "token_consumed": item.token_consumed,
+                        "tool_call_grant": item.tool_call_grant,
+                        "tool_calls_reserved": item.tool_calls_reserved,
+                        "tool_calls_consumed": item.tool_calls_consumed,
+                    }
+                    for item in budget_allocations
+                ],
+                "budget_operations": [
+                    {
+                        "id": item.id,
+                        "allocation_id": item.allocation_id,
+                        "kind": item.kind,
+                        "state": item.state,
+                        "logical_step": item.logical_step,
+                        "provider": item.provider,
+                        "model_or_tool": item.model_or_tool,
+                        "reserved_tokens": item.reserved_tokens,
+                        "consumed_tokens": item.consumed_tokens,
+                        "reserved_tool_calls": item.reserved_tool_calls,
+                        "consumed_tool_calls": item.consumed_tool_calls,
+                        "created_at": item.created_at,
+                    }
+                    for item in budget_operations
+                ],
+            },
+        }
+
+    @api.get("/api/projects/{project_id}/events")
+    async def list_events(
+        project_id: UUID,
+        session: DbSession,
+        after: int = 0,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        if not 0 <= after or not 1 <= limit <= 500:
+            raise HTTPException(status_code=422, detail="invalid event cursor or limit")
+        store = PostgresDomainStore(session)
+        if await store.get_project(project_id) is None:
+            raise DomainNotFoundError("project not found")
+        rows = await store.list_events(project_id, after_sequence=after, limit=limit)
+        return [
+            {
+                "id": f"{project_id}:{row.project_seq}",
+                "sequence": row.project_seq,
+                "type": row.event_type,
+                "payload": row.payload,
+                "created_at": row.created_at,
+            }
+            for row in rows
+        ]
+
+    @api.get("/api/projects/{project_id}/events/stream")
+    async def stream_events(
+        project_id: UUID,
+        request: Request,
+        session: DbSession,
+        last_event_id: Annotated[str | None, Header(alias="Last-Event-ID")] = None,
+    ) -> StreamingResponse:
+        store = PostgresDomainStore(session)
+        if await store.get_project(project_id) is None:
+            raise DomainNotFoundError("project not found")
+        initial_cursor = _parse_cursor(last_event_id, project_id)
+        factory = cast(async_sessionmaker[AsyncSession], request.app.state.session_factory)
+
+        async def event_source() -> AsyncIterator[str]:
+            cursor = initial_cursor
+            while True:
+                async with factory() as event_session:
+                    rows = await PostgresDomainStore(event_session).list_events(
+                        project_id,
+                        after_sequence=cursor,
+                        limit=200,
+                    )
+                if rows:
+                    for row in rows:
+                        cursor = row.project_seq
+                        data = json.dumps(
+                            {"type": row.event_type, "payload": row.payload},
+                            separators=(",", ":"),
+                        )
+                        yield (
+                            f"id: {project_id}:{row.project_seq}\n"
+                            f"event: {row.event_type}\n"
+                            f"data: {data}\n\n"
+                        )
+                else:
+                    yield ": keep-alive\n\n"
+                await asyncio.sleep(1)
+
+        return StreamingResponse(
+            event_source(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    return api
+
+
+app = create_app()

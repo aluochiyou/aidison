@@ -1,0 +1,91 @@
+# Aidison Architecture
+
+- Status: V0 vertical slice implemented and running; receipt-aware recovery、不可变 AgentProfile、耐久预算账本、Tavily/GitHub 官方 MCP 与 Deep Agents Windows Core 回归均已验证
+- Decisions: [ADR-0001](adr/0001-single-runtime-durable-agent-delegation.md), [ADR-0002](adr/0002-seven-layer-governed-memory.md)
+- Upstream lineage: [UPSTREAM_MAP.md](../UPSTREAM_MAP.md)
+
+## Verified runtime structure
+
+```mermaid
+flowchart TB
+    UI["Next.js Project-first console"] -->|"REST + If-Match + Idempotency-Key"| API["FastAPI control plane"]
+    UI -->|"cursor SSE + durable cursor polling fallback"| API
+    API --> APP["ProjectApplication"]
+    APP --> PG["PostgreSQL canonical Domain"]
+    API --> RT["PostgreSQL durable runtime"]
+    RT -->|"claim + lease + generation"| WORKER["Stateless ResearchWorker"]
+    RT --> PROFILE["Immutable AgentProfile revisions"]
+    WORKER --> BUDGET["PostgreSQL budget allocations + operation ledger"]
+    WORKER --> DA["Aidison-owned Deep Agents Core 0.7.1"]
+    DA --> MODEL["Bailian / OpenAI provider gateway"]
+    DA --> SEARCH["Tavily Remote MCP adapter"]
+    DA --> GITHUB["GitHub MCP Server v1.8.0 / stdio"]
+    SEARCH --> FETCH["Safe HTTPX + Trafilatura fetch"]
+    FETCH --> ARTIFACT["Content-addressed artifact volume"]
+    GITHUB --> ARTIFACT
+    WORKER -->|"typed Proposal artifact"| RT
+    RT -->|"JoinReceipt + idempotent Domain command"| APP
+    PG -->|"snapshot + project event log"| API
+```
+
+`compose.yaml` 运行 `web`、`api`、`worker`、`postgres` 四个长期服务，并用一次性 `migrate` 服务执行 Alembic。`api`、`worker`、`migrate` 共用同一 `aidison-backend:local` 镜像，避免服务镜像版本漂移；GitHub Key 只注入 `worker`。V0 没有 Redis、Celery、Dapr、Kubernetes、向量数据库、图数据库或第二 Agent runtime。
+
+## Repository boundaries
+
+| Boundary | Verified responsibility |
+|---|---|
+| `src/aidison/domain` | 不可变领域模型与状态枚举。 |
+| `src/aidison/application` | canonical command、receipt、basis/CAS 规则及 Research Worker 协调。 |
+| `src/aidison/artifacts` | content-addressed Artifact 的 typed metadata/status 契约。 |
+| `src/aidison/infrastructure` | PostgreSQL Domain/runtime repository、ORM、content-addressed Artifact。 |
+| `src/aidison/api` | FastAPI command/query、ETag、错误 envelope、typed historical snapshot normalization 和 cursor SSE。 |
+| `src/aidison/agents` | typed Research Proposal 契约与受限 Deep Agent 组装。 |
+| `src/aidison/tools` | Tavily Remote MCP 与 GitHub 官方只读 MCP 薄适配、有界参数/结果/预算/Artifact 映射，以及已知 URL 的 SSRF/redirect/MIME/size/timeout 边界。 |
+| `src/aidison/providers` | Bailian/OpenAI 显式模型路由；缺 Key 不降级。 |
+| `src/aidison/runtime` | Job、Attempt、Delegation、JoinPolicy/Receipt 的 typed contracts。 |
+| `src/aidison/operations` + `ops` | 只读 Artifact 一致性检查，以及 Windows/Docker PostgreSQL + Artifact 配对备份和隔离恢复。 |
+| `packages/deepagents` | 固定 SHA 导入的 Deep Agents Core；Aidison Agent 构造已迁移到官方 `HarnessProfile`，vendor 暂仅保留 Windows filesystem 差异与完整回归基线。 |
+| `web` | deep-agents-ui 派生的 Project-first 工程控制台。 |
+
+## State ownership
+
+| State | Canonical owner |
+|---|---|
+| Requirement、Evidence、Candidate、Decision、SolutionVersion、Observation、ImpactAnalysis、PatchSet | PostgreSQL Domain tables |
+| Job、Attempt、Delegation、JoinGroup、AttemptResult、JoinReceipt、lease/fencing/cancel | PostgreSQL runtime tables |
+| AgentProfile definition/revision、active pointer、root Job binding manifest | PostgreSQL profile tables；active pointer 仅在创建新 root Job 时解析 |
+| root token/tool cap、child allocation、每次物理 model/tool operation | PostgreSQL budget account/allocation/operation ledger |
+| Project UI 进度与恢复 | PostgreSQL project events + snapshot；浏览器仅保存最近项目和 cursor 提示 |
+| Agent 输出 | typed staged Proposal/Artifact；不能直接写 canonical Domain |
+| Artifact bytes | Docker volume / local artifact root；PostgreSQL 保存 hash、metadata、lineage、status |
+| Deep Agent/LangGraph state | 单次执行临时状态；Research Agent 显式关闭 native subagent、checkpointer 和 store |
+| Mai | 由主控同步的可视化投影，不反向覆盖代码、测试、Domain 或 `team.json` |
+
+V0 operational recovery uses a write-quiesced pair: `api` and `worker` are paused, a read-only PostgreSQL/Artifact integrity gate must pass, then a PostgreSQL custom dump and content-addressed bytes are copied with a SHA-256 manifest. Restore is deliberately limited to a new Compose project and rejects existing target containers/volumes; it cannot overwrite the active runtime. V0 retains all Artifact metadata and bytes and has no automatic expiry/deletion path.
+
+## Durable research sequence
+
+1. API 在已批准 RequirementRevision 的 basis 上幂等创建 root Job。
+2. Worker 使用 `SKIP LOCKED`、lease、generation 和 token 领取 root Job。
+3. root Job 同事务冻结 AgentProfile binding manifest 并创建 root BudgetAccount；replay 不再读取 active pointer。
+4. root Job 幂等创建最多两个 durable child Job、冻结 JoinPolicy 与 child budget allocation；reclaim/retry 不重置 root cap。
+5. child Deep Agent 通过官方 `HarnessProfile` 禁用通用 subagent 与非 allowlist 工具，并只接受 `structured_response`。revision 1/3 replay 只使用 `web_search`；revision 4 额外开放 `github_search_repositories`、`github_search_code`、`github_get_file_contents`。Tavily 和 GitHub 都由 `langchain-mcp-adapters==0.3.1` 接入；`mcp` 固定在 `>=1.24,<2`。
+6. GitHub revision 4 在一次 Agent 调用期间保持一个 stdio session；官方 Server 固定为 `v1.8.0`/OCI digest，只允许三项 `readOnlyHint=true` 工具。子进程只获得 token、`GITHUB_READ_ONLY=1` 和精确 `GITHUB_TOOLS`，`GITHUB_TOOLSETS` 缺席。每次真实调用执行 reserve → dispatched → settled/released/ambiguous。
+7. MCP 只返回有界结果。Tavily 候选 URL 由 HTTPX + Trafilatura 受控获取并写入 `web_snapshot`；GitHub 文本/JSON 在 256 KiB 上限内规范化并写入 `github_snapshot`。应用层只接受当前 attempt 下 `PRESENT` 且 `(source_url, snapshot_hash)` 匹配的两类 Artifact，再形成 EvidenceBinding。
+8. parent 只读取 accepted Proposal refs，确定性合并并提交唯一 JoinReceipt。
+9. 以 JoinGroup 派生的幂等键调用 canonical Domain command，最后 fenced completion。
+10. late/stale result 被 quarantine；取消会关闭 open join 并传播到未终止 children。
+11. parent lease 过期后，新 generation 会原子 supersede 旧 Attempt，并取消旧 open JoinGroup 与未终止 children。未 dispatch reservation 被释放；已 dispatch 未知调用转为 `ambiguous` 并保守全额计费。
+12. 若旧 generation 已提交 JoinReceipt，新 parent 在严格加载当前 project basis 前查找唯一 committed join，复用原 merged Proposal Artifact，并以 `join_group_id`、`committed_at` 和确定性 UUID 重建相同 Domain payload。
+13. canonical command 先检查稳定 idempotency receipt，因此 Domain 已提交但 parent 未完成时可返回原 Decision；当前 generation 最后完成 root，旧 generation 被 fencing 拒绝。
+
+Command payload 的 canonical hash 先把 Pydantic model、UUID、Enum 和 timestamp 转为语义 JSON。它不依赖 Python `repr` 或具体时区对象实现，保证 crash/JSON/数据库往返后等值 payload 仍命中同一 receipt。
+
+## Remaining architecture work
+
+- 稳定真实 Bailian structured output + Tavily Remote MCP + Artifact + Join + Domain 的四旋翼 live gate；一次完整业务闭环已成功，但重复运行仍受外部来源/Agent 工具行为波动影响。
+- GitHub 单次公开文件读取、fake stdio 和 Artifact/hash 内核已验证；完整 Agent 是否稳定选择 GitHub 工具仍需纳入四旋翼 live gate，而不是增加无界重试。
+- HarnessProfile 项目回归通过后仍需验证上游 Windows ripgrep 行为；在用户确认前不删除 `packages/deepagents`。
+- 正式决定如何处置运行库中五条历史测试污染的 `present`/missing-byte Artifact 审计记录；在此之前运行库备份按设计 fail closed。
+- Provider-side usage reconciliation 与 vendor bill 精确一致性仍为 `not_checked`；本地 ledger 采用上界 reservation 与 ambiguous 保守计费保证不超卖。
+- LangSmith/Langfuse 仅作为可丢弃 observability；当前未接入，也不改变事实源。

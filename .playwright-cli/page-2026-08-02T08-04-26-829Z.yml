@@ -1,0 +1,110 @@
+- generic [active] [ref=e1]:
+  - main [ref=e68]:
+    - generic [ref=e69]:
+      - generic [ref=e70]:
+        - button "项目列表" [ref=e71] [cursor=pointer]
+        - generic [ref=e72]:
+          - generic [ref=e73]: PROJECT / e93820a1
+          - heading "四旋翼无人机闭环验收" [level=1] [ref=e74]
+        - generic [ref=e75]:
+          - generic [ref=e80]: REV 02
+          - text: LIVE
+        - button "刷新" [ref=e82] [cursor=pointer]
+      - generic "当前阶段：research" [ref=e163]:
+        - generic [ref=e84]: 项目
+        - generic [ref=e87]: 需求
+        - generic [ref=e90]:
+          - generic [ref=e91]: "3"
+          - generic [ref=e92]: 研究
+        - generic [ref=e93]:
+          - generic [ref=e94]: "4"
+          - generic [ref=e95]: 比较
+        - generic [ref=e96]:
+          - generic [ref=e97]: "5"
+          - generic [ref=e98]: 决策
+        - generic [ref=e99]:
+          - generic [ref=e100]: "6"
+          - generic [ref=e101]: 方案
+        - generic [ref=e102]:
+          - generic [ref=e103]: "7"
+          - generic [ref=e104]: 验证
+        - generic [ref=e105]:
+          - generic [ref=e106]: "8"
+          - generic [ref=e107]: 修订
+    - generic [ref=e108]:
+      - complementary [ref=e109]:
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - text: MODULE GRAPH
+            - heading "工程模块" [level=2] [ref=e112]
+          - generic [ref=e113]: "2"
+        - generic [ref=e114]:
+          - article [ref=e168]:
+            - generic [ref=e169]:
+              - code [ref=e170]: power_control
+              - generic [ref=e171]: draft
+            - heading "供能与控制" [level=3] [ref=e172]
+            - paragraph [ref=e173]: 定义供能、控制链路与安全边界
+            - list [ref=e174]:
+              - listitem [ref=e175]: 功率预算闭合
+              - listitem [ref=e176]: 失效模式可测试
+          - article [ref=e177]:
+            - generic [ref=e178]:
+              - code [ref=e179]: structure
+              - generic [ref=e180]: draft
+            - heading "结构与接口" [level=3] [ref=e181]
+            - paragraph [ref=e182]: 定义承载结构、空间边界和机械接口
+            - list [ref=e183]:
+              - listitem [ref=e184]: 关键尺寸可验证
+              - listitem [ref=e185]: 部件可拆换
+      - generic [ref=e116]:
+        - generic [ref=e117]:
+          - generic [ref=e118]: GOAL
+          - paragraph [ref=e119]: 设计一架可由个人制作、可安全台架验证的四旋翼无人机；输出结构化模块方案、BOM、实施和验证计划，并支持现场反馈后的局部修订。
+        - generic [ref=e186]:
+          - generic [ref=e191]:
+            - text: 02 / 证据化研究
+            - heading "启动两路有界研究" [level=2] [ref=e192]
+          - paragraph [ref=e193]: PostgreSQL 持有 Job、Attempt、Delegation 与 JoinReceipt；Deep Agent 只生成 typed Proposal。
+          - button "运行 Research Wave" [ref=e194] [cursor=pointer]
+          - text: NEXT
+        - generic [ref=e131]:
+          - generic [ref=e132]:
+            - generic [ref=e133]:
+              - text: EVIDENCE / OPTIONS
+              - heading "研究结果" [level=2] [ref=e134]
+            - generic [ref=e135]: "0"
+          - paragraph [ref=e137]: 研究完成后，候选方案和可追溯证据会出现在这里。
+        - generic [ref=e138]:
+          - generic [ref=e139]:
+            - generic [ref=e140]:
+              - text: IMMUTABLE VERSIONS
+              - heading "方案版本" [level=2] [ref=e141]
+            - generic [ref=e142]: "0"
+          - paragraph [ref=e144]: 用户批准决策后才能冻结第一版方案。
+      - complementary [ref=e145]:
+        - generic [ref=e147]:
+          - text: DURABLE RUNTIME
+          - heading "Agent 编排" [level=2] [ref=e148]
+        - paragraph [ref=e152]: 研究启动后显示 root Job 和最多两个 durable child Job。
+        - generic [ref=e153]:
+          - generic [ref=e154]:
+            - text: PROJECT CURSOR
+            - heading "因果事件" [level=2] [ref=e155]
+          - generic [ref=e156]: "2"
+        - generic [ref=e157]:
+          - article [ref=e195]:
+            - generic [ref=e196]: "002"
+            - generic [ref=e197]:
+              - strong [ref=e198]: requirements / approved
+              - code [ref=e199]: e93820a1-d414-4366-8c93-95cd8d346cbc:2
+          - article [ref=e158]:
+            - generic [ref=e159]: "001"
+            - generic [ref=e160]:
+              - strong [ref=e161]: project / created
+              - code [ref=e162]: e93820a1-d414-4366-8c93-95cd8d346cbc:1
+  - region "Notifications alt+T":
+    - list:
+      - listitem [ref=e200]:
+        - generic [ref=e204]: 需求版本已批准
+  - alert [ref=e50]

@@ -1,0 +1,53 @@
+- generic:
+  - main:
+    - generic:
+      - generic: Local engineering workspace
+      - heading [level=1]:
+        - text: 把 DIY 想法变成
+        - generic: 可验证的工程方案
+      - paragraph: Aidison 把需求、研究证据、候选方案、用户决策和现场反馈串成一条可审计闭环。 Agent 提建议，只有你的确认才能写入项目事实。
+      - generic:
+        - button: 创建项目
+        - button: 打开项目
+    - complementary:
+      - generic:
+        - generic: PROJECT / QUAD-01
+        - generic: REV 07
+      - generic:
+        - generic:
+          - generic: "01"
+          - strong: 需求冻结
+        - generic:
+          - generic: "02"
+          - strong: 并行研究
+        - generic:
+          - generic: "03"
+          - strong: 兼容决策
+        - generic:
+          - generic: "04"
+          - strong: 方案版本
+        - generic:
+          - generic: "05"
+          - strong: 反馈修订
+      - generic:
+        - code: PostgreSQL canonical truth
+        - generic: Agent output → Proposal → Human decision
+  - region "Notifications alt+T"
+  - alert
+  - dialog [ref=e52]:
+    - generic [ref=e53]:
+      - heading "Create Project" [level=2] [ref=e54]
+      - paragraph [ref=e55]: Define a new DIY engineering project. The goal describes what you want to build.
+    - generic [ref=e56]:
+      - generic [ref=e57]:
+        - generic [ref=e58]: Name
+        - textbox "Name" [active] [ref=e59]:
+          - /placeholder: e.g. Quadrotor Drone Build
+      - generic [ref=e60]:
+        - generic [ref=e61]: Goal
+        - textbox "Goal" [ref=e62]:
+          - /placeholder: Describe the project goal, constraints, and success criteria...
+    - generic [ref=e63]:
+      - button "Cancel" [ref=e64] [cursor=pointer]
+      - button "Create" [disabled]
+    - button "Close" [ref=e65] [cursor=pointer]
