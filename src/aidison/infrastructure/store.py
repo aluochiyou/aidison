@@ -686,6 +686,16 @@ class PostgresDomainStore(DomainStore):
         ).all()
         return [_decode(CheckoutHandoff, row.payload) for row in rows]
 
+    async def update_checkout_handoff(self, handoff: CheckoutHandoff) -> None:
+        statement = (
+            sqlalchemy.update(CheckoutHandoffRow)
+            .where(CheckoutHandoffRow.id == handoff.id)
+            .values(status=handoff.status.value, payload=_payload(handoff))
+        )
+        result = cast(CursorResult[Any], await self._session.execute(statement))
+        if result.rowcount != 1:
+            raise OptimisticConcurrencyError("checkout handoff is stale or missing")
+
     async def append_event(
         self,
         project_id: UUID,

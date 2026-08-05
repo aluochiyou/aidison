@@ -42,6 +42,12 @@ def upgrade() -> None:
             name="fk_offer_snapshots_project_id_projects",
             ondelete="RESTRICT",
         ),
+        sa.ForeignKeyConstraint(
+            ["project_id", "solution_version_id"],
+            ["solution_versions.project_id", "solution_versions.id"],
+            name="fk_offer_snapshot_project_solution",
+            ondelete="RESTRICT",
+        ),
         sa.UniqueConstraint("project_id", "id", name="uq_offer_snapshot_project_id"),
     )
     op.create_index(
@@ -70,6 +76,18 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["projects.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["project_id", "solution_version_id"],
+            ["solution_versions.project_id", "solution_versions.id"],
+            name="fk_purchase_proposal_project_solution",
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["project_id", "offer_snapshot_id"],
+            ["offer_snapshots.project_id", "offer_snapshots.id"],
+            name="fk_purchase_proposal_project_offer",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id"),
@@ -101,6 +119,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["project_id"],
             ["projects.id"],
+            ondelete="RESTRICT",
+        ),
+        sa.ForeignKeyConstraint(
+            ["project_id", "proposal_id"],
+            ["purchase_proposals.project_id", "purchase_proposals.id"],
+            name="fk_checkout_handoff_project_proposal",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id"),

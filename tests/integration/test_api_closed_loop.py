@@ -22,7 +22,12 @@ from aidison.infrastructure.database import (
     create_session_factory,
 )
 from aidison.infrastructure.store import PostgresDomainStore
-from aidison.operations.fixture import FakeShoppingProvider
+from aidison.operations.fixture import (
+    SCENARIO_MAX_TOTAL,
+    SCENARIO_OFFER,
+    SCENARIO_SEARCH_QUERY,
+    FakeShoppingProvider,
+)
 from aidison.providers.shopping import ShoppingProviderError
 
 pytestmark = pytest.mark.integration
@@ -497,11 +502,12 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             # ── V1 shopping closed loop ────────────────────────────────
 
             active_solution = patched.json()["solution"]
+            active_bom_line_id = active_solution["bom"][0]["line_id"]
 
             # Step 1: Search offers
             search_payload = {
-                "query": "Raspberry Pi 5 8GB",
-                "bom_line_id": "open-frame",
+                "query": SCENARIO_SEARCH_QUERY,
+                "bom_line_id": active_bom_line_id,
                 "region": "CN",
             }
             search = await client.post(
@@ -515,9 +521,9 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert len(snapshots) == 1
             snap = snapshots[0]
             assert snap["provider"] == "fake-desktop"
-            assert snap["title"] == "Raspberry Pi 5 8GB"
-            assert snap["unit_price"] == "499.00"
-            assert snap["bom_line_id"] == "open-frame"
+            assert snap["title"] == SCENARIO_OFFER.title
+            assert snap["unit_price"] == SCENARIO_OFFER.unit_price
+            assert snap["bom_line_id"] == active_bom_line_id
             offer_snapshot_id = snap["id"]
 
             # Step 2: Replay search — same snapshots returned
@@ -536,8 +542,20 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                 "quantity": 1,
                 "region": "CN",
                 "currency": "CNY",
-                "max_total": "600.00",
+                "shipping_estimate": SCENARIO_OFFER.shipping_estimate,
+                "tax_estimate": SCENARIO_OFFER.tax_estimate,
+                "max_total": SCENARIO_MAX_TOTAL,
             }
+            mismatched_binding = await client.post(
+                f"/api/projects/{project_id}/purchase-proposals",
+                json={**proposal_payload, "region": "US"},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:binding-mismatch",
+                    "If-Match": '"9"',
+                },
+            )
+            assert mismatched_binding.status_code == 409
+
             proposal_response = await client.post(
                 f"/api/projects/{project_id}/purchase-proposals",
                 json=proposal_payload,
@@ -551,8 +569,8 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
             prop = proposal_response.json()
             assert prop["status"] == "draft"
-            assert prop["unit_price"] == "499.00"
-            assert prop["max_total"] == "600.00"
+            assert prop["unit_price"] == SCENARIO_OFFER.unit_price
+            assert prop["max_total"] == SCENARIO_MAX_TOTAL
             assert proposal_response.headers["etag"] == '"10"'
 
             # max_total violation
@@ -568,7 +586,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert "exceeds max_total" in over_total.json()["error"]["message"]
 
             # Step 4: Confirm BOM line
-            confirm_payload = {"confirmed_line_ids": ["open-frame"]}
+            confirm_payload = {"confirmed_line_ids": [active_bom_line_id]}
             confirm = await client.post(
                 f"/api/purchase-proposals/{prop['id']}/confirm-lines",
                 json=confirm_payload,
@@ -580,7 +598,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert confirm.status_code == 200, f"confirm failed: {confirm.text}"
             confirmed = confirm.json()
             assert confirmed["status"] == "ready"
-            assert "open-frame" in confirmed["confirmed_line_ids"]
+            assert active_bom_line_id in confirmed["confirmed_line_ids"]
 
             # Confirm with invalid line_id
             bad_confirm = await client.post(
@@ -606,6 +624,16 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert handoff["status"] == "dispatched"
             assert handoff["checkout_url"].startswith("https://")
             assert "fake-cart" in handoff["provider_cart_id"]
+            replay_checkout = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:checkout",
+                    "If-Match": '"11"',
+                },
+            )
+            assert replay_checkout.status_code == 201
+            assert replay_checkout.json()["id"] == handoff["id"]
+            assert fake_provider.cart_create_called == 1
 
             # Proposal should now be handed_off
             final_snapshot = await client.get(f"/api/projects/{project_id}/snapshot")
@@ -632,7 +660,9 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                     "quantity": 1,
                     "region": "CN",
                     "currency": "CNY",
-                    "max_total": "600.00",
+                    "shipping_estimate": SCENARIO_OFFER.shipping_estimate,
+                    "tax_estimate": SCENARIO_OFFER.tax_estimate,
+                    "max_total": SCENARIO_MAX_TOTAL,
                 },
                 headers={
                     "Idempotency-Key": f"{key_prefix}:prop2",
@@ -644,7 +674,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
 
             confirm2 = await client.post(
                 f"/api/purchase-proposals/{prop2_id}/confirm-lines",
-                json={"confirmed_line_ids": ["open-frame"]},
+                json={"confirmed_line_ids": [active_bom_line_id]},
                 headers={
                     "Idempotency-Key": f"{key_prefix}:confirm2",
                     "If-Match": '"13"',

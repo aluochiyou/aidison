@@ -201,6 +201,9 @@ class InMemoryDomainStore:
     async def list_checkout_handoffs(self, project_id: UUID) -> Sequence[CheckoutHandoff]:
         return [item for item in self.checkout_handoffs.values() if item.project_id == project_id]
 
+    async def update_checkout_handoff(self, handoff: CheckoutHandoff) -> None:
+        self.checkout_handoffs[handoff.id] = handoff
+
     async def append_event(
         self, project_id: UUID, event_type: str, payload: dict[str, object]
     ) -> int:

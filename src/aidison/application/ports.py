@@ -160,6 +160,8 @@ class DomainStore(Protocol):
 
     async def list_checkout_handoffs(self, project_id: UUID) -> Sequence[CheckoutHandoff]: ...
 
+    async def update_checkout_handoff(self, handoff: CheckoutHandoff) -> None: ...
+
     async def append_event(
         self,
         project_id: UUID,

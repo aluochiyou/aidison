@@ -29,7 +29,9 @@ from aidison.domain.models import (
 )
 from aidison.providers.shopping import (
     CartLineInput,
+    OfferAvailability,
     ShoppingConfigError,
+    ShoppingOffer,
     ShoppingProvider,
     ShoppingProviderError,
 )
@@ -50,6 +52,62 @@ class OfferSearchError(RuntimeError):
 
 class CartCreationError(RuntimeError):
     """Wraps policy-violating cart creation failures (not ambiguous — hard fail)."""
+
+
+def _compute_offer_snapshot_hash(
+    project_id: UUID,
+    solution_version_id: UUID,
+    bom_line_id: str,
+    offer: ShoppingOffer,
+    observed: datetime,
+) -> str:
+    """Canonical hash binding offer identity fields."""
+    return canonical_hash(
+        project_id,
+        solution_version_id,
+        bom_line_id,
+        offer.provider,
+        offer.provider_offer_id,
+        offer.merchandise_id,
+        offer.seller,
+        offer.title,
+        offer.condition,
+        offer.availability.value,
+        offer.unit_price,
+        offer.currency,
+        offer.shipping_estimate,
+        offer.tax_estimate,
+        offer.region,
+        offer.quantity_available,
+        offer.product_url,
+        observed,
+        offer.expires_at,
+    )
+
+
+def _compute_proposal_basis_hash(
+    project_id: UUID,
+    solution_version_id: UUID,
+    offer_snapshot_hash: str,
+    quantity: int,
+    region: str,
+    currency: str,
+    shipping_estimate: str | None,
+    tax_estimate: str | None,
+    max_total: str,
+) -> str:
+    """Canonical hash binding proposal request to immutable offer."""
+    return canonical_hash(
+        project_id,
+        solution_version_id,
+        offer_snapshot_hash,
+        quantity,
+        region,
+        currency,
+        shipping_estimate,
+        tax_estimate,
+        max_total,
+    )
 
 
 class ShoppingApplication:
@@ -79,10 +137,7 @@ class ShoppingApplication:
     ) -> Sequence[OfferSnapshot]:
         """Search provider for offers, persist snapshots, return them.
 
-        The provider result is an append-only observation; each snapshot is
-        persisted so the client can reference it by UUID when creating a
-        PurchaseProposal.  This write side-effect is why the endpoint
-        requires If-Match.
+        Validates bom_line_id belongs to the active SolutionVersion's BOM.
         """
         if not self._provider.available:
             raise ShoppingConfigError(f"provider {self._provider.name} is unavailable")
@@ -92,6 +147,17 @@ class ShoppingApplication:
             raise PreconditionFailedError("project revision is stale")
         if project.active_solution_version_id is None:
             raise DomainConflictError("shopping requires an active solution version")
+
+        solution = await self._store.get_solution_version(project.active_solution_version_id)
+        if solution is None:
+            raise DomainNotFoundError("active solution version not found")
+
+        # Validate bom_line_id belongs to the active SolutionVersion BOM
+        bom_line_ids = {item.get("line_id", "") for item in solution.bom}
+        if bom_line_id not in bom_line_ids:
+            raise DomainConflictError(
+                f"bom_line_id '{bom_line_id}' not found in active solution BOM"
+            )
 
         try:
             offers = await self._provider.search_offers(
@@ -107,22 +173,25 @@ class ShoppingApplication:
         if not offers:
             return ()
 
+        # Re-assert the revision after the external call.  The no-op update is
+        # an atomic CAS in the PostgreSQL store and prevents snapshots from
+        # being attached to a solution that changed while the provider was
+        # responding.
+        await self._store.update_project(
+            project,
+            expected_revision=expected_project_revision,
+        )
+
         snapshots: list[OfferSnapshot] = []
         for offer in offers:
+            if offer.provider != self._provider.name:
+                raise DomainConflictError("provider returned an offer owned by another provider")
             observed = offer.observed_at or datetime.now(UTC)
-            snapshot_hash = canonical_hash(
+            snapshot_hash = _compute_offer_snapshot_hash(
                 project_id,
                 project.active_solution_version_id,
                 bom_line_id,
-                offer.provider,
-                offer.provider_offer_id,
-                offer.title,
-                offer.availability.value,
-                offer.unit_price,
-                offer.currency,
-                offer.region,
-                offer.quantity_available,
-                offer.product_url,
+                offer,
                 observed,
             )
             snap = OfferSnapshot(
@@ -148,7 +217,6 @@ class ShoppingApplication:
                 snapshot_hash=snapshot_hash,
                 provenance=f"{offer.provider}:search:{query[:200]}",
             )
-            # Persist each snapshot immediately so it is retrievable
             await self._store.add_offer_snapshot(snap)
             snapshots.append(snap)
 
@@ -172,8 +240,13 @@ class ShoppingApplication:
         max_total: str,
         idempotency_key: str,
     ) -> PurchaseProposal:
-        """Snapshot an offer and create a Draft PurchaseProposal."""
+        """Create a Draft PurchaseProposal bound to an exact offer snapshot."""
         region = _validate_region(region)
+
+        # Validate proposal request matches the immutable offer
+        self._validate_proposal_matches_offer(
+            offer_snapshot, region, currency, shipping_estimate, tax_estimate
+        )
 
         # Enforce max_total via Decimal
         try:
@@ -183,10 +256,22 @@ class ShoppingApplication:
         except InvalidOperation as exc:
             raise DomainConflictError("invalid numeric format in price or max_total") from exc
         if total > max_d:
-            raise DomainConflictError(
-                f"total {total} exceeds max_total {max_d}"
-            )
+            raise DomainConflictError(f"total {total} exceeds max_total {max_d}")
 
+        # Compute basis_hash that binds the solution, offer, and request
+        basis_hash = _compute_proposal_basis_hash(
+            project_id,
+            solution_version_id,
+            offer_snapshot.snapshot_hash,
+            quantity,
+            region,
+            currency,
+            shipping_estimate,
+            tax_estimate,
+            max_total,
+        )
+
+        # Include price/availability from the snapshot in the payload hash for idempotency
         payload_hash = canonical_hash(
             "create_purchase_proposal",
             project_id,
@@ -212,26 +297,19 @@ class ShoppingApplication:
             raise PreconditionFailedError("project revision is stale")
         if project.active_solution_version_id != solution_version_id:
             raise PreconditionFailedError("solution version is not the active version")
-
-        solution = await self._store.get_solution_version(solution_version_id)
-        if solution is None:
-            raise DomainNotFoundError("solution version not found")
+        if offer_snapshot.solution_version_id != solution_version_id:
+            raise PreconditionFailedError("offer snapshot belongs to another solution version")
+        if offer_snapshot.provider != self._provider.name:
+            raise DomainConflictError("offer snapshot belongs to another shopping provider")
+        if offer_snapshot.availability != OfferAvailability.IN_STOCK.value:
+            raise DomainConflictError("offer snapshot is not in stock")
+        if quantity > offer_snapshot.quantity_available:
+            raise DomainConflictError("requested quantity exceeds offer availability")
 
         # Verify the offer is still valid (not expired)
         if offer_snapshot.expires_at is not None and offer_snapshot.expires_at < datetime.now(UTC):
             raise DomainConflictError("offer snapshot has expired")
 
-        # Persist the offer snapshot if not already stored
-        existing = await self._store.get_offer_snapshot(offer_snapshot.id)
-        if existing is None:
-            await self._store.add_offer_snapshot(offer_snapshot)
-
-        basis_hash = canonical_hash(
-            project_id,
-            solution_version_id,
-            offer_snapshot.snapshot_hash,
-            quantity,
-        )
         proposal = PurchaseProposal(
             project_id=project_id,
             solution_version_id=solution_version_id,
@@ -245,6 +323,7 @@ class ShoppingApplication:
             unit_price=offer_snapshot.unit_price,
             status=PurchaseProposalStatus.DRAFT,
             basis_hash=basis_hash,
+            expires_at=offer_snapshot.expires_at,
         )
 
         await self._store.update_project(
@@ -278,8 +357,7 @@ class ShoppingApplication:
     ) -> PurchaseProposal:
         """Confirm line items on a DRAFT proposal, moving it to READY.
 
-        confirmed_line_ids must be a non-empty subset of the offer's BOM
-        line IDs as recorded on the offer snapshot.
+        Rejects if active solution changed, offer expired, or basis mismatches.
         """
         payload_hash = canonical_hash(
             "confirm_proposal_lines",
@@ -300,21 +378,42 @@ class ShoppingApplication:
             raise DomainNotFoundError("purchase proposal not found")
         if proposal.status is not PurchaseProposalStatus.DRAFT:
             raise DomainConflictError("only draft proposals can be confirmed")
-        if proposal.basis_hash != expected_proposal_basis:
-            raise PreconditionFailedError("proposal basis is stale")
+
+        # Recompute basis hash from stored proposal fields and verify match
+        offer = await self._store.get_offer_snapshot(proposal.offer_snapshot_id)
+        if offer is None:
+            raise DomainNotFoundError("offer snapshot not found")
+        recomputed_basis = _compute_proposal_basis_hash(
+            proposal.project_id,
+            proposal.solution_version_id,
+            offer.snapshot_hash,
+            proposal.quantity,
+            proposal.region,
+            proposal.currency,
+            proposal.shipping_estimate,
+            proposal.tax_estimate,
+            proposal.max_total,
+        )
+        if recomputed_basis != expected_proposal_basis:
+            raise PreconditionFailedError("proposal basis is stale (recomputed mismatch)")
 
         project = await self._required_project(proposal.project_id)
         if project.revision != expected_project_revision:
             raise PreconditionFailedError("project revision is stale")
+
+        # Reject if active solution changed
+        if project.active_solution_version_id != proposal.solution_version_id:
+            raise PreconditionFailedError("active solution has changed since proposal was created")
+
+        # Reject if offer expired
+        if offer.expires_at is not None and offer.expires_at < datetime.now(UTC):
+            raise DomainConflictError("offer snapshot has expired")
 
         confirmed = tuple(dict.fromkeys(confirmed_line_ids))
         if not confirmed:
             raise DomainConflictError("at least one line must be confirmed")
 
         # Validate line_ids against the offer's BOM line
-        offer = await self._store.get_offer_snapshot(proposal.offer_snapshot_id)
-        if offer is None:
-            raise DomainNotFoundError("offer snapshot not found")
         if offer.bom_line_id not in confirmed:
             raise DomainConflictError(
                 f"confirmed line IDs must include the offer's bom_line_id '{offer.bom_line_id}'"
@@ -360,13 +459,9 @@ class ShoppingApplication:
     ) -> CheckoutHandoff:
         """Create a provider-hosted cart and return a checkout URL.
 
-        The proposal must be READY.  The handoff moves through:
-        PREPARED → DISPATCHED (cart created successfully)
-        PREPARED → AMBIGUOUS (provider response is indeterminate —
-            proposal stays READY, no auto-retry)
-
-        Policy violations (CartCreationError, e.g. non-HTTPS checkout URL)
-        fail hard and do NOT result in AMBIGUOUS.
+        Idempotency: PREPARED handoff + command receipt is committed BEFORE
+        the provider create_cart call. On replay/crash the stored PREPARED
+        is returned and provider is never called twice.
         """
         if not self._provider.available:
             raise ShoppingConfigError(f"provider {self._provider.name} is unavailable")
@@ -389,18 +484,38 @@ class ShoppingApplication:
             raise DomainNotFoundError("purchase proposal not found")
         if proposal.status is not PurchaseProposalStatus.READY:
             raise DomainConflictError("only ready proposals can create a checkout")
-        if proposal.basis_hash != expected_proposal_basis:
-            raise PreconditionFailedError("proposal basis is stale")
+
+        # Recompute proposal basis to verify integrity
+        offer = await self._store.get_offer_snapshot(proposal.offer_snapshot_id)
+        if offer is None:
+            raise DomainNotFoundError("offer snapshot not found")
+        recomputed_basis = _compute_proposal_basis_hash(
+            proposal.project_id,
+            proposal.solution_version_id,
+            offer.snapshot_hash,
+            proposal.quantity,
+            proposal.region,
+            proposal.currency,
+            proposal.shipping_estimate,
+            proposal.tax_estimate,
+            proposal.max_total,
+        )
+        if recomputed_basis != expected_proposal_basis:
+            raise PreconditionFailedError("proposal basis is stale (recomputed mismatch)")
 
         project = await self._required_project(proposal.project_id)
         if project.revision != expected_project_revision:
             raise PreconditionFailedError("project revision is stale")
 
-        offer = await self._store.get_offer_snapshot(proposal.offer_snapshot_id)
-        if offer is None:
-            raise DomainNotFoundError("offer snapshot not found")
+        # Reject if active solution changed
+        if project.active_solution_version_id != proposal.solution_version_id:
+            raise PreconditionFailedError("active solution has changed since proposal was created")
 
-        basis_hash = canonical_hash(proposal.id, proposal.basis_hash, offer.snapshot_hash)
+        # Reject if offer expired
+        if offer.expires_at is not None and offer.expires_at < datetime.now(UTC):
+            raise DomainConflictError("offer snapshot has expired")
+
+        basis_hash = canonical_hash(proposal.id, recomputed_basis, offer.snapshot_hash)
         handoff = CheckoutHandoff(
             project_id=proposal.project_id,
             proposal_id=proposal.id,
@@ -409,7 +524,16 @@ class ShoppingApplication:
             status=CheckoutHandoffStatus.PREPARED,
         )
 
-        # Attempt cart creation
+        # ── Persist PREPARED + command receipt BEFORE provider call ───
+        await self._store.add_checkout_handoff(handoff)
+        await self._store.save_command_receipt(
+            idempotency_key, payload_hash, str(handoff.id)
+        )
+        await self._store.commit()
+
+        # ── Attempt cart creation ─────────────────────────────────────
+        # On replay/crash the PREPARED stored above is returned directly
+        # and provider create_cart is never called twice.
         now = datetime.now(UTC)
         proposal_updated = False
         try:
@@ -423,7 +547,6 @@ class ShoppingApplication:
                 lines=cart_inputs, region=proposal.region
             )
 
-            # Validate checkout URL is HTTPS (defence-in-depth)
             if not cart.checkout_url.startswith("https://"):
                 raise CartCreationError("provider returned a non-HTTPS checkout URL")
 
@@ -435,7 +558,6 @@ class ShoppingApplication:
                     "dispatched_at": now,
                 }
             )
-            # Only mark HANDED_OFF on successful dispatch
             proposal = proposal.model_copy(
                 update={
                     "status": PurchaseProposalStatus.HANDED_OFF,
@@ -444,11 +566,8 @@ class ShoppingApplication:
             )
             proposal_updated = True
         except CartCreationError:
-            # Policy violation (non-HTTPS, etc.) — fail hard, do NOT persist
             raise
         except ShoppingProviderError:
-            # Ambiguous: the cart may or may not have been created —
-            # do NOT retry automatically; keep proposal READY
             handoff = handoff.model_copy(
                 update={
                     "status": CheckoutHandoffStatus.AMBIGUOUS,
@@ -456,15 +575,17 @@ class ShoppingApplication:
                 }
             )
 
+        # ── Persist final outcome ─────────────────────────────────────
+        await self._store.update_checkout_handoff(handoff)
+        if proposal_updated:
+            await self._store.update_purchase_proposal(proposal)
+
         await self._store.update_project(
             project=project.model_copy(
                 update={"revision": project.revision + 1, "updated_at": now}
             ),
             expected_revision=project.revision,
         )
-        await self._store.add_checkout_handoff(handoff)
-        if proposal_updated:
-            await self._store.update_purchase_proposal(proposal)
         await self._store.append_event(
             project.id,
             "checkout.handoff_created",
@@ -474,13 +595,37 @@ class ShoppingApplication:
                 "status": handoff.status.value,
             },
         )
-        await self._store.save_command_receipt(
-            idempotency_key, payload_hash, str(handoff.id)
-        )
         await self._store.commit()
         return handoff
 
     # ── helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _validate_proposal_matches_offer(
+        snapshot: OfferSnapshot,
+        region: str,
+        currency: str,
+        shipping_estimate: str | None,
+        tax_estimate: str | None,
+    ) -> None:
+        """Reject a proposal request whose fields contradict the immutable offer."""
+        mismatches: list[str] = []
+        if region != snapshot.region:
+            mismatches.append(f"region: request={region} offer={snapshot.region}")
+        if currency != snapshot.currency:
+            mismatches.append(f"currency: request={currency} offer={snapshot.currency}")
+        ad_shipping = shipping_estimate or ""
+        ad_offer_shipping = snapshot.shipping_estimate or ""
+        if ad_shipping != ad_offer_shipping:
+            mismatches.append("shipping_estimate mismatch")
+        ad_tax = tax_estimate or ""
+        ad_offer_tax = snapshot.tax_estimate or ""
+        if ad_tax != ad_offer_tax:
+            mismatches.append("tax_estimate mismatch")
+        if mismatches:
+            raise DomainConflictError(
+                "proposal request does not match the offer snapshot: " + "; ".join(mismatches)
+            )
 
     async def _required_project(self, project_id: UUID) -> Project:
         project = await self._store.get_project(project_id)

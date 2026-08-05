@@ -1,12 +1,15 @@
 """Deterministic V1 shopping fixture constants and a Fake ShoppingProvider.
 
-Reusable by integration tests and potentially by the application entry-point
-for local development when no live provider is configured.
+Reusable by integration tests and uvicorn aidison.operations.fixture:app.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
+from datetime import UTC, datetime
+from pathlib import Path
+
+from fastapi import FastAPI
 
 from aidison.providers.shopping import (
     CartLineInput,
@@ -18,35 +21,36 @@ from aidison.providers.shopping import (
 
 # ── Scenario constants (non-drone desktop environmental monitor) ──────
 
-SCENARIO_SEARCH_QUERY = "Raspberry Pi 5 8GB single board computer"
-SCENARIO_BOM_LINE_ID = "pi5-line"
+SCENARIO_SEARCH_QUERY = "SCD41 CO2 temperature humidity sensor module"
+SCENARIO_BOM_LINE_ID = "environment-sensor"
 SCENARIO_REGION = "CN"
 SCENARIO_CURRENCY = "CNY"
 
 SCENARIO_OFFER = ShoppingOffer(
     provider="fake-desktop",
-    provider_offer_id="gid://fake-desktop/ProductVariant/pi5-8gb",
-    merchandise_id="gid://fake-desktop/ProductVariant/pi5-8gb",
+    provider_offer_id="gid://fake-desktop/ProductVariant/scd41",
+    merchandise_id="gid://fake-desktop/ProductVariant/scd41",
     seller="Fake Desktop Supplies",
-    title="Raspberry Pi 5 8GB",
+    title="SCD41 CO2 Temperature Humidity Sensor Module",
     condition="new",
     availability=OfferAvailability.IN_STOCK,
-    unit_price="499.00",
+    unit_price="168.00",
     currency="CNY",
-    shipping_estimate="15.00",
-    tax_estimate="59.88",
+    shipping_estimate="12.00",
+    tax_estimate="20.16",
     region="CN",
     quantity_available=10,
-    product_url="https://fake-desktop.example.com/products/pi5-8gb",
+    product_url="https://fake-desktop.example.com/products/scd41",
+    observed_at=datetime(2026, 1, 1, tzinfo=UTC),
 )
 
 SCENARIO_CART = CreatedCart(
-    provider_cart_id="fake-cart-pi5-8gb",
-    checkout_url="https://fake-desktop.example.com/checkout/cart-pi5-8gb",
+    provider_cart_id="fake-cart-scd41",
+    checkout_url="https://fake-desktop.example.com/checkout/cart-scd41",
     line_count=1,
 )
 
-SCENARIO_MAX_TOTAL = "600.00"
+SCENARIO_MAX_TOTAL = "220.00"
 SCENARIO_QUANTITY = 1
 
 
@@ -104,8 +108,19 @@ class FakeShoppingProvider(ShoppingProvider):
         self.cart_create_called += 1
         if self._cart_failure is not None:
             raise self._cart_failure
-        return CreatedCart(
-            provider_cart_id="fake-cart-1",
-            checkout_url=f"https://fake-desktop.example.com/checkout/{lines[0].merchandise_id}",
-            line_count=len(lines),
-        )
+        return SCENARIO_CART
+
+def build_fixture_app(
+    artifact_root: Path | None = None,
+) -> FastAPI:
+    """Build a FastAPI app wired to the fake desktop shopping provider."""
+    from aidison.api.app import create_app
+
+    return create_app(
+        shopping_provider=FakeShoppingProvider(),
+        artifact_root=artifact_root or Path("artifacts/data"),
+    )
+
+
+# Runnable application entry point for uvicorn.
+app = build_fixture_app()

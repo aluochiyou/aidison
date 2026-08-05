@@ -13,6 +13,7 @@ enforcement, and error sanitisation.
 
 from __future__ import annotations
 
+import json
 import re as _re
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -36,7 +37,11 @@ _SHOP_DOMAIN_RE = _re.compile(
     r"^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.myshopify\.com$"
 )
 
-_SANITISED_REQUEST_HEADERS = {"content-type", "accept", "user-agent"}
+# Maximum bytes accepted from the Shopify GraphQL endpoint.
+_MAX_RESPONSE_BYTES = 2 * 1024 * 1024  # 2 MiB
+
+# Expected GraphQL response content type.
+_EXPECTED_CONTENT_TYPE = "application/json"
 
 _SEARCH_PRODUCTS_QUERY = """
 query searchProducts($q: String!, $first: Int!, $country: CountryCode!)
@@ -182,21 +187,31 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
 
         client = self._http or httpx.AsyncClient()
         try:
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 url,
                 json={"query": query, "variables": variables or {}},
                 headers=headers,
                 timeout=timeout_seconds,
-            )
-            response.raise_for_status()
+            ) as response:
+                response.raise_for_status()
+
+                content_type = response.headers.get("content-type", "")
+                if _EXPECTED_CONTENT_TYPE not in content_type.lower():
+                    raise ShoppingProviderError(
+                        "shopify response has an unexpected content type"
+                    )
+
+                raw = bytearray()
+                async for chunk in response.aiter_bytes():
+                    raw.extend(chunk)
+                    if len(raw) > _MAX_RESPONSE_BYTES:
+                        raise ShoppingProviderError(
+                            f"shopify response exceeds {_MAX_RESPONSE_BYTES} bytes"
+                        )
         except httpx.TimeoutException:
             raise ShoppingProviderError("shopify storefront request timed out") from None
         except httpx.HTTPStatusError as exc:
-            _safe_headers = {
-                k.lower(): v
-                for k, v in (exc.request.headers.items() if exc.request else [])
-                if k.lower() in _SANITISED_REQUEST_HEADERS
-            }
             raise ShoppingProviderError(
                 f"shopify storefront returned HTTP {exc.response.status_code}"
             ) from None
@@ -206,7 +221,15 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
             if self._http is None:
                 await client.aclose()
 
-        body: dict[str, Any] = response.json()
+        try:
+            decoded = json.loads(raw)
+        except (TypeError, ValueError):
+            raise ShoppingProviderError("shopify response contains invalid JSON") from None
+        if not isinstance(decoded, dict):
+            raise ShoppingProviderError("shopify response JSON must be an object")
+        body: dict[str, Any] = decoded
+
+        # Sanitize: remove detailed error metadata before logging
         if "errors" in body:
             raise ShoppingProviderError(
                 f"shopify graphql error: {_summarise_graphql_errors(body['errors'])}"
@@ -336,15 +359,21 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
 # ── helpers ────────────────────────────────────────────────────────────
 
 
+_REGION_ALIASES: dict[str, str] = {"EU": "DE", "UK": "GB"}
+
+
 def _region_code(region: str) -> str:
-    """Map aidison region to Shopify CountryCode (ISO 3166-1 alpha-2)."""
+    """Map aidison region to Shopify CountryCode (ISO 3166-1 alpha-2).
+
+    Standard two-letter country codes pass through; UI aliases map to a
+    concrete Storefront ``CountryCode``.
+    """
     upper = region.strip().upper()
+    if upper in _REGION_ALIASES:
+        return _REGION_ALIASES[upper]
     if _re.fullmatch(r"[A-Z]{2}", upper):
         return upper
-    mapping: dict[str, str] = {"CN": "CN", "US": "US", "EU": "DE", "UK": "GB"}
-    if upper not in mapping:
-        raise ShoppingConfigError(f"unsupported region: {region}")
-    return mapping[upper]
+    raise ShoppingConfigError(f"unsupported region: {region}")
 
 
 def _deep_get(data: dict[str, Any], *path: str) -> Any:

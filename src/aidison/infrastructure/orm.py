@@ -800,6 +800,12 @@ class OfferSnapshotRow(Base):
     __tablename__ = "offer_snapshots"
     __table_args__ = (
         UniqueConstraint("project_id", "id", name="uq_offer_snapshot_project_id"),
+        ForeignKeyConstraint(
+            ["project_id", "solution_version_id"],
+            ["solution_versions.project_id", "solution_versions.id"],
+            name="fk_offer_snapshot_project_solution",
+            ondelete="RESTRICT",
+        ),
         Index("ix_offer_snapshots_project_solution", "project_id", "solution_version_id"),
     )
 
@@ -822,6 +828,18 @@ class PurchaseProposalRow(Base):
     __tablename__ = "purchase_proposals"
     __table_args__ = (
         UniqueConstraint("project_id", "id", name="uq_purchase_proposal_project_id"),
+        ForeignKeyConstraint(
+            ["project_id", "solution_version_id"],
+            ["solution_versions.project_id", "solution_versions.id"],
+            name="fk_purchase_proposal_project_solution",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["project_id", "offer_snapshot_id"],
+            ["offer_snapshots.project_id", "offer_snapshots.id"],
+            name="fk_purchase_proposal_project_offer",
+            ondelete="RESTRICT",
+        ),
         Index("ix_purchase_proposals_project_status", "project_id", "status"),
     )
 
@@ -843,6 +861,12 @@ class CheckoutHandoffRow(Base):
     __tablename__ = "checkout_handoffs"
     __table_args__ = (
         UniqueConstraint("project_id", "id", name="uq_checkout_handoff_project_id"),
+        ForeignKeyConstraint(
+            ["project_id", "proposal_id"],
+            ["purchase_proposals.project_id", "purchase_proposals.id"],
+            name="fk_checkout_handoff_project_proposal",
+            ondelete="RESTRICT",
+        ),
         Index("ix_checkout_handoffs_project_status", "project_id", "status"),
     )
 
