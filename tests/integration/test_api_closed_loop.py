@@ -10,13 +10,20 @@ import pytest
 
 from aidison.api.app import create_app
 from aidison.application.service import ProjectApplication
-from aidison.domain.models import BomItem, ModulePatch, ModuleSelection, SolutionPlanStep
+from aidison.domain.models import (
+    BomItem,
+    ModulePatch,
+    ModuleSelection,
+    SolutionPlanStep,
+)
 from aidison.infrastructure.database import (
     DatabaseSettings,
     create_engine,
     create_session_factory,
 )
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.operations.fixture import FakeShoppingProvider
+from aidison.providers.shopping import ShoppingProviderError
 
 pytestmark = pytest.mark.integration
 
@@ -29,7 +36,8 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
 
     engine = create_engine(DatabaseSettings(database_url=database_url))
     factory = create_session_factory(engine)
-    api = create_app(factory)
+    fake_provider = FakeShoppingProvider()
+    api = create_app(factory, shopping_provider=fake_provider)
     transport = httpx.ASGITransport(app=api)
     key_prefix = str(uuid4())
     try:
@@ -485,6 +493,189 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert all(item["status"] == "queued" for item in snapshot.json()["runtime"]["jobs"])
             assert len(snapshot.json()["runtime"]["budget_accounts"]) == 3
             assert snapshot.json()["runtime"]["budget_accounts"][0]["token_cap"] == 64_000
+
+            # ── V1 shopping closed loop ────────────────────────────────
+
+            fake_provider = FakeShoppingProvider()
+            rev9_solution = solution.json()["solution"]
+
+            # Step 1: Search offers
+            search_payload = {
+                "query": "Raspberry Pi 5 8GB",
+                "bom_line_id": "open-frame",
+                "region": "CN",
+            }
+            search = await client.post(
+                f"/api/projects/{project_id}/shopping/offers/search",
+                json=search_payload,
+                headers={"If-Match": '"9"'},
+            )
+            assert search.status_code == 200, f"search failed: {search.text}"
+            snapshots = search.json()
+            assert isinstance(snapshots, list)
+            assert len(snapshots) == 1
+            snap = snapshots[0]
+            assert snap["provider"] == "fake-desktop"
+            assert snap["title"] == "Raspberry Pi 5 8GB"
+            assert snap["unit_price"] == "499.00"
+            assert snap["bom_line_id"] == "open-frame"
+            offer_snapshot_id = snap["id"]
+
+            # Step 2: Replay search — same snapshots returned
+            replay_search = await client.post(
+                f"/api/projects/{project_id}/shopping/offers/search",
+                json=search_payload,
+                headers={"If-Match": '"9"'},
+            )
+            assert replay_search.status_code == 200
+            assert len(replay_search.json()) >= 1
+
+            # Step 3: Create purchase proposal with max_total enforcement
+            proposal_payload = {
+                "solution_version_id": rev9_solution["id"],
+                "offer_snapshot_id": offer_snapshot_id,
+                "quantity": 1,
+                "region": "CN",
+                "currency": "CNY",
+                "max_total": "600.00",
+            }
+            proposal = await client.post(
+                f"/api/projects/{project_id}/purchase-proposals",
+                json=proposal_payload,
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:proposal",
+                    "If-Match": '"9"',
+                },
+            )
+            assert proposal.status_code == 201, f"proposal failed: {proposal.text}"
+            prop = proposal.json()
+            assert prop["status"] == "draft"
+            assert prop["unit_price"] == "499.00"
+            assert prop["max_total"] == "600.00"
+            assert proposal.headers["etag"] == '"10"'
+
+            # max_total violation
+            over_total = await client.post(
+                f"/api/projects/{project_id}/purchase-proposals",
+                json={**proposal_payload, "max_total": "100.00"},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:over-total",
+                    "If-Match": '"9"',
+                },
+            )
+            assert over_total.status_code == 409
+            assert "exceeds max_total" in over_total.json()["error"]["message"]
+
+            # Step 4: Confirm BOM line
+            confirm_payload = {"confirmed_line_ids": ["open-frame"]}
+            confirm = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/confirm-lines",
+                json=confirm_payload,
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:confirm",
+                    "If-Match": '"10"',
+                },
+            )
+            assert confirm.status_code == 200, f"confirm failed: {confirm.text}"
+            confirmed = confirm.json()
+            assert confirmed["status"] == "ready"
+            assert "open-frame" in confirmed["confirmed_line_ids"]
+
+            # Confirm with invalid line_id
+            bad_confirm = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/confirm-lines",
+                json={"confirmed_line_ids": ["wrong-line"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:bad-confirm",
+                    "If-Match": '"10"',
+                },
+            )
+            assert bad_confirm.status_code == 409
+
+            # Step 5: Checkout handoff — successful dispatch
+            checkout = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:checkout",
+                    "If-Match": '"11"',
+                },
+            )
+            assert checkout.status_code == 201, f"checkout failed: {checkout.text}"
+            handoff = checkout.json()
+            assert handoff["status"] == "dispatched"
+            assert handoff["checkout_url"].startswith("https://")
+            assert "fake-cart" in handoff["provider_cart_id"]
+
+            # Proposal should now be handed_off
+            final_snapshot = await client.get(f"/api/projects/{project_id}/snapshot")
+            assert final_snapshot.status_code == 200
+            proposals = final_snapshot.json()["purchase_proposals"]
+            assert len(proposals) == 1
+            assert proposals[0]["status"] == "handed_off"
+
+            # Step 6: Ambiguous handoff (provider failure keeps proposal READY)
+            # Create a second proposal via the fake provider with cart failure
+            search2 = await client.post(
+                f"/api/projects/{project_id}/shopping/offers/search",
+                json=search_payload,
+                headers={"If-Match": '"12"'},
+            )
+            assert search2.status_code == 200
+            snap2_id = search2.json()[0]["id"]
+
+            prop2 = await client.post(
+                f"/api/projects/{project_id}/purchase-proposals",
+                json={
+                    "solution_version_id": rev9_solution["id"],
+                    "offer_snapshot_id": snap2_id,
+                    "quantity": 1,
+                    "region": "CN",
+                    "currency": "CNY",
+                    "max_total": "600.00",
+                },
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:prop2",
+                    "If-Match": '"12"',
+                },
+            )
+            assert prop2.status_code == 201
+            prop2_id = prop2.json()["id"]
+
+            confirm2 = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/confirm-lines",
+                json={"confirmed_line_ids": ["open-frame"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:confirm2",
+                    "If-Match": '"13"',
+                },
+            )
+            assert confirm2.status_code == 200
+
+            # Make the FakeProvider fail cart creation
+            fake_provider.set_cart_failure(ShoppingProviderError("cart service down"))
+
+            ambiguous_checkout = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/checkout-handoffs",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:amb-checkout",
+                    "If-Match": '"14"',
+                },
+            )
+            assert ambiguous_checkout.status_code == 201
+            amb_handoff = ambiguous_checkout.json()
+            assert amb_handoff["status"] == "ambiguous"
+            assert amb_handoff["provider_cart_id"] is None
+            assert amb_handoff["checkout_url"] is None
+
+            # Proposal must still be READY (NOT handed_off) on ambiguous
+            final_snap2 = await client.get(f"/api/projects/{project_id}/snapshot")
+            proposals2 = final_snap2.json()["purchase_proposals"]
+            prop2_status = next(
+                p["status"] for p in proposals2 if p["id"] == prop2_id
+            )
+            assert prop2_status == "ready", (
+                f"expected ready, got {prop2_status}"
+            )
 
             events = await client.get(f"/api/projects/{project_id}/events")
             assert [item["sequence"] for item in events.json()] == list(range(1, 13))

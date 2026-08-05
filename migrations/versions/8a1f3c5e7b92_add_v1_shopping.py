@@ -36,6 +36,12 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),
+        sa.ForeignKeyConstraint(
+            ["project_id"],
+            ["projects.id"],
+            name="fk_offer_snapshots_project_id_projects",
+            ondelete="RESTRICT",
+        ),
         sa.UniqueConstraint("project_id", "id", name="uq_offer_snapshot_project_id"),
     )
     op.create_index(
@@ -109,6 +115,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_constraint("fk_offer_snapshots_project_id_projects", "offer_snapshots", type_="foreignkey")  # noqa: E501
     op.drop_index("ix_checkout_handoffs_project_status", table_name="checkout_handoffs")
     op.drop_table("checkout_handoffs")
     op.drop_index("ix_purchase_proposals_project_status", table_name="purchase_proposals")

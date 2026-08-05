@@ -124,10 +124,12 @@ IfMatch = Annotated[str, Header(alias="If-Match", min_length=1)]
 def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     shopping_provider: ShoppingProvider | None = None,
+    artifact_root: str | None = None,
 ) -> FastAPI:
     api = FastAPI(title="Aidison API", version="0.1.0")
     api.state.session_factory = session_factory or create_session_factory()
     api.state.shopping_provider = shopping_provider
+    api.state.artifact_root = artifact_root or "artifacts/data"
 
     @api.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -808,7 +810,6 @@ def create_app(
             idempotency_key=idempotency_key,
         )
         response.headers["ETag"] = f'"{revision + 1}"'
-        response.headers["If-Match"] = f'"{result.basis_hash}"'
         return result
 
     @api.post(
