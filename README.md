@@ -26,6 +26,12 @@ Aidison 是一个面向个人面试展示的通用 DIY 工程 Agent Demo。当�
 
 所有尚未实际启动或执行的能力仍为 `not_checked`。
 
+## 配置约定
+
+根目录的 `config.yaml` 保存可提交、非敏感的运行配置，例如模型名称、Tavily 搜索参数、数据库 SQL 日志开关和 Worker 参数。`.env` 只保存密钥、数据库连接串等敏感或部署相关值；环境变量优先级高于 `.env`，`.env` 又高于 `config.yaml`。
+
+首次配置可复制 `.env.example` 为 `.env`，填入 `DASHSCOPE_API_KEY` 和 `TAVILY_API_KEY`。如果旧 `.env` 中还保留了 `DASHSCOPE_MODEL`、`OPENAI_MODEL`、`TAVILY_SEARCH_DEPTH` 等非敏感配置，请删除这些行，让它们由 `config.yaml` 管理。需要临时使用其他配置文件时，可设置 `AIDISON_CONFIG_FILE=/path/to/config.yaml`。
+
 ## 本地验证
 
 集成测试会执行 `TRUNCATE ... CASCADE`，必须连接隔离数据库。当前本地隔离实例发布在

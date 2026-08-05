@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir "uv==${UV_VERSION}" \
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock README.md alembic.ini ./
+COPY pyproject.toml uv.lock README.md alembic.ini config.yaml ./
 COPY packages/deepagents ./packages/deepagents
 COPY migrations ./migrations
 COPY src ./src

@@ -18,10 +18,10 @@ from langchain_mcp_adapters.interceptors import (
 )
 from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from trafilatura import extract
 
 from aidison.artifacts.contracts import ArtifactMetadata
+from aidison.config import AidisonSettings
 from aidison.runtime.contracts import JobClaim
 
 
@@ -94,8 +94,8 @@ class SearchBudgetBroker(Protocol):
     async def settle(self, operation_id: UUID) -> None: ...
 
 
-class TavilyMcpSearchSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+class TavilyMcpSearchSettings(AidisonSettings):
+    yaml_section = "research"
 
     api_key: SecretStr | None = Field(
         default=None,

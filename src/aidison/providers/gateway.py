@@ -4,7 +4,8 @@ from enum import StrEnum
 
 from langchain_openai import ChatOpenAI
 from pydantic import Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from aidison.config import AidisonSettings
 
 
 class ProviderName(StrEnum):
@@ -16,8 +17,8 @@ class ProviderUnavailableError(RuntimeError):
     pass
 
 
-class ProviderSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+class ProviderSettings(AidisonSettings):
+    yaml_section = "model"
 
     provider: ProviderName = Field(
         default=ProviderName.BAILIAN,

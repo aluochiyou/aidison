@@ -8,17 +8,17 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import text
 
 from aidison.application.research import ResearchWorker
+from aidison.config import AidisonSettings
 from aidison.infrastructure.database import create_engine, create_session_factory
 
 
-class WorkerSettings(BaseSettings):
+class WorkerSettings(AidisonSettings):
     """Runtime settings for the stateless research worker process."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+    yaml_section = "runtime"
 
     artifact_root: Path = Field(
         default=Path("artifacts/data"),

@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -12,11 +11,13 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
+from aidison.config import AidisonSettings
 
-class DatabaseSettings(BaseSettings):
+
+class DatabaseSettings(AidisonSettings):
     """PostgreSQL configuration loaded without making secrets part of Domain state."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore", populate_by_name=True)
+    yaml_section = "database"
 
     database_url: str = Field(
         default="postgresql+asyncpg://aidison:aidison_dev@localhost:5432/aidison",
