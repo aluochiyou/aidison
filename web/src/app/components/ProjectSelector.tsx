@@ -28,11 +28,27 @@ export function ProjectSelector({
   busy = false,
 }: ProjectSelectorProps) {
   const { projects, loadProject, loading, error } = useProjects();
-  const [projectId, setProjectId] = useState("");
+  const [projectQuery, setProjectQuery] = useState("");
+  const [queryError, setQueryError] = useState<string | null>(null);
 
   const openProject = async (id: string) => {
+    setQueryError(null);
     const snapshot = await loadProject(id);
     onSelect(snapshot.project);
+  };
+
+  const openProjectQuery = async () => {
+    const query = projectQuery.trim();
+    const normalized = query.toLocaleLowerCase("zh-CN");
+    const match = projects.find(
+      (project) =>
+        project.id === query || project.name.toLocaleLowerCase("zh-CN").includes(normalized),
+    );
+    if (!match) {
+      setQueryError("没有找到该项目，请输入项目名称或 UUID");
+      return;
+    }
+    await openProject(match.id);
   };
 
   return (
@@ -62,18 +78,21 @@ export function ProjectSelector({
         </div>
         <div className="project-id-row">
           <Input
-            value={projectId}
-            onChange={(event) => setProjectId(event.target.value)}
-            placeholder="粘贴 Project UUID"
+            value={projectQuery}
+            onChange={(event) => {
+              setProjectQuery(event.target.value);
+              setQueryError(null);
+            }}
+            placeholder="输入项目名称或 UUID"
           />
           <Button
-            disabled={!projectId.trim() || loading || busy}
-            onClick={() => void openProject(projectId.trim())}
+            disabled={!projectQuery.trim() || loading || busy}
+            onClick={() => void openProjectQuery()}
           >
             读取
           </Button>
         </div>
-        {error ? <p className="form-error">{error}</p> : null}
+        {queryError || error ? <p className="form-error">{queryError || error}</p> : null}
       </DialogContent>
     </Dialog>
   );

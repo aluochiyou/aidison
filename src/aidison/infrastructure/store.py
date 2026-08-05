@@ -139,6 +139,18 @@ class PostgresDomainStore(DomainStore):
         row = await self._session.get(ProjectRow, project_id)
         if row is None:
             return None
+        return self._project_from_row(row)
+
+    async def list_projects(self, *, limit: int = 50) -> Sequence[Project]:
+        rows = (
+            await self._session.scalars(
+                select(ProjectRow).order_by(ProjectRow.updated_at.desc()).limit(limit)
+            )
+        ).all()
+        return tuple(self._project_from_row(row) for row in rows)
+
+    @staticmethod
+    def _project_from_row(row: ProjectRow) -> Project:
         return Project(
             id=row.id,
             name=row.name,

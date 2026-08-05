@@ -30,8 +30,20 @@ export function useProjects() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(() => {
-    setProjects(getStoredProjects());
+  const refresh = useCallback(async () => {
+    const stored = getStoredProjects();
+    try {
+      const persisted = await getClient().listProjects();
+      setProjects(
+        persisted.map((project) => ({
+          id: project.id,
+          name: project.name,
+          lastAccessed: project.updated_at,
+        })),
+      );
+    } catch {
+      setProjects(stored);
+    }
   }, []);
 
   const createProject = useCallback(async (name: string, goal: string) => {
@@ -40,7 +52,7 @@ export function useProjects() {
     try {
       const { data } = await getClient().createProject(name, goal);
       storeProject(data.id, data.name);
-      refresh();
+      await refresh();
       return data;
     } catch (err: unknown) {
       const msg = err && typeof err === "object" && "error" in err
@@ -59,7 +71,7 @@ export function useProjects() {
     try {
       const snap = await getClient().getSnapshot(id);
       storeProject(snap.project.id, snap.project.name);
-      refresh();
+      await refresh();
       return snap;
     } catch (err: unknown) {
       const msg = err && typeof err === "object" && "error" in err
@@ -72,7 +84,7 @@ export function useProjects() {
     }
   }, [refresh]);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   return { projects, loading, error, createProject, loadProject, refresh };
 }

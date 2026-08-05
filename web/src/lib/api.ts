@@ -65,6 +65,18 @@ class AidisonClient {
     });
   }
 
+  async listProjects(): Promise<import("@/app/types/types").Project[]> {
+    const res = await fetch(`${this.baseUrl}/api/projects`);
+    if (!res.ok) {
+      let err: ApiError;
+      try { err = await res.json(); } catch {
+        err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
+      }
+      throw err;
+    }
+    return res.json();
+  }
+
   async getProject(projectId: string) {
     return this.req<import("@/app/types/types").Project>("GET", `/api/projects/${projectId}`);
   }

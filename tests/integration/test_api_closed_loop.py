@@ -71,6 +71,10 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             project = created.json()
             project_id = project["id"]
 
+            listed = await client.get("/api/projects")
+            assert listed.status_code == 200
+            assert [item["id"] for item in listed.json()] == [project_id]
+
             replay = await client.post(
                 "/api/projects",
                 json=project_payload,

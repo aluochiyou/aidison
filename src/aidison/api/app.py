@@ -221,6 +221,10 @@ def create_app(
         response.headers["ETag"] = f'"{project.revision}"'
         return project
 
+    @api.get("/api/projects")
+    async def list_projects(session: DbSession) -> Any:
+        return await PostgresDomainStore(session).list_projects()
+
     @api.get("/api/projects/{project_id}")
     async def get_project(project_id: UUID, response: Response, session: DbSession) -> Any:
         project = await PostgresDomainStore(session).get_project(project_id)

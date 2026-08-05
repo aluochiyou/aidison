@@ -63,6 +63,15 @@ class InMemoryDomainStore:
     async def get_project(self, project_id: UUID) -> Project | None:
         return self.projects.get(project_id)
 
+    async def list_projects(self, *, limit: int = 50) -> Sequence[Project]:
+        return tuple(
+            sorted(
+                self.projects.values(),
+                key=lambda project: project.updated_at,
+                reverse=True,
+            )[:limit]
+        )
+
     async def update_project(self, project: Project, *, expected_revision: int) -> None:
         current = self.projects[project.id]
         if current.revision != expected_revision:
