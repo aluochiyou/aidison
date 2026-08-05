@@ -28,7 +28,6 @@ def upgrade() -> None:
         sa.Column("provider", sa.String(length=100), nullable=False),
         sa.Column("provider_offer_id", sa.String(length=500), nullable=False),
         sa.Column("snapshot_hash", sa.String(length=64), nullable=False),
-        sa.Column("status", sa.String(length=40), nullable=False, server_default="active"),
         sa.Column("payload", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column(
             "observed_at",

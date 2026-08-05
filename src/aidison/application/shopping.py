@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 
 from aidison.application.ports import DomainStore
@@ -29,10 +30,18 @@ from aidison.domain.models import (
 from aidison.providers.shopping import (
     CartLineInput,
     ShoppingConfigError,
-    ShoppingOffer,
     ShoppingProvider,
     ShoppingProviderError,
 )
+
+_VALID_REGIONS = frozenset({"CN", "US", "GB", "DE", "FR", "JP", "KR", "AU", "CA", "SG"})
+
+
+def _validate_region(region: str) -> str:
+    upper = region.strip().upper()
+    if upper not in _VALID_REGIONS:
+        raise DomainConflictError(f"unsupported region: {region}")
+    return upper
 
 
 class OfferSearchError(RuntimeError):
@@ -40,7 +49,7 @@ class OfferSearchError(RuntimeError):
 
 
 class CartCreationError(RuntimeError):
-    """Wraps upstream cart creation failure details (safe for API)."""
+    """Wraps policy-violating cart creation failures (not ambiguous — hard fail)."""
 
 
 class ShoppingApplication:
@@ -56,7 +65,7 @@ class ShoppingApplication:
         self._provider = shopping_provider
         self._project_app = project_app or ProjectApplication(store)
 
-    # ── Offer search (query — not idempotent but read-only) ──────────
+    # ── Offer search (persists snapshots; uses If-Match) ─────────────
 
     async def search_offers(
         self,
@@ -67,11 +76,13 @@ class ShoppingApplication:
         bom_line_id: str,
         region: str,
         max_results: int = 10,
-    ) -> tuple[Sequence[OfferSnapshot], Sequence[ShoppingOffer]]:
-        """Search provider for offers and return immutable OfferSnapshots.
+    ) -> Sequence[OfferSnapshot]:
+        """Search provider for offers, persist snapshots, return them.
 
-        The provider result is an append-only observation; users pick an offer
-        snapshot to anchor a PurchaseProposal.
+        The provider result is an append-only observation; each snapshot is
+        persisted so the client can reference it by UUID when creating a
+        PurchaseProposal.  This write side-effect is why the endpoint
+        requires If-Match.
         """
         if not self._provider.available:
             raise ShoppingConfigError(f"provider {self._provider.name} is unavailable")
@@ -94,12 +105,11 @@ class ShoppingApplication:
             raise
 
         if not offers:
-            return (), ()
+            return ()
 
         snapshots: list[OfferSnapshot] = []
         for offer in offers:
             observed = offer.observed_at or datetime.now(UTC)
-            raw = offer.raw_provider_payload
             snapshot_hash = canonical_hash(
                 project_id,
                 project.active_solution_version_id,
@@ -114,34 +124,36 @@ class ShoppingApplication:
                 offer.quantity_available,
                 offer.product_url,
                 observed,
-                raw,
             )
-            snapshots.append(
-                OfferSnapshot(
-                    project_id=project_id,
-                    solution_version_id=project.active_solution_version_id,
-                    bom_line_id=bom_line_id,
-                    provider=offer.provider,
-                    provider_offer_id=offer.provider_offer_id,
-                    merchandise_id=offer.merchandise_id,
-                    seller=offer.seller,
-                    title=offer.title,
-                    condition=offer.condition,
-                    availability=offer.availability.value,
-                    unit_price=offer.unit_price,
-                    currency=offer.currency,
-                    shipping_estimate=offer.shipping_estimate,
-                    tax_estimate=offer.tax_estimate,
-                    region=offer.region,
-                    quantity_available=offer.quantity_available,
-                    product_url=offer.product_url,
-                    observed_at=observed,
-                    expires_at=offer.expires_at,
-                    snapshot_hash=snapshot_hash,
-                    provenance=f"{offer.provider}:search:{query[:200]}",
-                )
+            snap = OfferSnapshot(
+                project_id=project_id,
+                solution_version_id=project.active_solution_version_id,
+                bom_line_id=bom_line_id,
+                provider=offer.provider,
+                provider_offer_id=offer.provider_offer_id,
+                merchandise_id=offer.merchandise_id,
+                seller=offer.seller,
+                title=offer.title,
+                condition=offer.condition,
+                availability=offer.availability.value,
+                unit_price=offer.unit_price,
+                currency=offer.currency,
+                shipping_estimate=offer.shipping_estimate,
+                tax_estimate=offer.tax_estimate,
+                region=offer.region,
+                quantity_available=offer.quantity_available,
+                product_url=offer.product_url,
+                observed_at=observed,
+                expires_at=offer.expires_at,
+                snapshot_hash=snapshot_hash,
+                provenance=f"{offer.provider}:search:{query[:200]}",
             )
-        return tuple(snapshots), offers
+            # Persist each snapshot immediately so it is retrievable
+            await self._store.add_offer_snapshot(snap)
+            snapshots.append(snap)
+
+        await self._store.commit()
+        return tuple(snapshots)
 
     # ── Purchase proposal creation ────────────────────────────────────
 
@@ -161,6 +173,20 @@ class ShoppingApplication:
         idempotency_key: str,
     ) -> PurchaseProposal:
         """Snapshot an offer and create a Draft PurchaseProposal."""
+        region = _validate_region(region)
+
+        # Enforce max_total via Decimal
+        try:
+            unit_d = Decimal(offer_snapshot.unit_price)
+            max_d = Decimal(max_total)
+            total = unit_d * quantity
+        except InvalidOperation as exc:
+            raise DomainConflictError("invalid numeric format in price or max_total") from exc
+        if total > max_d:
+            raise DomainConflictError(
+                f"total {total} exceeds max_total {max_d}"
+            )
+
         payload_hash = canonical_hash(
             "create_purchase_proposal",
             project_id,
@@ -195,8 +221,10 @@ class ShoppingApplication:
         if offer_snapshot.expires_at is not None and offer_snapshot.expires_at < datetime.now(UTC):
             raise DomainConflictError("offer snapshot has expired")
 
-        # Persist the offer snapshot
-        await self._store.add_offer_snapshot(offer_snapshot)
+        # Persist the offer snapshot if not already stored
+        existing = await self._store.get_offer_snapshot(offer_snapshot.id)
+        if existing is None:
+            await self._store.add_offer_snapshot(offer_snapshot)
 
         basis_hash = canonical_hash(
             project_id,
@@ -250,8 +278,8 @@ class ShoppingApplication:
     ) -> PurchaseProposal:
         """Confirm line items on a DRAFT proposal, moving it to READY.
 
-        confirmed_line_ids must be a non-empty subset of the BOM line IDs
-        associated with this proposal (via the module/bom structure).
+        confirmed_line_ids must be a non-empty subset of the offer's BOM
+        line IDs as recorded on the offer snapshot.
         """
         payload_hash = canonical_hash(
             "confirm_proposal_lines",
@@ -282,6 +310,15 @@ class ShoppingApplication:
         confirmed = tuple(dict.fromkeys(confirmed_line_ids))
         if not confirmed:
             raise DomainConflictError("at least one line must be confirmed")
+
+        # Validate line_ids against the offer's BOM line
+        offer = await self._store.get_offer_snapshot(proposal.offer_snapshot_id)
+        if offer is None:
+            raise DomainNotFoundError("offer snapshot not found")
+        if offer.bom_line_id not in confirmed:
+            raise DomainConflictError(
+                f"confirmed line IDs must include the offer's bom_line_id '{offer.bom_line_id}'"
+            )
 
         updated = proposal.model_copy(
             update={
@@ -325,7 +362,11 @@ class ShoppingApplication:
 
         The proposal must be READY.  The handoff moves through:
         PREPARED → DISPATCHED (cart created successfully)
-        PREPARED → AMBIGUOUS (provider response is indeterminate)
+        PREPARED → AMBIGUOUS (provider response is indeterminate —
+            proposal stays READY, no auto-retry)
+
+        Policy violations (CartCreationError, e.g. non-HTTPS checkout URL)
+        fail hard and do NOT result in AMBIGUOUS.
         """
         if not self._provider.available:
             raise ShoppingConfigError(f"provider {self._provider.name} is unavailable")
@@ -370,6 +411,7 @@ class ShoppingApplication:
 
         # Attempt cart creation
         now = datetime.now(UTC)
+        proposal_updated = False
         try:
             cart_inputs = [
                 CartLineInput(
@@ -377,7 +419,9 @@ class ShoppingApplication:
                     quantity=proposal.quantity,
                 )
             ]
-            cart = await self._provider.create_cart(lines=cart_inputs, region=proposal.region)
+            cart = await self._provider.create_cart(
+                lines=cart_inputs, region=proposal.region
+            )
 
             # Validate checkout URL is HTTPS (defence-in-depth)
             if not cart.checkout_url.startswith("https://"):
@@ -391,25 +435,26 @@ class ShoppingApplication:
                     "dispatched_at": now,
                 }
             )
-        except (ShoppingProviderError, CartCreationError):
+            # Only mark HANDED_OFF on successful dispatch
+            proposal = proposal.model_copy(
+                update={
+                    "status": PurchaseProposalStatus.HANDED_OFF,
+                    "handed_off_at": now,
+                }
+            )
+            proposal_updated = True
+        except CartCreationError:
+            # Policy violation (non-HTTPS, etc.) — fail hard, do NOT persist
+            raise
+        except ShoppingProviderError:
             # Ambiguous: the cart may or may not have been created —
-            # do NOT retry automatically; let the user/agent assess.
+            # do NOT retry automatically; keep proposal READY
             handoff = handoff.model_copy(
                 update={
                     "status": CheckoutHandoffStatus.AMBIGUOUS,
                     "resolved_at": now,
                 }
             )
-            # Still persist the handoff — fail-safe, no automatic retry
-        except ShoppingConfigError:
-            raise
-
-        updated_proposal = proposal.model_copy(
-            update={
-                "status": PurchaseProposalStatus.HANDED_OFF,
-                "handed_off_at": now,
-            }
-        )
 
         await self._store.update_project(
             project=project.model_copy(
@@ -418,7 +463,8 @@ class ShoppingApplication:
             expected_revision=project.revision,
         )
         await self._store.add_checkout_handoff(handoff)
-        await self._store.update_purchase_proposal(updated_proposal)
+        if proposal_updated:
+            await self._store.update_purchase_proposal(proposal)
         await self._store.append_event(
             project.id,
             "checkout.handoff_created",

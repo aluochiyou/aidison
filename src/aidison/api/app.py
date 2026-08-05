@@ -18,7 +18,6 @@ from aidison.api.schemas import (
     ApprovePatchRequest,
     ApproveRequirementsRequest,
     ConfirmLinesRequest,
-    CreateCheckoutHandoffRequest,
     CreateProjectRequest,
     CreatePurchaseProposalRequest,
     FreezeSolutionRequest,
@@ -739,9 +738,9 @@ def create_app(
         body: SearchOffersRequest,
         if_match: IfMatch,
         session: DbSession,
-    ) -> dict[str, Any]:
+    ) -> Any:
         revision = _parse_revision(if_match)
-        snapshots, raw_offers = await _shopping_app(session).search_offers(
+        snapshots = await _shopping_app(session).search_offers(
             project_id=project_id,
             expected_project_revision=revision,
             query=body.query,
@@ -749,11 +748,7 @@ def create_app(
             region=body.region,
             max_results=body.max_results,
         )
-        return {
-            "offers": raw_offers,
-            "snapshots": snapshots,
-            "project_revision": revision,
-        }
+        return snapshots  # Return the array directly — no raw_offers
 
     @api.post("/api/projects/{project_id}/purchase-proposals", status_code=status.HTTP_201_CREATED)
     async def create_purchase_proposal(
@@ -788,7 +783,6 @@ def create_app(
             idempotency_key=idempotency_key,
         )
         response.headers["ETag"] = f'"{revision + 1}"'
-        response.headers["If-Match"] = f'"{proposal.basis_hash}"'
         return proposal
 
     @api.post("/api/purchase-proposals/{proposal_id}/confirm-lines")
@@ -823,7 +817,6 @@ def create_app(
     )
     async def create_checkout_handoff_route(
         proposal_id: UUID,
-        body: CreateCheckoutHandoffRequest,
         idempotency_key: IdempotencyKey,
         if_match: IfMatch,
         response: Response,
@@ -843,6 +836,59 @@ def create_app(
         )
         response.headers["ETag"] = f'"{revision + 1}"'
         return handoff
+
+    @api.get("/api/artifacts/{artifact_id}/content")
+    async def get_artifact_content(
+        artifact_id: UUID,
+        request: Request,
+        session: DbSession,
+    ) -> Any:
+        """Read artifact bytes with content-hash verification.
+
+        Only text/markdown and application/json media types are served
+        inline.  All others return 415.
+        """
+        from pathlib import Path
+
+        from aidison.infrastructure.artifacts import (
+            ArtifactIntegrityError,
+            ArtifactNotFoundError,
+            ContentAddressedArtifactStore,
+        )
+        from aidison.infrastructure.orm import ArtifactRow
+
+        row = await session.scalar(
+            select(ArtifactRow).where(ArtifactRow.id == artifact_id)
+        )
+        if row is None:
+            raise DomainNotFoundError("artifact not found")
+
+        allowed = {"text/markdown", "application/json", "text/plain"}
+        if row.media_type not in allowed:
+            raise HTTPException(
+                status_code=415,
+                detail="artifact media type is not supported for inline content",
+            )
+
+        root = Path(getattr(request.app.state, "artifact_root", "/data/artifacts"))
+        store = ContentAddressedArtifactStore(session, root)
+        try:
+            content = await store.read_bytes(
+                project_id=row.project_id, artifact_id=artifact_id
+            )
+        except ArtifactNotFoundError as exc:
+            raise DomainNotFoundError(str(exc)) from exc
+        except ArtifactIntegrityError as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+        return Response(
+            content=content,
+            media_type=row.media_type,
+            headers={
+                "Content-Disposition": f'inline; filename="{artifact_id}"',
+                "X-Content-Hash": row.content_hash,
+            },
+        )
 
     @api.get("/api/artifacts/{artifact_id}")
     async def get_artifact(

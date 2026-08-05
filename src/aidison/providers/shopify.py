@@ -126,7 +126,7 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
             variables={"query": query, "first": max_results, "country": _region_code(region)},
             timeout_seconds=timeout_seconds,
         )
-        return self._parse_search_results(query, raw, max_results)
+        return self._parse_search_results(query, raw, max_results, region)
 
     async def create_cart(
         self,
@@ -214,7 +214,7 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
         return body
 
     def _parse_search_results(
-        self, query: str, raw: dict[str, Any], max_results: int
+        self, query: str, raw: dict[str, Any], max_results: int, region: str = "CN"
     ) -> Sequence[ShoppingOffer]:
         data = _deep_get(raw, "data", "products")
         if data is None:
@@ -262,9 +262,11 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
                 else:
                     availability = OfferAvailability.OUT_OF_STOCK
 
-                qty_available = vnode.get("quantityAvailable") or 0
+                qty_available = vnode.get("quantityAvailable")
                 if qty_available is None:
                     qty_available = 1 if availability == OfferAvailability.IN_STOCK else 0
+                else:
+                    qty_available = max(0, int(qty_available))
 
                 offers.append(
                     ShoppingOffer(
@@ -279,7 +281,7 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
                         currency=currency,
                         shipping_estimate=None,
                         tax_estimate=None,
-                        region="CN",
+                        region=region,
                         quantity_available=max(0, int(qty_available)),
                         product_url=product_url or (
                             f"https://{self._store_domain}"
@@ -340,7 +342,9 @@ def _region_code(region: str) -> str:
     if _re.fullmatch(r"[A-Z]{2}", upper):
         return upper
     mapping: dict[str, str] = {"CN": "CN", "US": "US", "EU": "DE", "UK": "GB"}
-    return mapping.get(upper, "CN")
+    if upper not in mapping:
+        raise ShoppingConfigError(f"unsupported region: {region}")
+    return mapping[upper]
 
 
 def _deep_get(data: dict[str, Any], *path: str) -> Any:

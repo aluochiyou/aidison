@@ -812,7 +812,6 @@ class OfferSnapshotRow(Base):
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_offer_id: Mapped[str] = mapped_column(String(500), nullable=False)
     snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    status: Mapped[str] = mapped_column(String(40), nullable=False, default="active")
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     observed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
