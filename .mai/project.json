@@ -1,8 +1,7 @@
 {
   "version": 1,
-  "projectId": "project-c84036f4f6d947c3",
-  "revision": 63,
-  "updatedAt": "2026-08-03T07:10:12.374Z",
+  "revision": 65,
+  "updatedAt": "2026-08-05T11:50:04.069Z",
   "modules": [
     {
       "id": "domain-runtime",
@@ -389,6 +388,32 @@
       "evidence": [
         "docs/status/team.json"
       ]
+    },
+    {
+      "id": "v1-minimal-closed-loop",
+      "title": "V1 最小闭环",
+      "description": "Orca 多 Agent 与隔离 worktree 开发完成；V1 采购搜索、受约束 PurchaseProposal、幂等 checkout handoff、控制台与集成健康已闭环。",
+      "status": "done",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "v1-shopping-console",
+      "acceptanceCriteria": [
+        "V0 不回退",
+        "V1 采购搜索到托管 checkout handoff 闭环",
+        "外部副作用幂等",
+        "迁移从零可复现",
+        "前后端构建与集成测试通过"
+      ],
+      "evidence": [
+        "git:8f4e24e",
+        "pytest:120 passed, 2 skipped",
+        "ruff:passed",
+        "mypy strict:passed",
+        "alembic empty-db upgrade/check:passed",
+        "frontend tsc/lint/webpack build:passed",
+        "browser acceptance:passed",
+        "idle SSE polling regression:passed"
+      ]
     }
   ],
   "phases": [],
@@ -541,5 +566,6 @@
     "nodes": [],
     "edges": []
   },
-  "sourceDocuments": []
+  "sourceDocuments": [],
+  "projectId": "project-c84036f4f6d947c3"
 }
