@@ -496,8 +496,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
 
             # ── V1 shopping closed loop ────────────────────────────────
 
-            fake_provider = FakeShoppingProvider()
-            rev9_solution = solution.json()["solution"]
+            active_solution = patched.json()["solution"]
 
             # Step 1: Search offers
             search_payload = {
@@ -532,14 +531,14 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
 
             # Step 3: Create purchase proposal with max_total enforcement
             proposal_payload = {
-                "solution_version_id": rev9_solution["id"],
+                "solution_version_id": active_solution["id"],
                 "offer_snapshot_id": offer_snapshot_id,
                 "quantity": 1,
                 "region": "CN",
                 "currency": "CNY",
                 "max_total": "600.00",
             }
-            proposal = await client.post(
+            proposal_response = await client.post(
                 f"/api/projects/{project_id}/purchase-proposals",
                 json=proposal_payload,
                 headers={
@@ -547,12 +546,14 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                     "If-Match": '"9"',
                 },
             )
-            assert proposal.status_code == 201, f"proposal failed: {proposal.text}"
-            prop = proposal.json()
+            assert proposal_response.status_code == 201, (
+                f"proposal failed: {proposal_response.text}"
+            )
+            prop = proposal_response.json()
             assert prop["status"] == "draft"
             assert prop["unit_price"] == "499.00"
             assert prop["max_total"] == "600.00"
-            assert proposal.headers["etag"] == '"10"'
+            assert proposal_response.headers["etag"] == '"10"'
 
             # max_total violation
             over_total = await client.post(
@@ -626,7 +627,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             prop2 = await client.post(
                 f"/api/projects/{project_id}/purchase-proposals",
                 json={
-                    "solution_version_id": rev9_solution["id"],
+                    "solution_version_id": active_solution["id"],
                     "offer_snapshot_id": snap2_id,
                     "quantity": 1,
                     "region": "CN",
@@ -678,12 +679,12 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
 
             events = await client.get(f"/api/projects/{project_id}/events")
-            assert [item["sequence"] for item in events.json()] == list(range(1, 13))
+            assert [item["sequence"] for item in events.json()] == list(range(1, 19))
             replayed_events = await client.get(
                 f"/api/projects/{project_id}/events",
                 params={"after": 5},
             )
-            assert [item["sequence"] for item in replayed_events.json()] == list(range(6, 13))
+            assert [item["sequence"] for item in replayed_events.json()] == list(range(6, 19))
             assert replayed_events.json()[0]["id"] == f"{project_id}:6"
     finally:
         await engine.dispose()

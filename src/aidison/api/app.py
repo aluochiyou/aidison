@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from pathlib import Path
 from typing import Annotated, Any, cast
 from uuid import UUID
 
@@ -124,12 +125,12 @@ IfMatch = Annotated[str, Header(alias="If-Match", min_length=1)]
 def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     shopping_provider: ShoppingProvider | None = None,
-    artifact_root: str | None = None,
+    artifact_root: Path | None = None,
 ) -> FastAPI:
     api = FastAPI(title="Aidison API", version="0.1.0")
     api.state.session_factory = session_factory or create_session_factory()
     api.state.shopping_provider = shopping_provider
-    api.state.artifact_root = artifact_root or "artifacts/data"
+    api.state.artifact_root = artifact_root or Path("artifacts/data")
 
     @api.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -849,8 +850,6 @@ def create_app(
         Only text/markdown and application/json media types are served
         inline.  All others return 415.
         """
-        from pathlib import Path
-
         from aidison.infrastructure.artifacts import (
             ArtifactIntegrityError,
             ArtifactNotFoundError,

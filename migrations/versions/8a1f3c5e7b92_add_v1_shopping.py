@@ -115,7 +115,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_offer_snapshots_project_id_projects", "offer_snapshots", type_="foreignkey")  # noqa: E501
+    op.drop_constraint(
+        "fk_offer_snapshots_project_id_projects",
+        "offer_snapshots",
+        type_="foreignkey",
+    )
     op.drop_index("ix_checkout_handoffs_project_status", table_name="checkout_handoffs")
     op.drop_table("checkout_handoffs")
     op.drop_index("ix_purchase_proposals_project_status", table_name="purchase_proposals")
