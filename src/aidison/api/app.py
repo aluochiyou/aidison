@@ -17,10 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from aidison.api.schemas import (
     ApprovePatchRequest,
     ApproveRequirementsRequest,
+    ConfirmLinesRequest,
+    CreateCheckoutHandoffRequest,
     CreateProjectRequest,
+    CreatePurchaseProposalRequest,
     FreezeSolutionRequest,
     ResearchProposalRequest,
     ResolveDecisionRequest,
+    SearchOffersRequest,
     SubmitObservationRequest,
 )
 from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
@@ -30,6 +34,11 @@ from aidison.application.service import (
     PreconditionFailedError,
     ProjectApplication,
     canonical_hash,
+)
+from aidison.application.shopping import (
+    CartCreationError,
+    OfferSearchError,
+    ShoppingApplication,
 )
 from aidison.domain.models import DecisionRequest as DomainDecisionRequest
 from aidison.domain.models import ImpactAnalysis
@@ -51,6 +60,7 @@ from aidison.infrastructure.runtime import (
     RuntimeNotFoundError,
 )
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.providers.shopping import ShoppingConfigError, ShoppingProvider
 
 SessionDependency = Annotated[AsyncSession, Depends()]
 
@@ -114,9 +124,11 @@ IfMatch = Annotated[str, Header(alias="If-Match", min_length=1)]
 
 def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    shopping_provider: ShoppingProvider | None = None,
 ) -> FastAPI:
     api = FastAPI(title="Aidison API", version="0.1.0")
     api.state.session_factory = session_factory or create_session_factory()
+    api.state.shopping_provider = shopping_provider
 
     @api.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -151,6 +163,18 @@ def create_app(
     async def runtime_not_found(_: Request, exc: RuntimeNotFoundError) -> JSONResponse:
         return _error(404, "not_found", str(exc))
 
+    @api.exception_handler(ShoppingConfigError)
+    async def shopping_unavailable(_: Request, exc: ShoppingConfigError) -> JSONResponse:
+        return _error(503, "shopping_unavailable", str(exc))
+
+    @api.exception_handler(OfferSearchError)
+    async def offer_search_failed(_: Request, exc: OfferSearchError) -> JSONResponse:
+        return _error(502, "offer_search_failed", str(exc))
+
+    @api.exception_handler(CartCreationError)
+    async def cart_creation_failed(_: Request, exc: CartCreationError) -> JSONResponse:
+        return _error(502, "cart_creation_failed", str(exc))
+
     @api.exception_handler(IntegrityError)
     async def persistence_conflict(_: Request, __: IntegrityError) -> JSONResponse:
         return _error(409, "persistence_conflict", "canonical write violates a constraint")
@@ -158,6 +182,27 @@ def create_app(
     @api.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @api.get("/api/integration-health")
+    async def integration_health(request: Request) -> dict[str, Any]:
+        provider = getattr(request.app.state, "shopping_provider", None)
+        return {
+            "status": "ok",
+            "shopping": {
+                "provider": provider.name if provider else "none",
+                "available": provider.available if provider else False,
+            },
+        }
+
+    # ── Helper ─────────────────────────────────────────────────────
+
+    def _shopping_app(session: AsyncSession) -> ShoppingApplication:
+        provider = getattr(api.state, "shopping_provider", None)
+        if provider is None:
+            raise ShoppingConfigError("no shopping provider configured")
+        return ShoppingApplication(PostgresDomainStore(session), provider)
+
+    # ── Project routes ──────────────────────────────────────────────
 
     @api.post("/api/projects", status_code=status.HTTP_201_CREATED)
     async def create_project(
@@ -515,6 +560,9 @@ def create_app(
             "observations": await store.list_observations(project_id),
             "impacts": [ImpactAnalysis.model_validate(item.payload) for item in impacts],
             "patch_sets": await store.list_patch_sets(project_id),
+            "offer_snapshots": await store.list_offer_snapshots(project_id),
+            "purchase_proposals": await store.list_purchase_proposals(project_id),
+            "checkout_handoffs": await store.list_checkout_handoffs(project_id),
             "runtime": {
                 "jobs": [
                     {
@@ -682,6 +730,144 @@ def create_app(
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    # ── V1 Shopping routes ──────────────────────────────────────────────
+
+    @api.post("/api/projects/{project_id}/shopping/offers/search")
+    async def search_offers(
+        project_id: UUID,
+        body: SearchOffersRequest,
+        if_match: IfMatch,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        revision = _parse_revision(if_match)
+        snapshots, raw_offers = await _shopping_app(session).search_offers(
+            project_id=project_id,
+            expected_project_revision=revision,
+            query=body.query,
+            bom_line_id=body.bom_line_id,
+            region=body.region,
+            max_results=body.max_results,
+        )
+        return {
+            "offers": raw_offers,
+            "snapshots": snapshots,
+            "project_revision": revision,
+        }
+
+    @api.post("/api/projects/{project_id}/purchase-proposals", status_code=status.HTTP_201_CREATED)
+    async def create_purchase_proposal(
+        project_id: UUID,
+        body: CreatePurchaseProposalRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        revision = _parse_revision(if_match)
+        store = PostgresDomainStore(session)
+        app = _shopping_app(session)
+
+        snapshot = await store.get_offer_snapshot(body.offer_snapshot_id)
+        if snapshot is None:
+            raise DomainNotFoundError("offer snapshot not found")
+        if snapshot.project_id != project_id:
+            raise DomainConflictError("offer snapshot belongs to another project")
+
+        proposal = await app.create_purchase_proposal(
+            project_id=project_id,
+            expected_project_revision=revision,
+            solution_version_id=body.solution_version_id,
+            offer_snapshot=snapshot,
+            quantity=body.quantity,
+            region=body.region,
+            currency=body.currency,
+            shipping_estimate=body.shipping_estimate,
+            tax_estimate=body.tax_estimate,
+            max_total=body.max_total,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        response.headers["If-Match"] = f'"{proposal.basis_hash}"'
+        return proposal
+
+    @api.post("/api/purchase-proposals/{proposal_id}/confirm-lines")
+    async def confirm_proposal_lines(
+        proposal_id: UUID,
+        body: ConfirmLinesRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        revision = _parse_revision(if_match)
+        store = PostgresDomainStore(session)
+        proposal = await store.get_purchase_proposal(proposal_id)
+        if proposal is None:
+            raise DomainNotFoundError("purchase proposal not found")
+
+        result = await _shopping_app(session).confirm_proposal_lines(
+            proposal_id=proposal_id,
+            expected_proposal_basis=proposal.basis_hash,
+            confirmed_line_ids=body.confirmed_line_ids,
+            expected_project_revision=revision,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        response.headers["If-Match"] = f'"{result.basis_hash}"'
+        return result
+
+    @api.post(
+        "/api/purchase-proposals/{proposal_id}/checkout-handoffs",
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def create_checkout_handoff_route(
+        proposal_id: UUID,
+        body: CreateCheckoutHandoffRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        revision = _parse_revision(if_match)
+        store = PostgresDomainStore(session)
+        proposal = await store.get_purchase_proposal(proposal_id)
+        if proposal is None:
+            raise DomainNotFoundError("purchase proposal not found")
+
+        handoff = await _shopping_app(session).create_checkout_handoff(
+            proposal_id=proposal_id,
+            expected_proposal_basis=proposal.basis_hash,
+            expected_project_revision=revision,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return handoff
+
+    @api.get("/api/artifacts/{artifact_id}")
+    async def get_artifact(
+        artifact_id: UUID,
+        session: DbSession,
+    ) -> Any:
+        """Read artifact metadata (content retrieval is via artifact+sha256 ref)."""
+        from aidison.infrastructure.orm import ArtifactRow
+
+        row = await session.scalar(
+            select(ArtifactRow).where(ArtifactRow.id == artifact_id)
+        )
+        if row is None:
+            raise DomainNotFoundError("artifact not found")
+        return {
+            "id": row.id,
+            "project_id": row.project_id,
+            "kind": row.kind,
+            "content_hash": row.content_hash,
+            "size_bytes": row.size_bytes,
+            "media_type": row.media_type,
+            "status": row.status,
+            "source_url": row.source_url,
+            "created_at": row.created_at,
+        }
 
     return api
 

@@ -59,3 +59,32 @@ class SubmitObservationRequest(ApiModel):
 
 class ApprovePatchRequest(ApiModel):
     basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+# ── V1 Shopping ─────────────────────────────────────────────────────────────
+
+
+class SearchOffersRequest(ApiModel):
+    query: str = Field(min_length=1, max_length=500)
+    bom_line_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    region: str = Field(default="CN", min_length=2, max_length=10)
+    max_results: int = Field(default=10, ge=1, le=50)
+
+
+class CreatePurchaseProposalRequest(ApiModel):
+    solution_version_id: UUID
+    offer_snapshot_id: UUID
+    quantity: int = Field(ge=1, le=10_000)
+    region: str = Field(min_length=1, max_length=10)
+    currency: str = Field(min_length=1, max_length=3)
+    shipping_estimate: str | None = Field(default=None, max_length=100)
+    tax_estimate: str | None = Field(default=None, max_length=100)
+    max_total: str = Field(min_length=1, max_length=100)
+
+
+class ConfirmLinesRequest(ApiModel):
+    confirmed_line_ids: tuple[str, ...] = Field(min_length=1)
+
+
+class CreateCheckoutHandoffRequest(ApiModel):
+    pass  # All data comes from the proposal; request body is a protocol marker.

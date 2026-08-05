@@ -6,14 +6,17 @@ from uuid import UUID
 from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
 from aidison.domain.models import (
     Candidate,
+    CheckoutHandoff,
     CompatibilityFinding,
     DecisionRequest,
     EvidenceBinding,
     ImpactAnalysis,
     Module,
     Observation,
+    OfferSnapshot,
     PatchSet,
     Project,
+    PurchaseProposal,
     RequirementRevision,
     SolutionProposal,
     SolutionVersion,
@@ -36,6 +39,9 @@ class InMemoryDomainStore:
         self.patch_sets: dict[UUID, PatchSet] = {}
         self.receipts: dict[str, tuple[str, str]] = {}
         self.events: list[tuple[UUID, int, str, dict[str, object]]] = []
+        self.offer_snapshots: dict[UUID, OfferSnapshot] = {}
+        self.purchase_proposals: dict[UUID, PurchaseProposal] = {}
+        self.checkout_handoffs: dict[UUID, CheckoutHandoff] = {}
 
     async def claim_command(self, idempotency_key: str, payload_hash: str) -> str | None:
         receipt = self.receipts.get(idempotency_key)
@@ -164,6 +170,36 @@ class InMemoryDomainStore:
 
     async def list_patch_sets(self, project_id: UUID) -> Sequence[PatchSet]:
         return [item for item in self.patch_sets.values() if item.project_id == project_id]
+
+    async def add_offer_snapshot(self, snapshot: OfferSnapshot) -> None:
+        self.offer_snapshots[snapshot.id] = snapshot
+
+    async def get_offer_snapshot(self, snapshot_id: UUID) -> OfferSnapshot | None:
+        return self.offer_snapshots.get(snapshot_id)
+
+    async def list_offer_snapshots(self, project_id: UUID) -> Sequence[OfferSnapshot]:
+        return [item for item in self.offer_snapshots.values() if item.project_id == project_id]
+
+    async def add_purchase_proposal(self, proposal: PurchaseProposal) -> None:
+        self.purchase_proposals[proposal.id] = proposal
+
+    async def get_purchase_proposal(self, proposal_id: UUID) -> PurchaseProposal | None:
+        return self.purchase_proposals.get(proposal_id)
+
+    async def list_purchase_proposals(self, project_id: UUID) -> Sequence[PurchaseProposal]:
+        return [item for item in self.purchase_proposals.values() if item.project_id == project_id]
+
+    async def update_purchase_proposal(self, proposal: PurchaseProposal) -> None:
+        self.purchase_proposals[proposal.id] = proposal
+
+    async def add_checkout_handoff(self, handoff: CheckoutHandoff) -> None:
+        self.checkout_handoffs[handoff.id] = handoff
+
+    async def get_checkout_handoff(self, handoff_id: UUID) -> CheckoutHandoff | None:
+        return self.checkout_handoffs.get(handoff_id)
+
+    async def list_checkout_handoffs(self, project_id: UUID) -> Sequence[CheckoutHandoff]:
+        return [item for item in self.checkout_handoffs.values() if item.project_id == project_id]
 
     async def append_event(
         self, project_id: UUID, event_type: str, payload: dict[str, object]

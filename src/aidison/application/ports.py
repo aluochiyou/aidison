@@ -6,14 +6,17 @@ from uuid import UUID
 
 from aidison.domain.models import (
     Candidate,
+    CheckoutHandoff,
     CompatibilityFinding,
     DecisionRequest,
     EvidenceBinding,
     ImpactAnalysis,
     Module,
     Observation,
+    OfferSnapshot,
     PatchSet,
     Project,
+    PurchaseProposal,
     RequirementRevision,
     SolutionProposal,
     SolutionVersion,
@@ -136,6 +139,26 @@ class DomainStore(Protocol):
     async def get_patch_set(self, patch_set_id: UUID) -> PatchSet | None: ...
 
     async def list_patch_sets(self, project_id: UUID) -> Sequence[PatchSet]: ...
+
+    async def add_offer_snapshot(self, snapshot: OfferSnapshot) -> None: ...
+
+    async def get_offer_snapshot(self, snapshot_id: UUID) -> OfferSnapshot | None: ...
+
+    async def list_offer_snapshots(self, project_id: UUID) -> Sequence[OfferSnapshot]: ...
+
+    async def add_purchase_proposal(self, proposal: PurchaseProposal) -> None: ...
+
+    async def get_purchase_proposal(self, proposal_id: UUID) -> PurchaseProposal | None: ...
+
+    async def list_purchase_proposals(self, project_id: UUID) -> Sequence[PurchaseProposal]: ...
+
+    async def update_purchase_proposal(self, proposal: PurchaseProposal) -> None: ...
+
+    async def add_checkout_handoff(self, handoff: CheckoutHandoff) -> None: ...
+
+    async def get_checkout_handoff(self, handoff_id: UUID) -> CheckoutHandoff | None: ...
+
+    async def list_checkout_handoffs(self, project_id: UUID) -> Sequence[CheckoutHandoff]: ...
 
     async def append_event(
         self,

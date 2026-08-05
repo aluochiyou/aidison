@@ -791,3 +791,71 @@ class AttemptResultRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ── V1 Shopping ────────────────────────────────────────────────────────────
+
+
+class OfferSnapshotRow(Base):
+    __tablename__ = "offer_snapshots"
+    __table_args__ = (
+        UniqueConstraint("project_id", "id", name="uq_offer_snapshot_project_id"),
+        Index("ix_offer_snapshots_project_solution", "project_id", "solution_version_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
+    solution_version_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    bom_line_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_offer_id: Mapped[str] = mapped_column(String(500), nullable=False)
+    snapshot_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False, default="active")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PurchaseProposalRow(Base):
+    __tablename__ = "purchase_proposals"
+    __table_args__ = (
+        UniqueConstraint("project_id", "id", name="uq_purchase_proposal_project_id"),
+        Index("ix_purchase_proposals_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
+    solution_version_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    offer_snapshot_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CheckoutHandoffRow(Base):
+    __tablename__ = "checkout_handoffs"
+    __table_args__ = (
+        UniqueConstraint("project_id", "id", name="uq_checkout_handoff_project_id"),
+        Index("ix_checkout_handoffs_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
+    proposal_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

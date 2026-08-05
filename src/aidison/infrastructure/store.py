@@ -4,6 +4,7 @@ from collections.abc import Sequence
 from typing import Any, TypeVar, cast
 from uuid import UUID
 
+import sqlalchemy
 from pydantic import BaseModel
 from sqlalchemy import CursorResult, Select, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,7 @@ from aidison.application.ports import (
 )
 from aidison.domain.models import (
     Candidate,
+    CheckoutHandoff,
     CompatibilityFinding,
     DecisionRequest,
     DecisionStatus,
@@ -23,9 +25,11 @@ from aidison.domain.models import (
     ImpactStatus,
     Module,
     Observation,
+    OfferSnapshot,
     PatchSet,
     Project,
     ProjectStage,
+    PurchaseProposal,
     RequirementRevision,
     SolutionProposal,
     SolutionProposalStatus,
@@ -33,6 +37,7 @@ from aidison.domain.models import (
 )
 from aidison.infrastructure.orm import (
     CandidateRow,
+    CheckoutHandoffRow,
     CommandReceiptRow,
     CompatibilityFindingRow,
     DecisionRequestRow,
@@ -41,8 +46,10 @@ from aidison.infrastructure.orm import (
     ImpactAnalysisRow,
     ModuleRow,
     ObservationRow,
+    OfferSnapshotRow,
     PatchSetRow,
     ProjectRow,
+    PurchaseProposalRow,
     RequirementRevisionRow,
     SolutionProposalRow,
     SolutionVersionRow,
@@ -547,6 +554,137 @@ class PostgresDomainStore(DomainStore):
             )
         ).all()
         return [_decode(PatchSet, row.payload) for row in rows]
+
+    # ── V1 Shopping ────────────────────────────────────────────────────
+
+    async def add_offer_snapshot(self, snapshot: OfferSnapshot) -> None:
+        self._session.add(
+            OfferSnapshotRow(
+                id=snapshot.id,
+                project_id=snapshot.project_id,
+                solution_version_id=snapshot.solution_version_id,
+                bom_line_id=snapshot.bom_line_id,
+                provider=snapshot.provider,
+                provider_offer_id=snapshot.provider_offer_id,
+                snapshot_hash=snapshot.snapshot_hash,
+                payload=_payload(snapshot),
+                observed_at=snapshot.observed_at,
+            )
+        )
+
+    async def get_offer_snapshot(self, snapshot_id: UUID) -> OfferSnapshot | None:
+        row = await self._session.get(OfferSnapshotRow, snapshot_id)
+        if row is None:
+            return None
+        snapshot = _decode(OfferSnapshot, row.payload)
+        _assert_identity(
+            entity_name="OfferSnapshot",
+            row_id=row.id,
+            row_project_id=row.project_id,
+            payload_id=snapshot.id,
+            payload_project_id=snapshot.project_id,
+        )
+        return snapshot
+
+    async def list_offer_snapshots(self, project_id: UUID) -> Sequence[OfferSnapshot]:
+        statement = (
+            select(OfferSnapshotRow)
+            .where(OfferSnapshotRow.project_id == project_id)
+            .order_by(OfferSnapshotRow.observed_at.desc())
+        )
+        rows = (await self._session.scalars(statement)).all()
+        return [_decode(OfferSnapshot, row.payload) for row in rows]
+
+    async def add_purchase_proposal(self, proposal: PurchaseProposal) -> None:
+        self._session.add(
+            PurchaseProposalRow(
+                id=proposal.id,
+                project_id=proposal.project_id,
+                solution_version_id=proposal.solution_version_id,
+                offer_snapshot_id=proposal.offer_snapshot_id,
+                status=proposal.status.value,
+                basis_hash=proposal.basis_hash,
+                payload=_payload(proposal),
+            )
+        )
+
+    async def get_purchase_proposal(self, proposal_id: UUID) -> PurchaseProposal | None:
+        row = await self._session.get(PurchaseProposalRow, proposal_id)
+        if row is None:
+            return None
+        proposal = _decode(PurchaseProposal, row.payload)
+        _assert_identity(
+            entity_name="PurchaseProposal",
+            row_id=row.id,
+            row_project_id=row.project_id,
+            payload_id=proposal.id,
+            payload_project_id=proposal.project_id,
+        )
+        if row.status != proposal.status.value or row.basis_hash != proposal.basis_hash:
+            raise PersistenceCorruptionError("PurchaseProposal typed state differs from payload")
+        return proposal
+
+    async def list_purchase_proposals(self, project_id: UUID) -> Sequence[PurchaseProposal]:
+        rows = (
+            await self._session.scalars(
+                select(PurchaseProposalRow)
+                .where(PurchaseProposalRow.project_id == project_id)
+                .order_by(PurchaseProposalRow.created_at.desc())
+            )
+        ).all()
+        return [_decode(PurchaseProposal, row.payload) for row in rows]
+
+    async def update_purchase_proposal(self, proposal: PurchaseProposal) -> None:
+        statement = (
+            sqlalchemy.update(PurchaseProposalRow)
+            .where(
+                PurchaseProposalRow.id == proposal.id,
+                PurchaseProposalRow.basis_hash == proposal.basis_hash,
+            )
+            .values(status=proposal.status.value, payload=_payload(proposal))
+        )
+        result = cast(CursorResult[Any], await self._session.execute(statement))
+        if result.rowcount != 1:
+            raise OptimisticConcurrencyError("purchase proposal is stale or already updated")
+
+    async def add_checkout_handoff(self, handoff: CheckoutHandoff) -> None:
+        self._session.add(
+            CheckoutHandoffRow(
+                id=handoff.id,
+                project_id=handoff.project_id,
+                proposal_id=handoff.proposal_id,
+                provider=handoff.provider,
+                status=handoff.status.value,
+                basis_hash=handoff.basis_hash,
+                payload=_payload(handoff),
+            )
+        )
+
+    async def get_checkout_handoff(self, handoff_id: UUID) -> CheckoutHandoff | None:
+        row = await self._session.get(CheckoutHandoffRow, handoff_id)
+        if row is None:
+            return None
+        handoff = _decode(CheckoutHandoff, row.payload)
+        _assert_identity(
+            entity_name="CheckoutHandoff",
+            row_id=row.id,
+            row_project_id=row.project_id,
+            payload_id=handoff.id,
+            payload_project_id=handoff.project_id,
+        )
+        if row.status != handoff.status.value or row.basis_hash != handoff.basis_hash:
+            raise PersistenceCorruptionError("CheckoutHandoff typed state differs from payload")
+        return handoff
+
+    async def list_checkout_handoffs(self, project_id: UUID) -> Sequence[CheckoutHandoff]:
+        rows = (
+            await self._session.scalars(
+                select(CheckoutHandoffRow)
+                .where(CheckoutHandoffRow.project_id == project_id)
+                .order_by(CheckoutHandoffRow.created_at.desc())
+            )
+        ).all()
+        return [_decode(CheckoutHandoff, row.payload) for row in rows]
 
     async def append_event(
         self,

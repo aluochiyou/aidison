@@ -409,3 +409,109 @@ class PatchSet(FrozenModel):
         return self
 
     created_at: datetime = Field(default_factory=utc_now)
+
+
+# ── V1 Shopping ──────────────────────────────────────────────────────────────
+
+
+class PurchaseProposalStatus(StrEnum):
+    DRAFT = "draft"
+    READY = "ready"
+    EXPIRED = "expired"
+    HANDED_OFF = "handed_off"
+
+
+class CheckoutHandoffStatus(StrEnum):
+    PREPARED = "prepared"
+    DISPATCHED = "dispatched"
+    SUCCEEDED = "succeeded"
+    AMBIGUOUS = "ambiguous"
+
+
+class OfferSnapshot(FrozenModel):
+    """Immutable provider offer captured at observation time."""
+
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    solution_version_id: UUID
+    bom_line_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    provider: str = Field(min_length=1, max_length=100)
+    provider_offer_id: str = Field(min_length=1, max_length=500)
+    merchandise_id: str | None = Field(default=None, max_length=500)
+    seller: str | None = Field(default=None, max_length=300)
+    title: str = Field(min_length=1, max_length=1_000)
+    condition: str | None = Field(default=None, max_length=100)
+    availability: str = Field(min_length=1, max_length=40)
+    unit_price: str = Field(min_length=1, max_length=100)
+    currency: str = Field(min_length=1, max_length=3)
+    shipping_estimate: str | None = Field(default=None, max_length=100)
+    tax_estimate: str | None = Field(default=None, max_length=100)
+    region: str = Field(min_length=1, max_length=10)
+    quantity_available: int = Field(ge=0)
+    product_url: str = Field(min_length=1, max_length=4_000)
+    observed_at: datetime = Field(default_factory=utc_now)
+    expires_at: datetime | None = None
+    snapshot_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    provenance: str = Field(min_length=1, max_length=400)
+
+
+class PurchaseProposal(FrozenModel):
+    """A purchase proposal bound to an exact SolutionVersion and offer snapshot."""
+
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    solution_version_id: UUID
+    offer_snapshot_id: UUID
+    quantity: int = Field(ge=1)
+    region: str = Field(min_length=1, max_length=10)
+    currency: str = Field(min_length=1, max_length=3)
+    shipping_estimate: str | None = Field(default=None, max_length=100)
+    tax_estimate: str | None = Field(default=None, max_length=100)
+    max_total: str = Field(min_length=1, max_length=100)
+    unit_price: str = Field(min_length=1, max_length=100)
+    status: PurchaseProposalStatus = PurchaseProposalStatus.DRAFT
+    basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    confirmed_line_ids: tuple[str, ...] = ()
+    expires_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    handed_off_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def handed_off_has_timestamp(self) -> PurchaseProposal:
+        if self.status is PurchaseProposalStatus.HANDED_OFF and self.handed_off_at is None:
+            raise ValueError("handed_off proposal requires handed_off_at")
+        return self
+
+
+class CheckoutHandoff(FrozenModel):
+    """A checkout handoff bridging the proposal to a provider-hosted cart."""
+
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    proposal_id: UUID
+    basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    provider: str = Field(min_length=1, max_length=100)
+    provider_cart_id: str | None = Field(default=None, max_length=500)
+    checkout_url: str | None = Field(default=None, max_length=4_000)
+    status: CheckoutHandoffStatus = CheckoutHandoffStatus.PREPARED
+    created_at: datetime = Field(default_factory=utc_now)
+    dispatched_at: datetime | None = None
+    resolved_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def dispatched_has_cart_and_url(self) -> CheckoutHandoff:
+        if self.status in {CheckoutHandoffStatus.DISPATCHED, CheckoutHandoffStatus.SUCCEEDED}:
+            if not self.provider_cart_id or not self.checkout_url:
+                raise ValueError(
+                    "dispatched/succeeded handoff requires provider_cart_id and checkout_url"
+                )
+            if not self.checkout_url.startswith("https://"):
+                raise ValueError("checkout URL must use HTTPS")
+        return self
+
+    @model_validator(mode="after")
+    def resolved_has_timestamp(self) -> CheckoutHandoff:
+        if self.status in {CheckoutHandoffStatus.SUCCEEDED, CheckoutHandoffStatus.AMBIGUOUS}:
+            if self.resolved_at is None:
+                raise ValueError("resolved handoff requires resolved_at")
+        return self
