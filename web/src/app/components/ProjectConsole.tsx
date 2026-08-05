@@ -19,10 +19,13 @@ import {
   Wrench,
 } from "lucide-react";
 import { useEventStream } from "@/app/hooks/useEventStream";
+import { useViewState } from "@/app/hooks/useViewState";
+import { ViewShell } from "@/app/components/ViewShell";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { getClient } from "@/lib/api";
 import type {
+  ConsoleView,
   DecisionOption,
   DecisionRequest,
   ImpactAnalysis,
@@ -565,7 +568,7 @@ function ImpactAction({
   );
 }
 
-function NextAction({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone: () => Promise<unknown> }) {
+function _NextAction({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone: () => Promise<unknown> }) {
   const pendingDecision = snapshot.decisions.find((item) => item.status === "pending");
   const approvedDecision = snapshot.decisions.find((item) => item.status === "approved");
   const proposedSolution = snapshot.solution_proposals.find((item) => item.status === "proposed");
@@ -624,7 +627,7 @@ function NextAction({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone: (
   return <ObservationAction snapshot={snapshot} onDone={onDone} />;
 }
 
-function SolutionVersionCard({
+function _SolutionVersionCard({
   solution,
   previous,
   impact,
@@ -736,21 +739,24 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
     void mutate();
   }, [mutate]);
   const { connected, events } = useEventStream(initialProject.id, onRuntimeEvent);
+
+  // URL-recoverable view state
+  const {
+    view,
+    moduleId,
+    artifactId,
+    decisionId,
+    solutionVersionId,
+    setView,
+    selectModule,
+    selectArtifact,
+    selectDecision,
+    selectSolutionVersion,
+    clearOverlay,
+  } = useViewState();
   const snapshot = data;
   const project = snapshot?.project || initialProject;
   const latestEvents = useMemo(() => events.slice(-20).toReversed(), [events]);
-  const moduleById = useMemo(
-    () => new Map((snapshot?.modules ?? []).map((module) => [module.id, module])),
-    [snapshot?.modules],
-  );
-  const solutionById = useMemo(
-    () => new Map((snapshot?.solutions ?? []).map((solution) => [solution.id, solution])),
-    [snapshot?.solutions],
-  );
-  const impactByBase = useMemo(
-    () => new Map((snapshot?.impacts ?? []).map((impact) => [impact.base_solution_version_id, impact])),
-    [snapshot?.impacts],
-  );
 
   if (isLoading && !snapshot) {
     return <div className="console-loading">正在读取 canonical project snapshot…</div>;
@@ -792,6 +798,7 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
       </header>
 
       <div className="console-body">
+        {/* Left module board — always visible */}
         <aside className="module-board">
           <div className="panel-heading">
             <div>
@@ -809,85 +816,26 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
           </div>
         </aside>
 
-        <section className="workbench">
-          <div className="goal-strip">
-            <span>GOAL</span>
-            <p>{project.goal}</p>
-          </div>
-          <NextAction snapshot={snapshot} onDone={refresh} />
+        {/* Center: ViewShell with View Navigation */}
+        <div className="workbench">
+          <ViewShell
+            snapshot={snapshot}
+            view={view}
+            moduleId={moduleId}
+            artifactId={artifactId}
+            decisionId={decisionId}
+            solutionVersionId={solutionVersionId}
+            onSetView={(v: ConsoleView) => setView(v)}
+            onSelectModule={selectModule}
+            onSelectArtifact={selectArtifact}
+            onSelectDecision={selectDecision}
+            onSelectSolutionVersion={selectSolutionVersion}
+            onClearOverlay={clearOverlay}
+            onRefresh={refresh}
+          />
+        </div>
 
-          <section className="evidence-board">
-            <div className="panel-heading">
-              <div>
-                <small>EVIDENCE / OPTIONS</small>
-                <h2>研究结果</h2>
-              </div>
-              <span>{snapshot.evidence.length}</span>
-            </div>
-            <div className="evidence-grid">
-              {snapshot.candidates.map((candidate) => (
-                <article className="candidate-card" key={candidate.id}>
-                  <div>
-                    <StatusTag status="candidate" />
-                    <code>{shortId(candidate.module_id)}</code>
-                  </div>
-                  <h3>{candidate.name}</h3>
-                  <p>{candidate.description}</p>
-                  {candidate.risks.length ? <small>风险：{candidate.risks.join("；")}</small> : null}
-                </article>
-              ))}
-              {snapshot.evidence.map((item) => (
-                <article className="evidence-card" key={item.id}>
-                  <div>
-                    <StatusTag status={item.status} />
-                    <a href={item.source_url} target="_blank" rel="noreferrer">
-                      SOURCE
-                    </a>
-                  </div>
-                  <p>{item.claim}</p>
-                  <blockquote>{item.span_text}</blockquote>
-                  <code>{item.snapshot_hash.slice(0, 16)}…</code>
-                </article>
-              ))}
-              {!snapshot.evidence.length && !snapshot.candidates.length ? (
-                <p className="empty-copy">研究完成后，候选方案和可追溯证据会出现在这里。</p>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="solution-board">
-            <div className="panel-heading">
-              <div>
-                <small>IMMUTABLE VERSIONS</small>
-                <h2>方案版本</h2>
-              </div>
-              <span>{snapshot.solutions.length}</span>
-            </div>
-            <div className="version-line">
-              {snapshot.solutions.map((solution) => {
-                const previous = solution.previous_version_id
-                  ? solutionById.get(solution.previous_version_id)
-                  : undefined;
-                return (
-                  <SolutionVersionCard
-                    key={solution.id}
-                    solution={solution}
-                    previous={previous}
-                    impact={previous ? impactByBase.get(previous.id) : undefined}
-                    moduleById={moduleById}
-                    hasPatchSet={snapshot.patch_sets.some(
-                      (patch) => patch.base_solution_version_id === solution.previous_version_id,
-                    )}
-                  />
-                );
-              })}
-              {!snapshot.solutions.length ? (
-                <p className="empty-copy">用户批准决策后才能冻结第一版方案。</p>
-              ) : null}
-            </div>
-          </section>
-        </section>
-
+        {/* Right audit board — runtime + events always visible */}
         <aside className="audit-board">
           <div className="panel-heading">
             <div>

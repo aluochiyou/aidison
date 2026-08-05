@@ -187,6 +187,110 @@ class AidisonClient {
   createEventStreamUrl(projectId: string): string {
     return `${this.baseUrl}/api/projects/${projectId}/events/stream`;
   }
+
+  // ============================================================
+  // V1 新增端点
+  // ============================================================
+
+  async getIntegrationHealth(): Promise<import("@/app/types/types").IntegrationHealth> {
+    const res = await fetch(`${this.baseUrl}/api/integration-health`);
+    if (!res.ok) {
+      throw { error: { code: "integration_health_failed", message: `HTTP ${res.status}` } };
+    }
+    return res.json();
+  }
+
+  async searchOffers(
+    projectId: string,
+    body: { bom_line_ids: string[]; filters?: Record<string, unknown> },
+  ): Promise<import("@/app/types/types").OfferSnapshot[]> {
+    const res = await fetch(
+      `${this.baseUrl}/api/projects/${projectId}/shopping/offers/search`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      },
+    );
+    if (!res.ok) {
+      let err: ApiError;
+      try { err = await res.json(); } catch {
+        err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
+      }
+      throw err;
+    }
+    return res.json();
+  }
+
+  async createPurchaseProposal(
+    projectId: string,
+    body: {
+      basis_hash: string;
+      seller: string;
+      lines: {
+        bom_line_id: string;
+        offer_snapshot_id: string;
+        quantity: number;
+        unit_price: number;
+        currency: string;
+      }[];
+    },
+  ): Promise<import("@/app/types/types").PurchaseProposal> {
+    return this.req<import("@/app/types/types").PurchaseProposal>(
+      "POST",
+      `/api/projects/${projectId}/purchase-proposals`,
+      { body, prefix: "purchase-proposal" },
+    ).then((r) => r.data);
+  }
+
+  async confirmPurchaseLines(
+    proposalId: string,
+    body: { line_ids: string[] },
+  ): Promise<import("@/app/types/types").PurchaseProposal> {
+    return this.req<import("@/app/types/types").PurchaseProposal>(
+      "POST",
+      `/api/purchase-proposals/${proposalId}/confirm-lines`,
+      { body, prefix: "confirm-lines" },
+    ).then((r) => r.data);
+  }
+
+  async requestCheckoutHandoff(
+    proposalId: string,
+  ): Promise<import("@/app/types/types").CheckoutHandoff> {
+    return this.req<import("@/app/types/types").CheckoutHandoff>(
+      "POST",
+      `/api/purchase-proposals/${proposalId}/checkout-handoffs`,
+      { prefix: "checkout-handoff" },
+    ).then((r) => r.data);
+  }
+
+  async getArtifactMeta(artifactId: string): Promise<import("@/app/types/types").ArtifactMeta> {
+    const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}`);
+    if (!res.ok) {
+      let err: ApiError;
+      try { err = await res.json(); } catch {
+        err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
+      }
+      throw err;
+    }
+    return res.json();
+  }
+
+  async getArtifactContent(artifactId: string): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}/content`);
+    if (!res.ok) {
+      let err: ApiError;
+      try { err = await res.json(); } catch {
+        err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
+      }
+      throw err;
+    }
+    return res.text();
+  }
+
+  getArtifactContentUrl(artifactId: string): string {
+    return `${this.baseUrl}/api/artifacts/${artifactId}/content`;
+  }
 }
 
 let _client: AidisonClient | null = null;

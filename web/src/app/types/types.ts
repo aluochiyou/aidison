@@ -286,6 +286,11 @@ export interface ProjectSnapshot {
   impacts: ImpactAnalysis[];
   patch_sets: PatchSet[];
   runtime: RuntimeSnapshot;
+  // V1 新增
+  offer_snapshots?: OfferSnapshot[];
+  purchase_proposals?: PurchaseProposal[];
+  checkout_handoffs?: CheckoutHandoff[];
+  artifacts?: ArtifactMeta[];
 }
 
 export interface RuntimeJob {
@@ -429,4 +434,124 @@ export interface ActionRequest {
 export interface ReviewConfig {
   actionName: string;
   allowedDecisions?: string[];
+}
+
+// ============================================================
+// V1 新增类型 — Shopping / Artifact / Integration Health
+// ============================================================
+
+export type ArtifactStatus = "present" | "missing" | "corrupt" | "quarantined";
+export type ArtifactKind = "text" | "markdown" | "image" | "binary";
+export type DisplayDisposition = "inline" | "download_only" | "blocked";
+
+export interface ArtifactMeta {
+  id: string;
+  project_id: string;
+  kind: ArtifactKind;
+  mime_type: string;
+  hash_sha256: string;
+  size_bytes: number;
+  status: ArtifactStatus;
+  display_disposition: DisplayDisposition;
+  created_at: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CheckoutHandoff {
+  id: string;
+  purchase_proposal_id: string;
+  provider: string;
+  checkout_url: string;
+  expires_at: string;
+  status: "pending" | "completed" | "expired";
+  created_at: string;
+}
+
+export interface OfferSnapshot {
+  id: string;
+  project_id: string;
+  bom_line_id: string;
+  seller: string;
+  price: number;
+  currency: string;
+  condition: string;
+  stock: number;
+  region: string;
+  listing_url: string;
+  listed_at: string;
+  expires_at: string | null;
+  metadata: Record<string, unknown>;
+  captured_at: string;
+}
+
+export interface PurchaseProposalLine {
+  line_id: string;
+  bom_line_id: string;
+  offer_snapshot_id: string;
+  quantity: number;
+  unit_price: number;
+  currency: string;
+  confirmed: boolean;
+  confirmed_at: string | null;
+}
+
+export interface PurchaseProposal {
+  id: string;
+  project_id: string;
+  basis_hash: string;
+  seller: string;
+  lines: PurchaseProposalLine[];
+  total_price: number;
+  currency: string;
+  status: "draft" | "confirmed" | "handed_off";
+  created_at: string;
+  confirmed_at: string | null;
+}
+
+export interface IntegrationHealth {
+  config_status: "ok" | "warning" | "error";
+  backend: "reachable" | "degraded" | "unreachable";
+  last_checked_at: string;
+  errors: IntegrationHealthError[];
+}
+
+export interface IntegrationHealthError {
+  code: string;
+  message: string;
+  severity: "info" | "warning" | "critical";
+}
+
+// ============================================================
+// Console view state — URL-recoverable
+// ============================================================
+
+export type ConsoleView =
+  | "research"
+  | "decision-inbox"
+  | "verification"
+  | "shopping"
+  | "integration-health";
+
+export interface ViewState {
+  view: ConsoleView;
+  moduleId?: string;
+  artifactId?: string;
+  decisionId?: string;
+  solutionVersionId?: string;
+}
+
+// ============================================================
+// Compatibility: frontend-resolved freshness
+// ============================================================
+
+export interface FreshnessInfo {
+  bindingId: string;
+  claim: string;
+  sourceUrl: string;
+  spanText: string;
+  hash: string;
+  status: EvidenceStatus;
+  observedAt: string;
+  freshness: "fresh" | "aging" | "stale";
+  applicability: string[];
 }
