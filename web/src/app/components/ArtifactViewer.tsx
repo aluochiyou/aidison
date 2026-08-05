@@ -11,10 +11,30 @@ import {
   HardDrive,
 } from "lucide-react";
 import { getClient } from "@/lib/api";
-import type { ArtifactMeta } from "@/app/types/types";
+import type { ArtifactMeta, DisplayDisposition } from "@/app/types/types";
 import { Button } from "@/components/ui/button";
 import { MarkdownContent } from "@/app/components/MarkdownContent";
 
+/**
+ * Derive display-disposition from status + kind + media_type.
+ * - only "present" artifacts can be shown
+ * - text/markdown → inline
+ * - image → download_only (safe default; no render)
+ * - binary → download_only
+ * - anything else → blocked
+ */
+function deriveDisposition(meta: ArtifactMeta): DisplayDisposition {
+  if (meta.status !== "present") return "blocked";
+  const mime = meta.media_type;
+  if (mime.startsWith("text/") || mime === "text/markdown" || mime.includes("markdown")) {
+    return "inline";
+  }
+  if (mime.startsWith("image/")) return "download_only";
+  if (mime.startsWith("application/") || mime === "application/octet-stream") return "download_only";
+  return "blocked";
+}
+
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -34,7 +54,7 @@ function statusBadge(status: ArtifactMeta["status"]) {
   }
 }
 
-function dispositionLabel(disp: ArtifactMeta["display_disposition"]): string {
+function dispositionLabel(disp: DisplayDisposition): string {
   switch (disp) {
     case "inline":
       return "可直接显示";
@@ -68,12 +88,15 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
         const m = await getClient().getArtifactMeta(artifactId);
         if (cancelled) return;
         setMeta(m);
-        if (m.status === "present" && m.display_disposition === "inline") {
+        // Only attempt content fetch for inline-safe kinds. 404 is expected if
+        // the backend doesn't supply /content yet — surface meta regardless.
+        const disp = deriveDisposition(m);
+        if (disp === "inline") {
           try {
             const text = await getClient().getArtifactContent(artifactId);
             if (!cancelled) setContent(text);
           } catch {
-            // content fetch failed — meta still shows
+            // /content may not exist yet; not a hard error
           }
         }
       } catch (e) {
@@ -123,25 +146,29 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
               <span>{meta.kind}</span>
             </div>
             <div className="artifact-meta-item">
-              <small>MIME</small>
-              <code>{meta.mime_type}</code>
-            </div>
-            <div className="artifact-meta-item">
-              <small>大小</small>
-              <span>{formatBytes(meta.size_bytes)}</span>
+              <small>Media Type</small>
+              <code>{meta.media_type}</code>
             </div>
             <div className="artifact-meta-item artifact-meta-item--wide">
-              <small>SHA-256</small>
-              <code className="artifact-hash">{meta.hash_sha256}</code>
+              <small>Content Hash</small>
+              <code className="artifact-hash">{meta.content_hash}</code>
             </div>
             <div className="artifact-meta-item">
               <small>显示策略</small>
-              <span>{dispositionLabel(meta.display_disposition)}</span>
+              <span>{dispositionLabel(deriveDisposition(meta))}</span>
             </div>
             <div className="artifact-meta-item">
               <small>创建时间</small>
               <span>{new Date(meta.created_at).toLocaleString("zh-CN")}</span>
             </div>
+            {meta.source_url && (
+              <div className="artifact-meta-item artifact-meta-item--wide">
+                <small>来源 URL</small>
+                <a href={meta.source_url} target="_blank" rel="noreferrer" className="evidence-link">
+                  {meta.source_url}
+                </a>
+              </div>
+            )}
           </div>
 
           {/* Status-specific messages */}
@@ -176,9 +203,10 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
           )}
 
           {/* Content display — only for safe inline types */}
-          {meta.status === "present" &&
-            meta.display_disposition === "inline" &&
-            (meta.kind === "text" || meta.kind === "markdown") && (
+          {(() => {
+            const disp = deriveDisposition(meta);
+            if (disp !== "inline") return null;
+            return (
               <div className="artifact-content-section">
                 <div className="artifact-content-toolbar">
                   <strong>内容预览</strong>
@@ -224,46 +252,53 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
                 )}
                 {showContent && content === null && (
                   <p className="artifact-content-error">
-                    无法读取内容。后端返回了空响应。
+                    无法读取内容。后端 /content 端点可能未就绪。
                   </p>
                 )}
               </div>
-            )}
+            );
+          })()}
 
-          {meta.status === "present" &&
-            meta.display_disposition === "download_only" && (
-              <div className="artifact-notice artifact-notice--info">
-                <HardDrive className="h-5 w-5" />
-                <div>
-                  <strong>仅可下载</strong>
-                  <p>
-                    此 Artifact 为{meta.kind}类型，仅提供下载链接。浏览器不执行或渲染该内容。
-                  </p>
-                  <Button variant="outline" size="sm" asChild className="artifact-download-btn">
-                    <a
-                      href={getClient().getArtifactContentUrl(meta.id)}
-                      download
-                      rel="noreferrer"
-                    >
-                      <Download className="h-4 w-4" /> 下载文件
-                    </a>
-                  </Button>
+          {/* Non-inline disposition messages */}
+          {meta.status === "present" && (() => {
+            const disp = deriveDisposition(meta);
+            if (disp === "download_only") {
+              return (
+                <div className="artifact-notice artifact-notice--info">
+                  <HardDrive className="h-5 w-5" />
+                  <div>
+                    <strong>仅可下载</strong>
+                    <p>
+                      此 Artifact 为{meta.kind}类型，仅提供下载链接。浏览器不执行或渲染该内容。
+                    </p>
+                    <Button variant="outline" size="sm" asChild className="artifact-download-btn">
+                      <a
+                        href={getClient().getArtifactContentUrl(meta.id)}
+                        download
+                        rel="noreferrer"
+                      >
+                        <Download className="h-4 w-4" /> 下载文件
+                      </a>
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
-
-          {meta.status === "present" &&
-            meta.display_disposition === "blocked" && (
-              <div className="artifact-notice artifact-notice--warn">
-                <FileLock2 className="h-5 w-5" />
-                <div>
-                  <strong>内容已阻止</strong>
-                  <p>
-                    安全策略禁止显示此文件（{meta.mime_type}）。如确需查看，请通过其他安全渠道。
-                  </p>
+              );
+            }
+            if (disp === "blocked") {
+              return (
+                <div className="artifact-notice artifact-notice--warn">
+                  <FileLock2 className="h-5 w-5" />
+                  <div>
+                    <strong>内容已阻止</strong>
+                    <p>
+                      安全策略禁止显示此文件（{meta.media_type}）。如确需查看，请通过其他安全渠道。
+                    </p>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            }
+            return null;
+          })()}
         </div>
       ) : null}
     </div>

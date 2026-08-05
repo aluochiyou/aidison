@@ -111,13 +111,24 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     setError(null);
     setPhase("searching-offers");
     try {
-      const results = await getClient().searchOffers(snapshot.project.id, {
-        bom_line_ids: lineIds,
-      });
-      setOffers(results);
+      // Backend contract (C2a): single bom_line_id, If-Match required.
+      // Search one BOM line at a time; merge results.
+      const revision = snapshot.project.revision;
+      const allOffers: OfferSnapshot[] = [];
+      for (const bomLineId of lineIds) {
+        try {
+          const resp = await getClient().searchOffers(snapshot.project.id, revision, {
+            bom_line_id: bomLineId,
+          });
+          allOffers.push(...resp.offers);
+        } catch {
+          // skip individual line errors; continue with remaining
+        }
+      }
+      setOffers(allOffers);
       // Group by bom_line_id
       const grouped = new Map<string, OfferSnapshot[]>();
-      for (const offer of results) {
+      for (const offer of allOffers) {
         const existing = grouped.get(offer.bom_line_id) ?? [];
         existing.push(offer);
         grouped.set(offer.bom_line_id, existing);
@@ -136,31 +147,22 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     }
   };
 
-  // Create purchase proposal from selected offers
-  const createProposal = async (seller: string, lineOffers: {
-    bomLineId: string;
-    offerId: string;
-    quantity: number;
-    unitPrice: number;
-    currency: string;
-  }[]) => {
+  // Create purchase proposal from a single offer (backend C2b: single-offer)
+  const createProposal = async (offer: OfferSnapshot, bomItem: BomItem) => {
     setPhase("creating-proposal");
     setError(null);
     try {
-      const basisHash =
-        activeSolution?.basis_hash ?? snapshot.project.id;
+      const revision = snapshot.project.revision;
+      const solutionVersionId = activeSolution?.id ?? "";
       const result = await getClient().createPurchaseProposal(
         snapshot.project.id,
+        revision,
         {
-          basis_hash: basisHash,
-          seller,
-          lines: lineOffers.map((lo) => ({
-            bom_line_id: lo.bomLineId,
-            offer_snapshot_id: lo.offerId,
-            quantity: lo.quantity,
-            unit_price: lo.unitPrice,
-            currency: lo.currency,
-          })),
+          solution_version_id: solutionVersionId,
+          offer_snapshot_id: offer.id,
+          quantity: bomItem.quantity,
+          region: offer.region,
+          currency: offer.currency,
         },
       );
       setProposal(result);
@@ -176,18 +178,15 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     }
   };
 
-  // Confirm lines in a proposal
+  // Confirm lines in a proposal (backend C2c: confirmed_line_ids)
   const confirmLines = async (lineIds: string[]) => {
     if (!proposal) return;
     try {
       const updated = await getClient().confirmPurchaseLines(proposal.id, {
-        line_ids: lineIds,
+        confirmed_line_ids: lineIds,
       });
       setProposal(updated);
-      const confirmed = new Set(
-        updated.lines.filter((l) => l.confirmed).map((l) => l.line_id),
-      );
-      setConfirmedLines(confirmed);
+      setConfirmedLines(new Set(updated.confirmed_line_ids));
       toast.success("已确认所选行");
     } catch (e) {
       const msg =
@@ -216,15 +215,39 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     }
   };
 
-  // Reset to BOM browse
+  // Reset shopping state and goto canonical snapshot data for phase
   const resetShopping = () => {
-    setPhase("browse-bom");
-    setSelectedBomLines(new Set());
-    setOffers([]);
-    setOffersByLine(new Map());
-    setProposal(null);
-    setConfirmedLines(new Set());
-    setHandoff(null);
+    // Restore phase from snapshot presence
+    const snapOffers = snapshot.offer_snapshots;
+    const snapProposals = snapshot.purchase_proposals;
+    const snapHandoffs = snapshot.checkout_handoffs;
+
+    if (snapHandoffs && snapHandoffs.length > 0) {
+      setHandoff(snapHandoffs[0]);
+      setProposal(snapProposals?.[0] ?? null);
+      setPhase("proposal-ready");
+    } else if (snapProposals && snapProposals.length > 0) {
+      setProposal(snapProposals[0]);
+      setPhase("proposal-ready");
+    } else if (snapOffers && snapOffers.length > 0) {
+      setOffers(snapOffers);
+      const grouped = new Map<string, OfferSnapshot[]>();
+      for (const o of snapOffers) {
+        const existing = grouped.get(o.bom_line_id) ?? [];
+        existing.push(o);
+        grouped.set(o.bom_line_id, existing);
+      }
+      setOffersByLine(grouped);
+      setPhase("comparing-offers");
+    } else {
+      setPhase("browse-bom");
+      setSelectedBomLines(new Set());
+      setOffers([]);
+      setOffersByLine(new Map());
+      setProposal(null);
+      setConfirmedLines(new Set());
+      setHandoff(null);
+    }
     setError(null);
   };
 
@@ -382,7 +405,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                         <div className="offer-details">
                           <div className="offer-price">
                             <span className="offer-price-value">
-                              {offer.price.toLocaleString()} {offer.currency}
+                              {offer.unit_price.toLocaleString()} {offer.currency}
                             </span>
                             <small>/ {offer.condition}</small>
                           </div>
@@ -390,7 +413,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                           <div className="offer-meta">
                             <div className="offer-meta-item">
                               <Package className="h-3 w-3" />
-                              <span>库存: {offer.stock}</span>
+                              <span>库存: {offer.quantity_available}</span>
                             </div>
                             <div className="offer-meta-item">
                               <Globe className="h-3 w-3" />
@@ -411,7 +434,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                         </div>
 
                         <a
-                          href={offer.listing_url}
+                          href={offer.product_url}
                           target="_blank"
                           rel="noreferrer"
                           className="offer-listing-link"
@@ -423,15 +446,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                           size="sm"
                           disabled={expired}
                           onClick={() =>
-                            createProposal(offer.seller, [
-                              {
-                                bomLineId: offer.bom_line_id,
-                                offerId: offer.id,
-                                quantity: bomItem?.quantity ?? 1,
-                                unitPrice: offer.price,
-                                currency: offer.currency,
-                              },
-                            ])
+                            createProposal(offer, bomItem ?? bomItems[0])
                           }
                         >
                           <ShoppingCart className="h-3 w-3" />
@@ -446,39 +461,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
           },
         )}
 
-        {/* Multi-seller proposal: group by seller and create combined */}
-        {groupedBySeller.size > 1 && (
-          <div className="shopping-combined-proposal">
-            <h3>按卖家汇总创建 Proposal</h3>
-            {Array.from(groupedBySeller.entries()).map(
-              ([seller, sellerOffers]) => (
-                <Button
-                  key={seller}
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    createProposal(
-                      seller,
-                      sellerOffers.map((offer) => ({
-                        bomLineId: offer.bom_line_id,
-                        offerId: offer.id,
-                        quantity:
-                          bomItems.find(
-                            (b) => b.line_id === offer.bom_line_id,
-                          )?.quantity ?? 1,
-                        unitPrice: offer.price,
-                        currency: offer.currency,
-                      })),
-                    )
-                  }
-                >
-                  <Building2 className="h-4 w-4" />
-                  {seller} ({sellerOffers.length} 行)
-                </Button>
-              ),
-            )}
-          </div>
-        )}
+        {/* Multi-seller: each offer is its own proposal, so no combined section */}
       </div>
     );
   }
@@ -497,6 +480,8 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
       );
     }
 
+    const offerForProposal = offers.find((o) => o.id === proposal.offer_snapshot_id);
+
     return (
       <div className="shopping-view" role="region" aria-label="购买提案">
         <header className="shopping-header">
@@ -506,7 +491,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
           </h2>
           <div className="shopping-header-actions">
             <span
-              className={`status-tag ${proposal.status === "confirmed" ? "tone-good" : proposal.status === "handed_off" ? "tone-good" : "tone-live"}`}
+              className={`status-tag ${proposal.status === "ready" ? "tone-good" : proposal.status === "handed_off" ? "tone-good" : "tone-live"}`}
             >
               {proposal.status}
             </span>
@@ -517,19 +502,21 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
         </header>
 
         <div className="proposal-meta">
-          <div className="proposal-meta-item">
-            <small>卖家</small>
-            <strong>{proposal.seller}</strong>
-          </div>
+          {offerForProposal && (
+            <div className="proposal-meta-item">
+              <small>卖家</small>
+              <strong>{offerForProposal.seller}</strong>
+            </div>
+          )}
           <div className="proposal-meta-item">
             <small>总价</small>
             <strong>
-              {proposal.total_price.toLocaleString()} {proposal.currency}
+              {(proposal.unit_price * proposal.quantity).toLocaleString()} {proposal.currency}
             </strong>
           </div>
           <div className="proposal-meta-item">
-            <small>Basis</small>
-            <code>{proposal.basis_hash.slice(0, 16)}…</code>
+            <small>Solution Version</small>
+            <code>{proposal.solution_version_id.slice(0, 16)}…</code>
           </div>
           <div className="proposal-meta-item">
             <small>创建时间</small>
@@ -539,73 +526,60 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
           </div>
         </div>
 
-        {/* Lines */}
+        {/* Single-offer detail */}
         <div className="proposal-lines">
           <div className="proposal-lines-header">
-            <h3>明细 ({proposal.lines.length})</h3>
-            {proposal.status === "draft" && (
+            <h3>明细</h3>
+            {proposal.status === "draft" && confirmedLines.size === 0 && (
               <Button
                 size="sm"
-                disabled={
-                  confirmedLines.size === proposal.lines.length ||
-                  proposal.lines.length === 0
-                }
                 onClick={() =>
                   confirmLines(
-                    proposal.lines
-                      .filter((l) => !l.confirmed)
-                      .map((l) => l.line_id),
+                    bomItems.map((b) => b.line_id)
                   )
                 }
               >
                 <CheckCircle2 className="h-3 w-3" />
-                确认全部未确认行
+                确认全部 BOM 行
               </Button>
             )}
           </div>
 
           <div className="proposal-lines-grid">
-            {proposal.lines.map((line) => {
-              const bomItem = bomItems.find(
-                (b) => b.line_id === line.bom_line_id,
-              );
-              const offer = offers.find(
-                (o) => o.id === line.offer_snapshot_id,
-              );
+            {bomItems.map((item) => {
+              const isConfirmed = confirmedLines.has(item.line_id);
               return (
                 <div
-                  className={`proposal-line-card ${line.confirmed ? "is-confirmed" : ""}`}
-                  key={line.line_id}
+                  className={`proposal-line-card ${isConfirmed ? "is-confirmed" : ""}`}
+                  key={item.line_id}
                 >
                   <div className="proposal-line-header">
                     <span
-                      className={`status-tag ${line.confirmed ? "tone-good" : "tone-live"}`}
+                      className={`status-tag ${isConfirmed ? "tone-good" : "tone-live"}`}
                     >
-                      {line.confirmed ? "已确认" : "待确认"}
+                      {isConfirmed ? "已确认" : "待确认"}
                     </span>
-                    {proposal.status === "draft" && !line.confirmed && (
+                    {!isConfirmed && proposal.status === "draft" && (
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => confirmLines([line.line_id])}
+                        onClick={() => confirmLines([item.line_id])}
                       >
                         确认此行
                       </Button>
                     )}
                   </div>
 
-                  <strong>
-                    {bomItem ? bomLabel(bomItem) : shortId(line.bom_line_id)}
-                  </strong>
+                  <strong>{bomLabel(item)}</strong>
 
                   <div className="proposal-line-detail">
                     <span>
-                      {line.quantity} × {line.unit_price.toLocaleString()}{" "}
-                      {line.currency}
+                      {proposal.quantity} × {proposal.unit_price.toLocaleString()}{" "}
+                      {proposal.currency}
                     </span>
-                    {offer && (
+                    {offerForProposal && (
                       <small>
-                        {offer.seller} · {offer.condition} · {offer.region}
+                        {offerForProposal.seller} · {offerForProposal.condition} · {offerForProposal.region}
                       </small>
                     )}
                   </div>
@@ -618,7 +592,8 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
         {/* Handoff action — only after user-initiated click */}
         {!handoff &&
           proposal.status !== "handed_off" &&
-          proposal.lines.every((l) => l.confirmed) && (
+          confirmedLines.size === bomItems.length &&
+          bomItems.length > 0 && (
             <div className="proposal-handoff-section">
               <div className="shopping-safety-notice">
                 <Shield className="h-4 w-4" />
@@ -639,33 +614,52 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
             </div>
           )}
 
-        {/* Handoff result */}
+        {/* Handoff result — handle ambiguous / null url (M2) */}
         {handoff && (
           <div className="checkout-handoff-card">
-            <CheckCircle2 className="h-6 w-6 tone-good" />
-            <div>
-              <strong>Checkout 已就绪</strong>
-              <p>Provider: {handoff.provider}</p>
-              <p>
-                截止:{" "}
-                {new Date(handoff.expires_at).toLocaleString("zh-CN")}
-              </p>
-              <code>ID: {handoff.id}</code>
-            </div>
-            <Button asChild size="lg">
-              <a
-                href={handoff.checkout_url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <ExternalLink className="h-4 w-4" />
-                在新窗口打开{handoff.provider} Checkout
-              </a>
-            </Button>
-            <p className="checkout-handoff-note">
-              此链接指向 {handoff.provider} 的托管 checkout 页面。支付和配送详情由该平台处理。
-              Aidison 不保存或请求支付信息、地址、email。
-            </p>
+            {handoff.status === "dispatched" && handoff.checkout_url ? (
+              <>
+                <CheckCircle2 className="h-6 w-6 tone-good" />
+                <div>
+                  <strong>Checkout 已就绪</strong>
+                  <p>Provider: {handoff.provider}</p>
+                  <code>ID: {handoff.id}</code>
+                </div>
+                <Button asChild size="lg">
+                  <a
+                    href={handoff.checkout_url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    在新窗口打开{handoff.provider} Checkout
+                  </a>
+                </Button>
+                <p className="checkout-handoff-note">
+                  此链接指向 {handoff.provider} 的托管 checkout 页面。支付和配送详情由该平台处理。
+                  Aidison 不保存或请求支付信息、地址、email。
+                </p>
+              </>
+            ) : (
+              <>
+                <AlertTriangle className="h-6 w-6 tone-live" />
+                <div>
+                  <strong>Checkout 状态异常</strong>
+                  <p>
+                    Provider: {handoff.provider} · Status: {handoff.status}
+                  </p>
+                  <p>
+                    {handoff.status === "ambiguous"
+                      ? "Provider 返回 ambiguous 状态，未提供可用的 checkout URL。请联系管理员或稍后重试。"
+                      : "Checkout URL 尚未就绪。当前状态为 " + handoff.status + "。"}
+                  </p>
+                  <code>ID: {handoff.id}</code>
+                </div>
+                <Button variant="outline" size="sm" onClick={resetShopping}>
+                  返回 BOM
+                </Button>
+              </>
+            )}
           </div>
         )}
       </div>

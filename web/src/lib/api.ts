@@ -189,9 +189,10 @@ class AidisonClient {
   }
 
   // ============================================================
-  // V1 新增端点
+  // V1 新增端点 — aligned to backend contracts
   // ============================================================
 
+  // GET /api/integration-health
   async getIntegrationHealth(): Promise<import("@/app/types/types").IntegrationHealth> {
     const res = await fetch(`${this.baseUrl}/api/integration-health`);
     if (!res.ok) {
@@ -200,17 +201,25 @@ class AidisonClient {
     return res.json();
   }
 
+  // POST /api/projects/{id}/shopping/offers/search
+  // Backend: requires If-Match; body = { query?, bom_line_id, region?, max_results? }
+  // Returns { offers, project_revision } envelope.
   async searchOffers(
     projectId: string,
-    body: { bom_line_ids: string[]; filters?: Record<string, unknown> },
-  ): Promise<import("@/app/types/types").OfferSnapshot[]> {
+    ifMatch: number,
+    body: {
+      query?: string;
+      bom_line_id: string;
+      region?: string;
+      max_results?: number;
+    },
+  ): Promise<import("@/app/types/types").SearchOffersResponse> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    headers["If-Match"] = `"${ifMatch}"`;
+    headers["Idempotency-Key"] = this.genKey("search-offers");
     const res = await fetch(
       `${this.baseUrl}/api/projects/${projectId}/shopping/offers/search`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
+      { method: "POST", headers, body: JSON.stringify(body) },
     );
     if (!res.ok) {
       let err: ApiError;
@@ -222,30 +231,35 @@ class AidisonClient {
     return res.json();
   }
 
+  // POST /api/projects/{id}/purchase-proposals
+  // Backend: single-offer; req = { solution_version_id, offer_snapshot_id, quantity,
+  //   region, currency, shipping_estimate?, tax_estimate?, max_total? }; requires If-Match.
   async createPurchaseProposal(
     projectId: string,
+    ifMatch: number,
     body: {
-      basis_hash: string;
-      seller: string;
-      lines: {
-        bom_line_id: string;
-        offer_snapshot_id: string;
-        quantity: number;
-        unit_price: number;
-        currency: string;
-      }[];
+      solution_version_id: string;
+      offer_snapshot_id: string;
+      quantity: number;
+      region: string;
+      currency: string;
+      shipping_estimate?: number;
+      tax_estimate?: number;
+      max_total?: number;
     },
   ): Promise<import("@/app/types/types").PurchaseProposal> {
     return this.req<import("@/app/types/types").PurchaseProposal>(
       "POST",
       `/api/projects/${projectId}/purchase-proposals`,
-      { body, prefix: "purchase-proposal" },
+      { body, prefix: "purchase-proposal", ifMatch },
     ).then((r) => r.data);
   }
 
+  // POST /api/purchase-proposals/{id}/confirm-lines
+  // Backend: req = { confirmed_line_ids: string[] }
   async confirmPurchaseLines(
     proposalId: string,
-    body: { line_ids: string[] },
+    body: { confirmed_line_ids: string[] },
   ): Promise<import("@/app/types/types").PurchaseProposal> {
     return this.req<import("@/app/types/types").PurchaseProposal>(
       "POST",
@@ -254,6 +268,8 @@ class AidisonClient {
     ).then((r) => r.data);
   }
 
+  // POST /api/purchase-proposals/{id}/checkout-handoffs
+  // Backend: returns CheckoutHandoff (status: prepared|dispatched|succeeded|ambiguous)
   async requestCheckoutHandoff(
     proposalId: string,
   ): Promise<import("@/app/types/types").CheckoutHandoff> {
@@ -264,6 +280,7 @@ class AidisonClient {
     ).then((r) => r.data);
   }
 
+  // GET /api/artifacts/{id} — metadata only (no content endpoint yet)
   async getArtifactMeta(artifactId: string): Promise<import("@/app/types/types").ArtifactMeta> {
     const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}`);
     if (!res.ok) {
@@ -276,6 +293,7 @@ class AidisonClient {
     return res.json();
   }
 
+  // GET /api/artifacts/{id}/content — guarded; only call when backend supplies this route
   async getArtifactContent(artifactId: string): Promise<string> {
     const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}/content`);
     if (!res.ok) {

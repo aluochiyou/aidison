@@ -173,9 +173,18 @@ function StageRail({ project }: { project: Project }) {
   );
 }
 
-function ModuleCard({ module }: { module: Module }) {
+function ModuleCard({ module, onClick }: { module: Module; onClick?: () => void }) {
   return (
-    <article className="module-card">
+    <article
+      className="module-card"
+      tabIndex={0}
+      role="button"
+      aria-label={`查看模块 ${module.name} 详情`}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); }
+      }}
+    >
       <div className="module-card-head">
         <code>{module.key}</code>
         <StatusTag status={module.stage} />
@@ -568,7 +577,7 @@ function ImpactAction({
   );
 }
 
-function _NextAction({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone: () => Promise<unknown> }) {
+function NextAction({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone: () => Promise<unknown> }) {
   const pendingDecision = snapshot.decisions.find((item) => item.status === "pending");
   const approvedDecision = snapshot.decisions.find((item) => item.status === "approved");
   const proposedSolution = snapshot.solution_proposals.find((item) => item.status === "proposed");
@@ -627,7 +636,7 @@ function _NextAction({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone: 
   return <ObservationAction snapshot={snapshot} onDone={onDone} />;
 }
 
-function _SolutionVersionCard({
+function SolutionVersionCard({
   solution,
   previous,
   impact,
@@ -809,15 +818,66 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
           </div>
           <div className="module-list">
             {snapshot.modules.length ? (
-              snapshot.modules.map((module) => <ModuleCard key={module.id} module={module} />)
+              snapshot.modules.map((module) => (
+                <ModuleCard
+                  key={module.id}
+                  module={module}
+                  onClick={() => selectModule(module.id)}
+                />
+              ))
             ) : (
               <p className="empty-copy">批准需求后，这里会显示通用 DIY 模块。</p>
             )}
           </div>
         </aside>
 
-        {/* Center: ViewShell with View Navigation */}
-        <div className="workbench">
+        {/* Center: V0 主线动作 + SolutionVersions + ViewShell with View Navigation */}
+        <section className="workbench">
+          <div className="goal-strip">
+            <span>GOAL</span>
+            <p>{project.goal}</p>
+          </div>
+          <NextAction snapshot={snapshot} onDone={refresh} />
+
+          <section className="solution-board">
+            <div className="panel-heading">
+              <div>
+                <small>IMMUTABLE VERSIONS</small>
+                <h2>方案版本</h2>
+              </div>
+              <span>{snapshot.solutions.length}</span>
+            </div>
+            <div className="version-line">
+              {snapshot.solutions.map((solution) => {
+                const previous = solution.previous_version_id
+                  ? (() => {
+                      const sid = new Map(snapshot.solutions.map((s) => [s.id, s]));
+                      return sid.get(solution.previous_version_id);
+                    })()
+                  : undefined;
+                const moduleById = new Map(snapshot.modules.map((m) => [m.id, m]));
+                const impactByBase = new Map(
+                  snapshot.impacts.map((i) => [i.base_solution_version_id, i]),
+                );
+                return (
+                  <SolutionVersionCard
+                    key={solution.id}
+                    solution={solution}
+                    previous={previous}
+                    impact={previous ? impactByBase.get(previous.id) : undefined}
+                    moduleById={moduleById}
+                    hasPatchSet={snapshot.patch_sets.some(
+                      (patch) => patch.base_solution_version_id === solution.previous_version_id,
+                    )}
+                  />
+                );
+              })}
+              {!snapshot.solutions.length ? (
+                <p className="empty-copy">用户批准决策后才能冻结第一版方案。</p>
+              ) : null}
+            </div>
+          </section>
+
           <ViewShell
             snapshot={snapshot}
             view={view}
@@ -833,7 +893,7 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
             onClearOverlay={clearOverlay}
             onRefresh={refresh}
           />
-        </div>
+        </section>
 
         {/* Right audit board — runtime + events always visible */}
         <aside className="audit-board">

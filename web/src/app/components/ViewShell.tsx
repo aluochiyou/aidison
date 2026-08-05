@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   AlertCircle,
   Beaker,
@@ -64,30 +64,65 @@ const NAV_ITEMS: {
   },
 ];
 
+/**
+ * Hook: close overlay on Escape key.
+ */
+function useEscapeClose(onClose: () => void) {
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [onClose]);
+}
+
+function Overlay({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEscapeClose(onClose);
+
+  // Focus trap: focus the panel when mounted
+  useEffect(() => {
+    const el = panelRef.current;
+    if (el) {
+      const firstFocusable = el.querySelector<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      firstFocusable?.focus();
+    }
+  }, []);
+
+  return (
+    <div
+      className="view-overlay"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <div
+        ref={panelRef}
+        className={`view-overlay-panel ${wide ? "view-overlay-panel--wide" : ""}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function ViewShell({
   snapshot,
   view,
   moduleId,
   artifactId,
-  decisionId,
   solutionVersionId,
   onSetView,
   onSelectModule,
   onSelectArtifact,
-  onSelectDecision,
   onSelectSolutionVersion,
   onClearOverlay,
   onRefresh,
 }: ViewShellProps) {
-  // compute active decision context
-  const _focusedDecision = useMemo(
-    () =>
-      decisionId
-        ? snapshot.decisions.find((d) => d.id === decisionId) ?? null
-        : null,
-    [snapshot.decisions, decisionId],
-  );
-
   // compute focused module for drill-down
   const focusedModule = useMemo(
     () =>
@@ -178,47 +213,32 @@ export function ViewShell({
 
       {/* Overlays: Module Detail, Artifact Viewer, Solution Diff */}
       {focusedModule && (
-        <div className="view-overlay" onClick={onClearOverlay}>
-          <div
-            className="view-overlay-panel"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <ModuleDetailView
-              module={focusedModule}
-              snapshot={snapshot}
-              onClose={onClearOverlay}
-            />
-          </div>
-        </div>
+        <Overlay onClose={onClearOverlay}>
+          <ModuleDetailView
+            module={focusedModule}
+            snapshot={snapshot}
+            onClose={onClearOverlay}
+          />
+        </Overlay>
       )}
 
       {artifactId && (
-        <div className="view-overlay" onClick={onClearOverlay}>
-          <div
-            className="view-overlay-panel"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <ArtifactViewer
-              artifactId={artifactId}
-              onClose={onClearOverlay}
-            />
-          </div>
-        </div>
+        <Overlay onClose={onClearOverlay}>
+          <ArtifactViewer
+            artifactId={artifactId}
+            onClose={onClearOverlay}
+          />
+        </Overlay>
       )}
 
       {solutionVersionId && (
-        <div className="view-overlay" onClick={onClearOverlay}>
-          <div
-            className="view-overlay-panel view-overlay-panel--wide"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <SolutionDiffView
-              versionId={solutionVersionId}
-              snapshot={snapshot}
-              onClose={onClearOverlay}
-            />
-          </div>
-        </div>
+        <Overlay onClose={onClearOverlay} wide>
+          <SolutionDiffView
+            versionId={solutionVersionId}
+            snapshot={snapshot}
+            onClose={onClearOverlay}
+          />
+        </Overlay>
       )}
     </div>
   );

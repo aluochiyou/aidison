@@ -442,77 +442,91 @@ export interface ReviewConfig {
 
 export type ArtifactStatus = "present" | "missing" | "corrupt" | "quarantined";
 export type ArtifactKind = "text" | "markdown" | "image" | "binary";
-export type DisplayDisposition = "inline" | "download_only" | "blocked";
 
+/** Backend artifact metadata fields (GET /api/artifacts/{id}). */
 export interface ArtifactMeta {
   id: string;
   project_id: string;
   kind: ArtifactKind;
-  mime_type: string;
-  hash_sha256: string;
-  size_bytes: number;
+  /** Backend field: media_type (e.g. "text/markdown"). */
+  media_type: string;
+  /** Backend field: content_hash (SHA-256 hex). */
+  content_hash: string;
   status: ArtifactStatus;
-  display_disposition: DisplayDisposition;
+  /** Backend field: source_url (URL where content was fetched from). */
+  source_url: string | null;
   created_at: string;
   metadata?: Record<string, unknown>;
 }
 
+/** Derived display disposition — computed client-side from kind + media_type. */
+export type DisplayDisposition = "inline" | "download_only" | "blocked";
+
+/**
+ * Backend CheckoutHandoff fields.
+ * status: prepared → dispatched (has checkout_url) → succeeded | ambiguous.
+ */
 export interface CheckoutHandoff {
   id: string;
-  purchase_proposal_id: string;
+  proposal_id: string;
   provider: string;
-  checkout_url: string;
-  expires_at: string;
-  status: "pending" | "completed" | "expired";
+  checkout_url: string | null;
+  status: "prepared" | "dispatched" | "succeeded" | "ambiguous";
   created_at: string;
 }
 
+/** Backend OfferSnapshot fields. */
 export interface OfferSnapshot {
   id: string;
   project_id: string;
   bom_line_id: string;
   seller: string;
-  price: number;
+  unit_price: number;
   currency: string;
   condition: string;
-  stock: number;
+  quantity_available: number;
   region: string;
-  listing_url: string;
+  product_url: string;
   listed_at: string;
   expires_at: string | null;
-  metadata: Record<string, unknown>;
-  captured_at: string;
+  observed_at: string;
+  snapshot_hash: string;
+  provenance: Record<string, unknown>;
 }
 
-export interface PurchaseProposalLine {
-  line_id: string;
-  bom_line_id: string;
+/** Single-offer PurchaseProposal (backend model). */
+export interface PurchaseProposal {
+  id: string;
+  project_id: string;
+  /** Backend field: solution_version_id used as basis. */
+  solution_version_id: string;
+  /** Backend field: single offer snapshot. */
   offer_snapshot_id: string;
   quantity: number;
   unit_price: number;
   currency: string;
-  confirmed: boolean;
-  confirmed_at: string | null;
-}
-
-export interface PurchaseProposal {
-  id: string;
-  project_id: string;
-  basis_hash: string;
-  seller: string;
-  lines: PurchaseProposalLine[];
-  total_price: number;
-  currency: string;
-  status: "draft" | "confirmed" | "handed_off";
+  /** Backend field: confirmed BOM line ids. */
+  confirmed_line_ids: string[];
+  status: "draft" | "ready" | "expired" | "handed_off";
   created_at: string;
   confirmed_at: string | null;
 }
 
+/** Backend searchOffers response envelope. */
+export interface SearchOffersResponse {
+  offers: OfferSnapshot[];
+  project_revision: number;
+}
+
+/** Backend integration-health response. */
 export interface IntegrationHealth {
-  config_status: "ok" | "warning" | "error";
-  backend: "reachable" | "degraded" | "unreachable";
-  last_checked_at: string;
-  errors: IntegrationHealthError[];
+  status: string;
+  shopping: {
+    provider: string;
+    available: boolean;
+  };
+  last_checked_at?: string;
+  errors?: IntegrationHealthError[];
 }
 
 export interface IntegrationHealthError {

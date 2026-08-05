@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { AlertTriangle, CheckCircle2, RefreshCw, ServerOff, Settings2, SignalHigh, SignalLow, WifiOff, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, Settings2, SignalHigh, SignalLow, WifiOff, XCircle } from "lucide-react";
 import { getClient } from "@/lib/api";
 
 const HEALTH_REFRESH_MS = 60_000; // 1 minute
@@ -45,29 +45,26 @@ export function IntegrationHealthCard() {
     );
   }
 
-  const backendIcon = {
-    reachable: <SignalHigh className="h-4 w-4 tone-good" />,
-    degraded: <SignalLow className="h-4 w-4 tone-live" />,
-    unreachable: <ServerOff className="h-4 w-4 tone-bad" />,
-  }[data.backend];
+  const health = data;
 
-  const configIcon = {
-    ok: <CheckCircle2 className="h-4 w-4 tone-good" />,
-    warning: <AlertTriangle className="h-4 w-4 tone-live" />,
-    error: <XCircle className="h-4 w-4 tone-bad" />,
-  }[data.config_status];
+  // Backend returns { status, shopping: { provider, available } }.
+  // Compute derived indicators client-side.
+  const shoppingOk = health.shopping?.available ?? false;
+  const configLabel = shoppingOk ? "正常" : "降级";
+  const configStatus = shoppingOk ? ("ok" as const) : ("warning" as const);
+  const configIcon = shoppingOk
+    ? (<CheckCircle2 className="h-4 w-4 tone-good" />)
+    : (<AlertTriangle className="h-4 w-4 tone-live" />);
 
-  const configLabel = {
-    ok: "正常",
-    warning: "警告",
-    error: "异常",
-  }[data.config_status];
+  const backendLabel = health.status === "ok" ? "可达" : "降级";
+  const backendIcon = health.status === "ok"
+    ? (<SignalHigh className="h-4 w-4 tone-good" />)
+    : (<SignalLow className="h-4 w-4 tone-live" />);
 
-  const backendLabel = {
-    reachable: "可达",
-    degraded: "受限",
-    unreachable: "不可达",
-  }[data.backend];
+  const lastChecked = health.last_checked_at
+    ? new Date(health.last_checked_at).toLocaleString("zh-CN")
+    : "未知";
+  const errors = health.errors ?? [];
 
   return (
     <div className="health-card" role="region" aria-label="集成健康状态">
@@ -89,38 +86,41 @@ export function IntegrationHealthCard() {
         <div className="health-indicator">
           <div className="health-indicator-label">
             {configIcon}
-            <span>配置状态</span>
+            <span>Shopping 集成</span>
           </div>
-          <span className={`status-tag ${data.config_status === "ok" ? "tone-good" : data.config_status === "warning" ? "tone-live" : "tone-bad"}`}>
+          <span className={`status-tag ${configStatus === "ok" ? "tone-good" : "tone-live"}`}>
             {configLabel}
+          </span>
+          <span className="health-timestamp ml-2" style={{ fontSize: '0.62rem', color: 'var(--ink-soft)' }}>
+            provider: {health.shopping?.provider ?? "N/A"}
           </span>
         </div>
 
         <div className="health-indicator">
           <div className="health-indicator-label">
             {backendIcon}
-            <span>后端连接</span>
+            <span>后端状态</span>
           </div>
-          <span className={`status-tag ${data.backend === "reachable" ? "tone-good" : data.backend === "degraded" ? "tone-live" : "tone-bad"}`}>
+          <span className={`status-tag ${health.status === "ok" ? "tone-good" : "tone-live"}`}>
             {backendLabel}
           </span>
         </div>
 
-        <div className="health-indicator">
-          <div className="health-indicator-label">
-            <ClockIcon />
-            <span>最近检查</span>
+        {lastChecked !== "未知" && (
+          <div className="health-indicator">
+            <div className="health-indicator-label">
+              <ClockIcon />
+              <span>最近检查</span>
+            </div>
+            <span className="health-timestamp">{lastChecked}</span>
           </div>
-          <span className="health-timestamp">
-            {new Date(data.last_checked_at).toLocaleString("zh-CN")}
-          </span>
-        </div>
+        )}
       </div>
 
-      {data.errors.length > 0 && (
+      {errors.length > 0 && (
         <div className="health-errors" aria-label="集成错误">
           <small>安全错误码</small>
-          {data.errors.map((err) => (
+          {errors.map((err) => (
             <div
               className={`health-error-item health-error-${err.severity}`}
               key={err.code}
@@ -135,7 +135,7 @@ export function IntegrationHealthCard() {
         </div>
       )}
 
-      {data.errors.length === 0 && (
+      {errors.length === 0 && (
         <div className="health-no-errors">
           <CheckCircle2 className="h-4 w-4 tone-good" />
           <span>无集成错误</span>
