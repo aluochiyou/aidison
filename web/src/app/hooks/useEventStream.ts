@@ -37,6 +37,7 @@ export function useEventStream(
     const controller = new AbortController();
     const storageKey = `aidison-event-cursor:${projectId}`;
     let cursor = localStorage.getItem(storageKey) || "";
+    let streamConnected = false;
 
     const accept = (event: ProjectEvent) => {
       cursor = event.id;
@@ -89,6 +90,7 @@ export function useEventStream(
             signal: controller.signal,
           });
           if (!response.ok || !response.body) throw new Error(`SSE HTTP ${response.status}`);
+          streamConnected = true;
           setConnected(true);
           const reader = response.body.getReader();
           const decoder = new TextDecoder();
@@ -108,6 +110,7 @@ export function useEventStream(
           if (controller.signal.aborted) return;
           console.warn("Aidison event stream reconnecting", error);
         } finally {
+          streamConnected = false;
           setConnected(false);
         }
         await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY));
@@ -116,12 +119,17 @@ export function useEventStream(
 
     const pollCursor = async () => {
       while (!controller.signal.aborted) {
-        try {
-          const updates = await getClient().getEvents(projectId, sequenceFromId(cursor));
-          for (const event of updates) accept(event);
-        } catch (error) {
-          if (controller.signal.aborted) return;
-          console.warn("Aidison event cursor poll retrying", error);
+        // SSE is authoritative while healthy. Polling at the same time doubles
+        // the durable-event traffic for every open console, so retain polling
+        // only as the fallback for environments where streaming is unavailable.
+        if (!streamConnected) {
+          try {
+            const updates = await getClient().getEvents(projectId, sequenceFromId(cursor));
+            for (const event of updates) accept(event);
+          } catch (error) {
+            if (controller.signal.aborted) return;
+            console.warn("Aidison event cursor poll retrying", error);
+          }
         }
         await new Promise((resolve) => setTimeout(resolve, CURSOR_POLL_DELAY));
       }
