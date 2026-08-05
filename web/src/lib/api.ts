@@ -189,7 +189,7 @@ class AidisonClient {
   }
 
   // ============================================================
-  // V1 新增端点 — aligned to backend contracts
+  // V1 新增端点 — aligned to backend HEAD 3cfd23a
   // ============================================================
 
   // GET /api/integration-health
@@ -202,18 +202,13 @@ class AidisonClient {
   }
 
   // POST /api/projects/{id}/shopping/offers/search
-  // Backend: requires If-Match; body = { query?, bom_line_id, region?, max_results? }
-  // Returns { offers, project_revision } envelope.
+  // Backend 3cfd23a: query (required), bom_line_id (required), region, max_results.
+  // Return: OfferSnapshot[] directly (not wrapped).  Requires If-Match.
   async searchOffers(
     projectId: string,
     ifMatch: number,
-    body: {
-      query?: string;
-      bom_line_id: string;
-      region?: string;
-      max_results?: number;
-    },
-  ): Promise<import("@/app/types/types").SearchOffersResponse> {
+    body: { query: string; bom_line_id: string; region: string; max_results: number },
+  ): Promise<import("@/app/types/types").OfferSnapshot[]> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     headers["If-Match"] = `"${ifMatch}"`;
     headers["Idempotency-Key"] = this.genKey("search-offers");
@@ -228,12 +223,16 @@ class AidisonClient {
       }
       throw err;
     }
-    return res.json();
+    const data: unknown = await res.json();
+    // Backend returns OfferSnapshot[] directly — not an envelope.
+    return data as import("@/app/types/types").OfferSnapshot[];
   }
 
   // POST /api/projects/{id}/purchase-proposals
-  // Backend: single-offer; req = { solution_version_id, offer_snapshot_id, quantity,
-  //   region, currency, shipping_estimate?, tax_estimate?, max_total? }; requires If-Match.
+  // Backend 3cfd23a: solution_version_id, offer_snapshot_id, quantity, region, currency,
+  //   shipping_estimate?, tax_estimate?, max_total (required, string).
+  // unit_price/shipping/tax/max_total are STRINGS in backend domain.
+  // Requires If-Match; returns ETag (next revision) in response.
   async createPurchaseProposal(
     projectId: string,
     ifMatch: number,
@@ -243,44 +242,48 @@ class AidisonClient {
       quantity: number;
       region: string;
       currency: string;
-      shipping_estimate?: number;
-      tax_estimate?: number;
-      max_total?: number;
+      shipping_estimate?: string | null;
+      tax_estimate?: string | null;
+      max_total: string;
     },
-  ): Promise<import("@/app/types/types").PurchaseProposal> {
+  ): Promise<{ data: import("@/app/types/types").PurchaseProposal; etag: number }> {
     return this.req<import("@/app/types/types").PurchaseProposal>(
       "POST",
       `/api/projects/${projectId}/purchase-proposals`,
       { body, prefix: "purchase-proposal", ifMatch },
-    ).then((r) => r.data);
+    );
   }
 
   // POST /api/purchase-proposals/{id}/confirm-lines
-  // Backend: req = { confirmed_line_ids: string[] }
+  // Backend 3cfd23a: confirmed_line_ids (required, tuple), If-Match (project revision).
+  // Returns ETag (next revision) + If-Match (proposal basis_hash) in response headers.
   async confirmPurchaseLines(
     proposalId: string,
+    ifMatch: number,
     body: { confirmed_line_ids: string[] },
-  ): Promise<import("@/app/types/types").PurchaseProposal> {
+  ): Promise<{ data: import("@/app/types/types").PurchaseProposal; etag: number }> {
     return this.req<import("@/app/types/types").PurchaseProposal>(
       "POST",
       `/api/purchase-proposals/${proposalId}/confirm-lines`,
-      { body, prefix: "confirm-lines" },
-    ).then((r) => r.data);
+      { body, prefix: "confirm-lines", ifMatch },
+    );
   }
 
   // POST /api/purchase-proposals/{id}/checkout-handoffs
-  // Backend: returns CheckoutHandoff (status: prepared|dispatched|succeeded|ambiguous)
+  // Backend 3cfd23a: If-Match (project revision), no request body (protocol marker).
+  // Returns ETag (next revision).
   async requestCheckoutHandoff(
     proposalId: string,
-  ): Promise<import("@/app/types/types").CheckoutHandoff> {
+    ifMatch: number,
+  ): Promise<{ data: import("@/app/types/types").CheckoutHandoff; etag: number }> {
     return this.req<import("@/app/types/types").CheckoutHandoff>(
       "POST",
       `/api/purchase-proposals/${proposalId}/checkout-handoffs`,
-      { prefix: "checkout-handoff" },
-    ).then((r) => r.data);
+      { prefix: "checkout-handoff", ifMatch },
+    );
   }
 
-  // GET /api/artifacts/{id} — metadata only (no content endpoint yet)
+  // GET /api/artifacts/{id} — metadata
   async getArtifactMeta(artifactId: string): Promise<import("@/app/types/types").ArtifactMeta> {
     const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}`);
     if (!res.ok) {
@@ -293,7 +296,7 @@ class AidisonClient {
     return res.json();
   }
 
-  // GET /api/artifacts/{id}/content — guarded; only call when backend supplies this route
+  // GET /api/artifacts/{id}/content — backend supplies this route at 3cfd23a
   async getArtifactContent(artifactId: string): Promise<string> {
     const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}/content`);
     if (!res.ok) {

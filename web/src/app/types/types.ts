@@ -452,6 +452,8 @@ export interface ArtifactMeta {
   media_type: string;
   /** Backend field: content_hash (SHA-256 hex). */
   content_hash: string;
+  /** Backend field: size_bytes (integer). */
+  size_bytes?: number;
   status: ArtifactStatus;
   /** Backend field: source_url (URL where content was fetched from). */
   source_url: string | null;
@@ -463,59 +465,74 @@ export interface ArtifactMeta {
 export type DisplayDisposition = "inline" | "download_only" | "blocked";
 
 /**
- * Backend CheckoutHandoff fields.
+ * Backend CheckoutHandoff (domain/models.py).
  * status: prepared → dispatched (has checkout_url) → succeeded | ambiguous.
  */
 export interface CheckoutHandoff {
   id: string;
+  project_id: string;
   proposal_id: string;
+  basis_hash: string;
   provider: string;
+  provider_cart_id: string | null;
   checkout_url: string | null;
   status: "prepared" | "dispatched" | "succeeded" | "ambiguous";
   created_at: string;
+  dispatched_at: string | null;
+  resolved_at: string | null;
 }
 
-/** Backend OfferSnapshot fields. */
+/**
+ * Backend OfferSnapshot (domain/models.py).
+ * unit_price / shipping_estimate / tax_estimate are strings in the backend domain.
+ */
 export interface OfferSnapshot {
   id: string;
   project_id: string;
+  solution_version_id: string;
   bom_line_id: string;
-  seller: string;
-  unit_price: number;
+  provider: string;
+  provider_offer_id: string;
+  merchandise_id: string | null;
+  seller: string | null;
+  title: string;
+  condition: string | null;
+  availability: string;
+  unit_price: string;
   currency: string;
-  condition: string;
-  quantity_available: number;
+  shipping_estimate: string | null;
+  tax_estimate: string | null;
   region: string;
+  quantity_available: number;
   product_url: string;
-  listed_at: string;
-  expires_at: string | null;
   observed_at: string;
+  expires_at: string | null;
   snapshot_hash: string;
-  provenance: Record<string, unknown>;
+  provenance: string;
 }
 
-/** Single-offer PurchaseProposal (backend model). */
+/**
+ * Backend PurchaseProposal (domain/models.py).
+ * unit_price / max_total / shipping_estimate / tax_estimate are strings.
+ */
 export interface PurchaseProposal {
   id: string;
   project_id: string;
-  /** Backend field: solution_version_id used as basis. */
   solution_version_id: string;
-  /** Backend field: single offer snapshot. */
   offer_snapshot_id: string;
   quantity: number;
-  unit_price: number;
+  region: string;
   currency: string;
-  /** Backend field: confirmed BOM line ids. */
-  confirmed_line_ids: string[];
+  shipping_estimate: string | null;
+  tax_estimate: string | null;
+  max_total: string;
+  unit_price: string;
   status: "draft" | "ready" | "expired" | "handed_off";
+  basis_hash: string;
+  confirmed_line_ids: string[];
+  expires_at: string | null;
   created_at: string;
-  confirmed_at: string | null;
-}
-
-/** Backend searchOffers response envelope. */
-export interface SearchOffersResponse {
-  offers: OfferSnapshot[];
-  project_revision: number;
+  handed_off_at: string | null;
 }
 
 /** Backend integration-health response. */

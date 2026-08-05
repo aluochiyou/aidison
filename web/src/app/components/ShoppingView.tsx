@@ -75,7 +75,10 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     [activeSolution],
   );
 
-  // State
+  // Carry the server-returned project revision across shopping steps
+  // so confirm/checkout use the freshest value (not stale snapshot.revision).
+  const [currentRevision, setCurrentRevision] = useState<number>(snapshot.project.revision);
+  // ... existing state below
   const [phase, setPhase] = useState<ShoppingPhase>("browse-bom");
   const [selectedBomLines, setSelectedBomLines] = useState<Set<string>>(
     new Set(),
@@ -111,16 +114,22 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     setError(null);
     setPhase("searching-offers");
     try {
-      // Backend contract (C2a): single bom_line_id, If-Match required.
-      // Search one BOM line at a time; merge results.
-      const revision = snapshot.project.revision;
+      // Backend 3cfd23a: single bom_line_id, query REQUIRED non-empty.
+      // Send BOM item name as the query (bounded, non-empty search term).
+      const revision = currentRevision;
       const allOffers: OfferSnapshot[] = [];
       for (const bomLineId of lineIds) {
+        const bomItem = bomItems.find((b) => b.line_id === bomLineId);
+        const query = bomItem?.name ?? bomLineId;
         try {
-          const resp = await getClient().searchOffers(snapshot.project.id, revision, {
+          const offersResp = await getClient().searchOffers(snapshot.project.id, revision, {
+            query,
             bom_line_id: bomLineId,
+            region: "CN",
+            max_results: 10,
           });
-          allOffers.push(...resp.offers);
+          // Backend returns OfferSnapshot[] directly — not an envelope.
+          allOffers.push(...offersResp);
         } catch {
           // skip individual line errors; continue with remaining
         }
@@ -147,25 +156,32 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     }
   };
 
-  // Create purchase proposal from a single offer (backend C2b: single-offer)
+  // Create purchase proposal from a single offer (backend 3cfd23a: single-offer, max_total required string)
   const createProposal = async (offer: OfferSnapshot, bomItem: BomItem) => {
     setPhase("creating-proposal");
     setError(null);
     try {
-      const revision = snapshot.project.revision;
+      const revision = currentRevision;
       const solutionVersionId = activeSolution?.id ?? "";
-      const result = await getClient().createPurchaseProposal(
+      // max_total: string required. Compute a safe ceiling (unit_price * quantity * 2).
+      const unitD = parseFloat(offer.unit_price);
+      const maxTotal = String((unitD * bomItem.quantity * 2).toFixed(2));
+      const { data: proposalData, etag: nextRevision } = await getClient().createPurchaseProposal(
         snapshot.project.id,
         revision,
         {
           solution_version_id: solutionVersionId,
           offer_snapshot_id: offer.id,
-          quantity: bomItem.quantity,
+          quantity: Math.ceil(bomItem.quantity),
           region: offer.region,
           currency: offer.currency,
+          shipping_estimate: offer.shipping_estimate,
+          tax_estimate: offer.tax_estimate,
+          max_total: maxTotal,
         },
       );
-      setProposal(result);
+      setProposal(proposalData);
+      setCurrentRevision(nextRevision);
       setPhase("proposal-ready");
       toast.success("PurchaseProposal 已创建");
     } catch (e) {
@@ -178,15 +194,18 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     }
   };
 
-  // Confirm lines in a proposal (backend C2c: confirmed_line_ids)
+  // Confirm lines in a proposal (backend 3cfd23a: If-Match project revision)
   const confirmLines = async (lineIds: string[]) => {
     if (!proposal) return;
     try {
-      const updated = await getClient().confirmPurchaseLines(proposal.id, {
-        confirmed_line_ids: lineIds,
-      });
+      const { data: updated, etag: nextRevision } = await getClient().confirmPurchaseLines(
+        proposal.id,
+        currentRevision,
+        { confirmed_line_ids: lineIds },
+      );
       setProposal(updated);
       setConfirmedLines(new Set(updated.confirmed_line_ids));
+      setCurrentRevision(nextRevision);
       toast.success("已确认所选行");
     } catch (e) {
       const msg =
@@ -197,12 +216,15 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     }
   };
 
-  // Handoff to checkout
+  // Handoff to checkout (backend 3cfd23a: If-Match project revision)
   const requestHandoff = async () => {
     if (!proposal) return;
     setPhase("handing-off");
     try {
-      const result = await getClient().requestCheckoutHandoff(proposal.id);
+      const { data: result } = await getClient().requestCheckoutHandoff(
+        proposal.id,
+        currentRevision,
+      );
       setHandoff(result);
       toast.success("Checkout handoff 已就绪");
     } catch (e) {
@@ -340,9 +362,10 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
   if (phase === "comparing-offers" || phase === "searching-offers") {
     const groupedBySeller = new Map<string, OfferSnapshot[]>();
     for (const offer of offers) {
-      const existing = groupedBySeller.get(offer.seller) ?? [];
+      const sellerKey = offer.seller ?? offer.provider ?? "Unknown";
+      const existing = groupedBySeller.get(sellerKey) ?? [];
       existing.push(offer);
-      groupedBySeller.set(offer.seller, existing);
+      groupedBySeller.set(sellerKey, existing);
     }
 
     return (
@@ -396,7 +419,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                       >
                         <header>
                           <Building2 className="h-4 w-4" />
-                          <strong>{offer.seller}</strong>
+                          <strong>{offer.seller ?? offer.provider}</strong>
                           {expired && (
                             <span className="status-tag tone-bad">已过期</span>
                           )}
@@ -405,7 +428,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                         <div className="offer-details">
                           <div className="offer-price">
                             <span className="offer-price-value">
-                              {offer.unit_price.toLocaleString()} {offer.currency}
+                              {offer.unit_price} {offer.currency}
                             </span>
                             <small>/ {offer.condition}</small>
                           </div>
@@ -511,8 +534,11 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
           <div className="proposal-meta-item">
             <small>总价</small>
             <strong>
-              {(proposal.unit_price * proposal.quantity).toLocaleString()} {proposal.currency}
+              {proposal.unit_price} × {proposal.quantity} {proposal.currency}
             </strong>
+            <small style={{ display: 'block', marginTop: '0.15rem', fontSize: '0.6rem', color: 'var(--ink-soft)' }}>
+              max_total: {proposal.max_total}
+            </small>
           </div>
           <div className="proposal-meta-item">
             <small>Solution Version</small>
@@ -574,7 +600,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
 
                   <div className="proposal-line-detail">
                     <span>
-                      {proposal.quantity} × {proposal.unit_price.toLocaleString()}{" "}
+                      {proposal.quantity} × {proposal.unit_price}{" "}
                       {proposal.currency}
                     </span>
                     {offerForProposal && (
