@@ -20,6 +20,8 @@ from aidison.domain.models import (
     CompatibilityFinding,
     DecisionRequest,
     DecisionStatus,
+    EffectApproval,
+    EffectApprovalStatus,
     EvidenceBinding,
     ImpactAnalysis,
     ImpactStatus,
@@ -42,6 +44,7 @@ from aidison.infrastructure.orm import (
     CompatibilityFindingRow,
     DecisionRequestRow,
     DomainEventRow,
+    EffectApprovalRow,
     EvidenceBindingRow,
     ImpactAnalysisRow,
     ModuleRow,
@@ -659,6 +662,111 @@ class PostgresDomainStore(DomainStore):
         result = cast(CursorResult[Any], await self._session.execute(statement))
         if result.rowcount != 1:
             raise OptimisticConcurrencyError("purchase proposal is stale or already updated")
+
+    async def add_effect_approval(self, approval: EffectApproval) -> None:
+        self._session.add(
+            EffectApprovalRow(
+                id=approval.id,
+                project_id=approval.project_id,
+                effect_kind=approval.effect_kind,
+                target_ref=approval.target_ref,
+                basis_hash=approval.basis_hash,
+                scope_hash=approval.scope_hash,
+                constraints=approval.constraints,
+                status=approval.status.value,
+                payload=_payload(approval),
+                requested_at=approval.requested_at,
+                expires_at=approval.expires_at,
+                resolved_at=approval.resolved_at,
+                consumed_at=approval.consumed_at,
+            )
+        )
+
+    async def get_effect_approval(self, approval_id: UUID) -> EffectApproval | None:
+        row = await self._session.get(EffectApprovalRow, approval_id)
+        if row is None:
+            return None
+        approval = _decode(EffectApproval, row.payload)
+        _assert_identity(
+            entity_name="EffectApproval",
+            row_id=row.id,
+            row_project_id=row.project_id,
+            payload_id=approval.id,
+            payload_project_id=approval.project_id,
+        )
+        if (
+            row.effect_kind != approval.effect_kind
+            or row.target_ref != approval.target_ref
+            or row.basis_hash != approval.basis_hash
+            or row.scope_hash != approval.scope_hash
+            or row.constraints != approval.constraints
+            or row.status != approval.status.value
+            or row.requested_at != approval.requested_at
+            or row.expires_at != approval.expires_at
+            or row.resolved_at != approval.resolved_at
+            or row.consumed_at != approval.consumed_at
+        ):
+            raise PersistenceCorruptionError("EffectApproval typed state differs from payload")
+        return approval
+
+    async def list_effect_approvals(self, project_id: UUID) -> Sequence[EffectApproval]:
+        rows = (
+            await self._session.scalars(
+                select(EffectApprovalRow)
+                .where(EffectApprovalRow.project_id == project_id)
+                .order_by(EffectApprovalRow.requested_at.desc(), EffectApprovalRow.id)
+            )
+        ).all()
+        return [_decode(EffectApproval, row.payload) for row in rows]
+
+    async def find_live_effect_approval(
+        self,
+        project_id: UUID,
+        scope_hash: str,
+    ) -> EffectApproval | None:
+        row = await self._session.scalar(
+            select(EffectApprovalRow)
+            .where(
+                EffectApprovalRow.project_id == project_id,
+                EffectApprovalRow.scope_hash == scope_hash,
+                EffectApprovalRow.status.in_(
+                    (
+                        EffectApprovalStatus.REQUESTED.value,
+                        EffectApprovalStatus.APPROVED.value,
+                    )
+                ),
+            )
+            .with_for_update()
+        )
+        return None if row is None else _decode(EffectApproval, row.payload)
+
+    async def update_effect_approval(
+        self,
+        approval: EffectApproval,
+        *,
+        expected_status: EffectApprovalStatus,
+    ) -> None:
+        statement = (
+            sqlalchemy.update(EffectApprovalRow)
+            .where(
+                EffectApprovalRow.id == approval.id,
+                EffectApprovalRow.project_id == approval.project_id,
+                EffectApprovalRow.effect_kind == approval.effect_kind,
+                EffectApprovalRow.target_ref == approval.target_ref,
+                EffectApprovalRow.basis_hash == approval.basis_hash,
+                EffectApprovalRow.scope_hash == approval.scope_hash,
+                EffectApprovalRow.status == expected_status.value,
+            )
+            .values(
+                status=approval.status.value,
+                payload=_payload(approval),
+                resolved_at=approval.resolved_at,
+                consumed_at=approval.consumed_at,
+            )
+        )
+        result = cast(CursorResult[Any], await self._session.execute(statement))
+        if result.rowcount != 1:
+            raise OptimisticConcurrencyError("effect approval is stale or terminal")
 
     async def add_checkout_handoff(self, handoff: CheckoutHandoff) -> None:
         self._session.add(

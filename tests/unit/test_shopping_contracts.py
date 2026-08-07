@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
 
@@ -11,6 +12,8 @@ from pydantic import ValidationError
 from aidison.domain.models import (
     CheckoutHandoff,
     CheckoutHandoffStatus,
+    EffectApproval,
+    EffectApprovalStatus,
     OfferSnapshot,
     PurchaseProposal,
     PurchaseProposalStatus,
@@ -170,6 +173,56 @@ def test_checkout_handoff_resolved_requires_timestamp() -> None:
             basis_hash=digest("basis"),
             provider="shopify",
             status=CheckoutHandoffStatus.AMBIGUOUS,
+        )
+
+
+# ── EffectApproval ──────────────────────────────────────────────────────
+
+
+def test_effect_approval_requested_has_immutable_frozen_scope() -> None:
+    approval = EffectApproval(
+        project_id=uuid4(),
+        effect_kind="shopping.create_cart",
+        target_ref=uuid4(),
+        basis_hash=digest("approval-basis"),
+        scope_hash=digest("approval-scope"),
+        constraints={"quantity": 1, "provider": "shopify"},
+        expires_at=datetime.now(UTC) + timedelta(minutes=10),
+    )
+    assert approval.status is EffectApprovalStatus.REQUESTED
+    with pytest.raises(ValidationError):
+        approval.scope_hash = digest("changed")  # noqa: B018
+
+
+def test_denied_effect_approval_requires_reason_and_resolution_time() -> None:
+    base = {
+        "project_id": uuid4(),
+        "effect_kind": "shopping.create_cart",
+        "target_ref": uuid4(),
+        "basis_hash": digest("approval-basis"),
+        "scope_hash": digest("approval-scope"),
+        "constraints": {"quantity": 1},
+        "expires_at": datetime.now(UTC) + timedelta(minutes=10),
+        "status": EffectApprovalStatus.DENIED,
+    }
+    with pytest.raises(ValidationError, match="reason"):
+        EffectApproval(**base, resolved_at=datetime.now(UTC))
+    with pytest.raises(ValidationError, match="resolved_at"):
+        EffectApproval(**base, resolution_reason="operator denied")
+
+
+def test_consumed_effect_approval_requires_approval_and_consumption_timestamps() -> None:
+    with pytest.raises(ValidationError, match="consumed_at"):
+        EffectApproval(
+            project_id=uuid4(),
+            effect_kind="shopping.create_cart",
+            target_ref=uuid4(),
+            basis_hash=digest("approval-basis"),
+            scope_hash=digest("approval-scope"),
+            constraints={"quantity": 1},
+            expires_at=datetime.now(UTC) + timedelta(minutes=10),
+            status=EffectApprovalStatus.CONSUMED,
+            resolved_at=datetime.now(UTC),
         )
 
 

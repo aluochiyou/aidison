@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -1109,6 +1110,55 @@ class PurchaseProposalRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class EffectApprovalRow(Base):
+    __tablename__ = "effect_approvals"
+    __table_args__ = (
+        UniqueConstraint("project_id", "id", name="uq_effect_approval_project_id"),
+        ForeignKeyConstraint(
+            ["project_id", "target_ref"],
+            ["purchase_proposals.project_id", "purchase_proposals.id"],
+            name="fk_effect_approval_project_proposal",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "status IN ('requested', 'approved', 'denied', 'expired', 'consumed')",
+            name="effect_approval_status",
+        ),
+        CheckConstraint(
+            "expires_at > requested_at",
+            name="effect_approval_expiry_after_request",
+        ),
+        CheckConstraint(
+            "status = payload->>'status'",
+            name="effect_approval_payload_status",
+        ),
+        Index("ix_effect_approvals_project_status", "project_id", "status"),
+        Index(
+            "uq_effect_approvals_live_scope",
+            "project_id",
+            "scope_hash",
+            unique=True,
+            postgresql_where=text("status IN ('requested', 'approved')"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
+    effect_kind: Mapped[str] = mapped_column(String(100), nullable=False)
+    target_ref: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    constraints: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CheckoutHandoffRow(Base):

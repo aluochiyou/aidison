@@ -20,3 +20,6 @@ runtime:
   lease_seconds: 60
   poll_seconds: 0.5
   durable_recheck_seconds: 30
+
+shopping:
+  effect_approval_ttl_seconds: 900

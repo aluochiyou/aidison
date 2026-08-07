@@ -20,7 +20,9 @@ class AidisonClient {
 
   private genKey(prefix: string): string {
     this.counter += 1;
-    return `${prefix}-${Date.now()}-${this.counter}-${Math.random().toString(36).slice(2, 10)}`;
+    return `${prefix}-${Date.now()}-${this.counter}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
   }
 
   private async req<T>(
@@ -28,7 +30,9 @@ class AidisonClient {
     path: string,
     opts: { body?: unknown; ifMatch?: number; prefix?: string } = {}
   ): Promise<{ data: T; etag: number }> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
     if (opts.prefix) headers["Idempotency-Key"] = this.genKey(opts.prefix);
     if (opts.ifMatch !== undefined) headers["If-Match"] = `"${opts.ifMatch}"`;
 
@@ -40,7 +44,9 @@ class AidisonClient {
 
     if (!res.ok) {
       let err: ApiError;
-      try { err = await res.json(); } catch {
+      try {
+        err = await res.json();
+      } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
       }
       throw err;
@@ -59,17 +65,23 @@ class AidisonClient {
   }
 
   async createProject(name: string, goal: string) {
-    return this.req<import("@/app/types/types").Project>("POST", "/api/projects", {
-      body: { name, goal },
-      prefix: "create-project",
-    });
+    return this.req<import("@/app/types/types").Project>(
+      "POST",
+      "/api/projects",
+      {
+        body: { name, goal },
+        prefix: "create-project",
+      }
+    );
   }
 
   async listProjects(): Promise<import("@/app/types/types").Project[]> {
     const res = await fetch(`${this.baseUrl}/api/projects`);
     if (!res.ok) {
       let err: ApiError;
-      try { err = await res.json(); } catch {
+      try {
+        err = await res.json();
+      } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
       }
       throw err;
@@ -78,14 +90,23 @@ class AidisonClient {
   }
 
   async getProject(projectId: string) {
-    return this.req<import("@/app/types/types").Project>("GET", `/api/projects/${projectId}`);
+    return this.req<import("@/app/types/types").Project>(
+      "GET",
+      `/api/projects/${projectId}`
+    );
   }
 
-  async getSnapshot(projectId: string): Promise<import("@/app/types/types").ProjectSnapshot> {
-    const res = await fetch(`${this.baseUrl}/api/projects/${projectId}/snapshot`);
+  async getSnapshot(
+    projectId: string
+  ): Promise<import("@/app/types/types").ProjectSnapshot> {
+    const res = await fetch(
+      `${this.baseUrl}/api/projects/${projectId}/snapshot`
+    );
     if (!res.ok) {
       let err: ApiError;
-      try { err = await res.json(); } catch {
+      try {
+        err = await res.json();
+      } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
       }
       throw err;
@@ -102,11 +123,20 @@ class AidisonClient {
       preferences?: string[];
       available_resources?: string[];
       unknowns?: string[];
-      modules: { key: string; name: string; responsibility: string; dependency_keys?: string[]; acceptance?: string[]; open_questions?: string[] }[];
+      modules: {
+        key: string;
+        name: string;
+        responsibility: string;
+        dependency_keys?: string[];
+        acceptance?: string[];
+        open_questions?: string[];
+      }[];
     }
   ) {
     return this.req("POST", `/api/projects/${projectId}/requirements`, {
-      body, prefix: "approve-req", ifMatch: revision,
+      body,
+      prefix: "approve-req",
+      ifMatch: revision,
     });
   }
 
@@ -122,7 +152,9 @@ class AidisonClient {
     }
   ) {
     return this.req("POST", `/api/projects/${projectId}/research-proposals`, {
-      body, prefix: "research", ifMatch: revision,
+      body,
+      prefix: "research",
+      ifMatch: revision,
     });
   }
 
@@ -133,7 +165,8 @@ class AidisonClient {
       basis_hash: string;
       project_revision: number;
     }>("POST", `/api/projects/${projectId}/research-runs`, {
-      prefix: "research-run", ifMatch: revision,
+      prefix: "research-run",
+      ifMatch: revision,
     });
   }
 
@@ -145,7 +178,8 @@ class AidisonClient {
   ) {
     return this.req("POST", `/api/decisions/${decisionId}/resolve`, {
       body: { selected_option_id: selectedOptionId, basis_hash: basisHash },
-      prefix: "resolve", ifMatch: revision,
+      prefix: "resolve",
+      ifMatch: revision,
     });
   }
 
@@ -155,7 +189,9 @@ class AidisonClient {
     body: { solution_proposal_id: string; basis_hash: string }
   ) {
     return this.req("POST", `/api/projects/${projectId}/solutions`, {
-      body, prefix: "freeze", ifMatch: revision,
+      body,
+      prefix: "freeze",
+      ifMatch: revision,
     });
   }
 
@@ -167,28 +203,32 @@ class AidisonClient {
   ) {
     return this.req("POST", `/api/projects/${projectId}/observations`, {
       body: { statement, affected_module_ids: affectedModuleIds },
-      prefix: "observe", ifMatch: revision,
+      prefix: "observe",
+      ifMatch: revision,
     });
   }
 
-  async approveImpact(
-    impactId: string,
-    revision: number,
-    basisHash: string
-  ) {
+  async approveImpact(impactId: string, revision: number, basisHash: string) {
     return this.req("POST", `/api/impacts/${impactId}/approve`, {
       body: { basis_hash: basisHash },
-      prefix: "approve-impact", ifMatch: revision,
+      prefix: "approve-impact",
+      ifMatch: revision,
     });
   }
 
-  async getEvents(projectId: string, after = 0, limit = 200): Promise<import("@/app/types/types").ProjectEvent[]> {
+  async getEvents(
+    projectId: string,
+    after = 0,
+    limit = 200
+  ): Promise<import("@/app/types/types").ProjectEvent[]> {
     const res = await fetch(
       `${this.baseUrl}/api/projects/${projectId}/events?after=${after}&limit=${limit}`
     );
     if (!res.ok) {
       let err: ApiError;
-      try { err = await res.json(); } catch {
+      try {
+        err = await res.json();
+      } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
       }
       throw err;
@@ -205,10 +245,17 @@ class AidisonClient {
   // ============================================================
 
   // GET /api/integration-health
-  async getIntegrationHealth(): Promise<import("@/app/types/types").IntegrationHealth> {
+  async getIntegrationHealth(): Promise<
+    import("@/app/types/types").IntegrationHealth
+  > {
     const res = await fetch(`${this.baseUrl}/api/integration-health`);
     if (!res.ok) {
-      throw { error: { code: "integration_health_failed", message: `HTTP ${res.status}` } };
+      throw {
+        error: {
+          code: "integration_health_failed",
+          message: `HTTP ${res.status}`,
+        },
+      };
     }
     return res.json();
   }
@@ -219,18 +266,27 @@ class AidisonClient {
   async searchOffers(
     projectId: string,
     ifMatch: number,
-    body: { query: string; bom_line_id: string; region: string; max_results: number },
+    body: {
+      query: string;
+      bom_line_id: string;
+      region: string;
+      max_results: number;
+    }
   ): Promise<import("@/app/types/types").OfferSnapshot[]> {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
     headers["If-Match"] = `"${ifMatch}"`;
     headers["Idempotency-Key"] = this.genKey("search-offers");
     const res = await fetch(
       `${this.baseUrl}/api/projects/${projectId}/shopping/offers/search`,
-      { method: "POST", headers, body: JSON.stringify(body) },
+      { method: "POST", headers, body: JSON.stringify(body) }
     );
     if (!res.ok) {
       let err: ApiError;
-      try { err = await res.json(); } catch {
+      try {
+        err = await res.json();
+      } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
       }
       throw err;
@@ -257,12 +313,15 @@ class AidisonClient {
       shipping_estimate?: string | null;
       tax_estimate?: string | null;
       max_total: string;
-    },
-  ): Promise<{ data: import("@/app/types/types").PurchaseProposal; etag: number }> {
+    }
+  ): Promise<{
+    data: import("@/app/types/types").PurchaseProposal;
+    etag: number;
+  }> {
     return this.req<import("@/app/types/types").PurchaseProposal>(
       "POST",
       `/api/projects/${projectId}/purchase-proposals`,
-      { body, prefix: "purchase-proposal", ifMatch },
+      { body, prefix: "purchase-proposal", ifMatch }
     );
   }
 
@@ -272,35 +331,82 @@ class AidisonClient {
   async confirmPurchaseLines(
     proposalId: string,
     ifMatch: number,
-    body: { confirmed_line_ids: string[] },
-  ): Promise<{ data: import("@/app/types/types").PurchaseProposal; etag: number }> {
+    body: { confirmed_line_ids: string[] }
+  ): Promise<{
+    data: import("@/app/types/types").PurchaseProposal;
+    etag: number;
+  }> {
     return this.req<import("@/app/types/types").PurchaseProposal>(
       "POST",
       `/api/purchase-proposals/${proposalId}/confirm-lines`,
-      { body, prefix: "confirm-lines", ifMatch },
+      { body, prefix: "confirm-lines", ifMatch }
+    );
+  }
+
+  async requestEffectApproval(
+    proposalId: string,
+    ifMatch: number
+  ): Promise<{
+    data: import("@/app/types/types").EffectApproval;
+    etag: number;
+  }> {
+    return this.req<import("@/app/types/types").EffectApproval>(
+      "POST",
+      `/api/purchase-proposals/${proposalId}/effect-approvals`,
+      { prefix: "effect-approval-request", ifMatch }
+    );
+  }
+
+  async resolveEffectApproval(
+    approvalId: string,
+    ifMatch: number,
+    body: {
+      decision: "approved" | "denied";
+      scope_hash: string;
+      reason?: string | null;
+    }
+  ): Promise<{
+    data: import("@/app/types/types").EffectApproval;
+    etag: number;
+  }> {
+    return this.req<import("@/app/types/types").EffectApproval>(
+      "POST",
+      `/api/effect-approvals/${approvalId}/resolve`,
+      { body, prefix: "effect-approval-resolve", ifMatch }
     );
   }
 
   // POST /api/purchase-proposals/{id}/checkout-handoffs
-  // Backend 3cfd23a: If-Match (project revision), no request body (protocol marker).
-  // Returns ETag (next revision).
+  // Requires one exact-scope approved EffectApproval; successful execution consumes it.
   async requestCheckoutHandoff(
     proposalId: string,
     ifMatch: number,
-  ): Promise<{ data: import("@/app/types/types").CheckoutHandoff; etag: number }> {
+    effectApprovalId: string
+  ): Promise<{
+    data: import("@/app/types/types").CheckoutHandoff;
+    etag: number;
+  }> {
     return this.req<import("@/app/types/types").CheckoutHandoff>(
       "POST",
       `/api/purchase-proposals/${proposalId}/checkout-handoffs`,
-      { prefix: "checkout-handoff", ifMatch },
+      {
+        body: { effect_approval_id: effectApprovalId },
+        prefix: "checkout-handoff",
+        ifMatch,
+      }
     );
   }
 
   // GET /api/artifacts/{id} — metadata
-  async getArtifactMeta(artifactId: string): Promise<import("@/app/types/types").ArtifactMeta> {
+  async getArtifactMeta(
+    artifactId: string
+  ): Promise<import("@/app/types/types").ArtifactMeta> {
     const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}`);
     if (!res.ok) {
       let err: ApiError;
-      try { err = await res.json(); } catch {
+      try {
+        err = await res.json();
+      } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
       }
       throw err;
@@ -310,10 +416,14 @@ class AidisonClient {
 
   // GET /api/artifacts/{id}/content — backend supplies this route at 3cfd23a
   async getArtifactContent(artifactId: string): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/api/artifacts/${artifactId}/content`);
+    const res = await fetch(
+      `${this.baseUrl}/api/artifacts/${artifactId}/content`
+    );
     if (!res.ok) {
       let err: ApiError;
-      try { err = await res.json(); } catch {
+      try {
+        err = await res.json();
+      } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
       }
       throw err;
@@ -330,9 +440,10 @@ let _client: AidisonClient | null = null;
 
 export function getClient(): AidisonClient {
   if (!_client) {
-    const url = typeof window !== "undefined"
-      ? (localStorage.getItem("aidison-api-url") || "")
-      : "";
+    const url =
+      typeof window !== "undefined"
+        ? localStorage.getItem("aidison-api-url") || ""
+        : "";
     _client = new AidisonClient(url);
   }
   return _client;

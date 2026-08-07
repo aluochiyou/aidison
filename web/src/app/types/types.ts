@@ -10,7 +10,12 @@
 
 export type DecisionStatus = "pending" | "approved" | "rejected" | "expired";
 export type ImpactStatus = "proposed" | "approved" | "rejected";
-export type EvidenceStatus = "supported" | "contradicted" | "unknown" | "stale" | "retracted";
+export type EvidenceStatus =
+  | "supported"
+  | "contradicted"
+  | "unknown"
+  | "stale"
+  | "retracted";
 export type CompatibilityStatus =
   | "compatible"
   | "conditional"
@@ -360,6 +365,7 @@ export interface ProjectSnapshot {
   // V1 新增
   offer_snapshots?: OfferSnapshot[];
   purchase_proposals?: PurchaseProposal[];
+  effect_approvals?: EffectApproval[];
   checkout_handoffs?: CheckoutHandoff[];
   artifacts?: ArtifactMeta[];
 }
@@ -551,6 +557,23 @@ export interface CheckoutHandoff {
   created_at: string;
   dispatched_at: string | null;
   resolved_at: string | null;
+}
+
+/** One expiring, exact-scope authorization for an external effect. */
+export interface EffectApproval {
+  id: string;
+  project_id: string;
+  effect_kind: "shopping.create_cart";
+  target_ref: string;
+  basis_hash: string;
+  scope_hash: string;
+  constraints: Record<string, unknown>;
+  status: "requested" | "approved" | "denied" | "expired" | "consumed";
+  requested_at: string;
+  expires_at: string;
+  resolved_at: string | null;
+  consumed_at: string | null;
+  resolution_reason: string | null;
 }
 
 /**

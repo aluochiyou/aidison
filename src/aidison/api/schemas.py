@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -87,4 +88,10 @@ class ConfirmLinesRequest(ApiModel):
 
 
 class CreateCheckoutHandoffRequest(ApiModel):
-    pass  # All data comes from the proposal; request body is a protocol marker.
+    effect_approval_id: UUID
+
+
+class ResolveEffectApprovalRequest(ApiModel):
+    decision: Literal["approved", "denied"]
+    scope_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    reason: str | None = Field(default=None, max_length=1_000)

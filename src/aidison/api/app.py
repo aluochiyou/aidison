@@ -21,11 +21,13 @@ from aidison.api.schemas import (
     ApprovePatchRequest,
     ApproveRequirementsRequest,
     ConfirmLinesRequest,
+    CreateCheckoutHandoffRequest,
     CreateProjectRequest,
     CreatePurchaseProposalRequest,
     FreezeSolutionRequest,
     ResearchProposalRequest,
     ResolveDecisionRequest,
+    ResolveEffectApprovalRequest,
     SearchOffersRequest,
     SubmitObservationRequest,
 )
@@ -41,10 +43,11 @@ from aidison.application.shopping import (
     CartCreationError,
     OfferSearchError,
     ShoppingApplication,
+    ShoppingSettings,
 )
 from aidison.application.workspace import build_workspace_projection
 from aidison.domain.models import DecisionRequest as DomainDecisionRequest
-from aidison.domain.models import ImpactAnalysis
+from aidison.domain.models import EffectApprovalStatus, ImpactAnalysis
 from aidison.infrastructure.database import create_session_factory
 from aidison.infrastructure.orm import (
     AttemptRow,
@@ -149,11 +152,17 @@ def create_app(
     session_factory: async_sessionmaker[AsyncSession] | None = None,
     shopping_provider: ShoppingProvider | None = None,
     artifact_root: Path | None = None,
+    effect_approval_ttl_seconds: int | None = None,
 ) -> FastAPI:
     api = FastAPI(title="Aidison API", version="0.1.0")
     api.state.session_factory = session_factory or create_session_factory()
     api.state.shopping_provider = shopping_provider
     api.state.artifact_root = artifact_root or Path("artifacts/data")
+    api.state.effect_approval_ttl_seconds = (
+        effect_approval_ttl_seconds
+        if effect_approval_ttl_seconds is not None
+        else ShoppingSettings().effect_approval_ttl_seconds
+    )
 
     @api.exception_handler(RequestValidationError)
     async def validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -225,7 +234,11 @@ def create_app(
         provider = getattr(api.state, "shopping_provider", None)
         if provider is None:
             raise ShoppingConfigError("no shopping provider configured")
-        return ShoppingApplication(PostgresDomainStore(session), provider)
+        return ShoppingApplication(
+            PostgresDomainStore(session),
+            provider,
+            effect_approval_ttl_seconds=api.state.effect_approval_ttl_seconds,
+        )
 
     # ── Project routes ──────────────────────────────────────────────
 
@@ -594,9 +607,7 @@ def create_app(
             "evidence": await store.list_evidence_bindings(project_id),
             "candidates": await store.list_candidates(project_id),
             "compatibility_findings": await store.list_compatibility_findings(project_id),
-            "decisions": [
-                DomainDecisionRequest.model_validate(item.payload) for item in decisions
-            ],
+            "decisions": [DomainDecisionRequest.model_validate(item.payload) for item in decisions],
             "solution_proposals": await store.list_solution_proposals(project_id),
             "solutions": await store.list_solution_versions(project_id),
             "observations": await store.list_observations(project_id),
@@ -604,6 +615,7 @@ def create_app(
             "patch_sets": await store.list_patch_sets(project_id),
             "offer_snapshots": await store.list_offer_snapshots(project_id),
             "purchase_proposals": await store.list_purchase_proposals(project_id),
+            "effect_approvals": await store.list_effect_approvals(project_id),
             "checkout_handoffs": await store.list_checkout_handoffs(project_id),
             "runtime": {
                 "jobs": [
@@ -862,11 +874,58 @@ def create_app(
         return result
 
     @api.post(
+        "/api/purchase-proposals/{proposal_id}/effect-approvals",
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def request_effect_approval_route(
+        proposal_id: UUID,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        revision = _parse_revision(if_match)
+        store = PostgresDomainStore(session)
+        proposal = await store.get_purchase_proposal(proposal_id)
+        if proposal is None:
+            raise DomainNotFoundError("purchase proposal not found")
+        approval = await _shopping_app(session).request_effect_approval(
+            proposal_id=proposal_id,
+            expected_proposal_basis=proposal.basis_hash,
+            expected_project_revision=revision,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return approval
+
+    @api.post("/api/effect-approvals/{approval_id}/resolve")
+    async def resolve_effect_approval_route(
+        approval_id: UUID,
+        body: ResolveEffectApprovalRequest,
+        idempotency_key: IdempotencyKey,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        revision = _parse_revision(if_match)
+        approval = await _shopping_app(session).resolve_effect_approval(
+            approval_id=approval_id,
+            decision=EffectApprovalStatus(body.decision),
+            scope_hash=body.scope_hash,
+            reason=body.reason,
+            expected_project_revision=revision,
+            idempotency_key=idempotency_key,
+        )
+        response.headers["ETag"] = f'"{revision + 1}"'
+        return approval
+
+    @api.post(
         "/api/purchase-proposals/{proposal_id}/checkout-handoffs",
         status_code=status.HTTP_201_CREATED,
     )
     async def create_checkout_handoff_route(
         proposal_id: UUID,
+        body: CreateCheckoutHandoffRequest,
         idempotency_key: IdempotencyKey,
         if_match: IfMatch,
         response: Response,
@@ -880,6 +939,7 @@ def create_app(
 
         handoff = await _shopping_app(session).create_checkout_handoff(
             proposal_id=proposal_id,
+            effect_approval_id=body.effect_approval_id,
             expected_proposal_basis=proposal.basis_hash,
             expected_project_revision=revision,
             idempotency_key=idempotency_key,
@@ -905,9 +965,7 @@ def create_app(
         )
         from aidison.infrastructure.orm import ArtifactRow
 
-        row = await session.scalar(
-            select(ArtifactRow).where(ArtifactRow.id == artifact_id)
-        )
+        row = await session.scalar(select(ArtifactRow).where(ArtifactRow.id == artifact_id))
         if row is None:
             raise DomainNotFoundError("artifact not found")
 
@@ -921,9 +979,7 @@ def create_app(
         root = Path(getattr(request.app.state, "artifact_root", "/data/artifacts"))
         store = ContentAddressedArtifactStore(session, root)
         try:
-            content = await store.read_bytes(
-                project_id=row.project_id, artifact_id=artifact_id
-            )
+            content = await store.read_bytes(project_id=row.project_id, artifact_id=artifact_id)
         except ArtifactNotFoundError as exc:
             raise DomainNotFoundError(str(exc)) from exc
         except ArtifactIntegrityError as exc:
@@ -946,9 +1002,7 @@ def create_app(
         """Read artifact metadata (content retrieval is via artifact+sha256 ref)."""
         from aidison.infrastructure.orm import ArtifactRow
 
-        row = await session.scalar(
-            select(ArtifactRow).where(ArtifactRow.id == artifact_id)
-        )
+        row = await session.scalar(select(ArtifactRow).where(ArtifactRow.id == artifact_id))
         if row is None:
             raise DomainNotFoundError("artifact not found")
         return {

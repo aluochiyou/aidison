@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -7,6 +8,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from sqlalchemy import text
 
 from aidison.api.app import create_app
 from aidison.application.service import ProjectApplication
@@ -46,6 +48,9 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
     transport = httpx.ASGITransport(app=api)
     key_prefix = str(uuid4())
     try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE projects CASCADE"))
+            await session.commit()
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             health = await client.get("/health")
             assert health.json() == {"status": "ok"}
@@ -625,28 +630,101 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
             assert bad_confirm.status_code == 409
 
-            # Step 5: Checkout handoff — successful dispatch
-            checkout = await client.post(
-                f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+            # Step 5: Explicit scoped effect approval
+            approval_request = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/effect-approvals",
                 headers={
-                    "Idempotency-Key": f"{key_prefix}:checkout",
+                    "Idempotency-Key": f"{key_prefix}:approval-request",
                     "If-Match": '"11"',
                 },
             )
+            assert approval_request.status_code == 201, approval_request.text
+            approval = approval_request.json()
+            assert approval["status"] == "requested"
+            assert approval["effect_kind"] == "shopping.create_cart"
+            assert approval["target_ref"] == prop["id"]
+            assert approval_request.headers["etag"] == '"12"'
+
+            duplicate_live_approval = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/effect-approvals",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval-request-again",
+                    "If-Match": '"12"',
+                },
+            )
+            assert duplicate_live_approval.status_code == 409
+
+            pending_checkout = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+                json={"effect_approval_id": approval["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:pending-checkout",
+                    "If-Match": '"12"',
+                },
+            )
+            assert pending_checkout.status_code == 409
+            assert fake_provider.cart_create_called == 0
+
+            wrong_scope = await client.post(
+                f"/api/effect-approvals/{approval['id']}/resolve",
+                json={"decision": "approved", "scope_hash": "f" * 64},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:wrong-scope",
+                    "If-Match": '"12"',
+                },
+            )
+            assert wrong_scope.status_code == 412
+
+            approval_resolve = await client.post(
+                f"/api/effect-approvals/{approval['id']}/resolve",
+                json={
+                    "decision": "approved",
+                    "scope_hash": approval["scope_hash"],
+                },
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval-resolve",
+                    "If-Match": '"12"',
+                },
+            )
+            assert approval_resolve.status_code == 200, approval_resolve.text
+            assert approval_resolve.json()["status"] == "approved"
+            assert approval_resolve.headers["etag"] == '"13"'
+
+            # Step 6: Checkout handoff — successful dispatch and approval consumption
+            checkout = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+                json={"effect_approval_id": approval["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:checkout",
+                    "If-Match": '"13"',
+                },
+            )
             assert checkout.status_code == 201, f"checkout failed: {checkout.text}"
+            assert checkout.headers["etag"] == '"14"'
             handoff = checkout.json()
             assert handoff["status"] == "dispatched"
             assert handoff["checkout_url"].startswith("https://")
             assert "fake-cart" in handoff["provider_cart_id"]
             replay_checkout = await client.post(
                 f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+                json={"effect_approval_id": approval["id"]},
                 headers={
                     "Idempotency-Key": f"{key_prefix}:checkout",
-                    "If-Match": '"11"',
+                    "If-Match": '"13"',
                 },
             )
             assert replay_checkout.status_code == 201
             assert replay_checkout.json()["id"] == handoff["id"]
+            assert fake_provider.cart_create_called == 1
+            consumed_with_new_key = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+                json={"effect_approval_id": approval["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:checkout-new-key",
+                    "If-Match": '"14"',
+                },
+            )
+            assert consumed_with_new_key.status_code == 409
             assert fake_provider.cart_create_called == 1
 
             # Proposal should now be handed_off
@@ -655,13 +733,16 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             proposals = final_snapshot.json()["purchase_proposals"]
             assert len(proposals) == 1
             assert proposals[0]["status"] == "handed_off"
+            stored_approval = final_snapshot.json()["effect_approvals"][0]
+            assert stored_approval["status"] == "consumed"
+            assert stored_approval["consumed_at"] is not None
 
-            # Step 6: Ambiguous handoff (provider failure keeps proposal READY)
+            # Step 7: Ambiguous handoff (provider failure keeps proposal READY)
             # Create a second proposal via the fake provider with cart failure
             search2 = await client.post(
                 f"/api/projects/{project_id}/shopping/offers/search",
                 json=search_payload,
-                headers={"If-Match": '"12"'},
+                headers={"If-Match": '"14"'},
             )
             assert search2.status_code == 200
             snap2_id = search2.json()[0]["id"]
@@ -680,7 +761,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                 },
                 headers={
                     "Idempotency-Key": f"{key_prefix}:prop2",
-                    "If-Match": '"12"',
+                    "If-Match": '"14"',
                 },
             )
             assert prop2.status_code == 201
@@ -691,19 +772,119 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                 json={"confirmed_line_ids": [active_bom_line_id]},
                 headers={
                     "Idempotency-Key": f"{key_prefix}:confirm2",
-                    "If-Match": '"13"',
+                    "If-Match": '"15"',
                 },
             )
             assert confirm2.status_code == 200
+
+            api.state.effect_approval_ttl_seconds = 1
+            expiring_approval_request = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/effect-approvals",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:expiring-approval-request",
+                    "If-Match": '"16"',
+                },
+            )
+            assert expiring_approval_request.status_code == 201
+            expiring_approval = expiring_approval_request.json()
+            await asyncio.sleep(1.05)
+            expired_checkout = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/checkout-handoffs",
+                json={"effect_approval_id": expiring_approval["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:expired-checkout",
+                    "If-Match": '"17"',
+                },
+            )
+            assert expired_checkout.status_code == 409
+
+            api.state.effect_approval_ttl_seconds = 900
+            denied_approval_request = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/effect-approvals",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:denied-approval-request",
+                    "If-Match": '"17"',
+                },
+            )
+            assert denied_approval_request.status_code == 201
+            denied_approval = denied_approval_request.json()
+            denial_without_reason = await client.post(
+                f"/api/effect-approvals/{denied_approval['id']}/resolve",
+                json={
+                    "decision": "denied",
+                    "scope_hash": denied_approval["scope_hash"],
+                },
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:denial-without-reason",
+                    "If-Match": '"18"',
+                },
+            )
+            assert denial_without_reason.status_code == 409
+            denied_approval_resolve = await client.post(
+                f"/api/effect-approvals/{denied_approval['id']}/resolve",
+                json={
+                    "decision": "denied",
+                    "scope_hash": denied_approval["scope_hash"],
+                    "reason": "operator rejected this cart",
+                },
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:denied-approval-resolve",
+                    "If-Match": '"18"',
+                },
+            )
+            assert denied_approval_resolve.status_code == 200
+            assert denied_approval_resolve.json()["status"] == "denied"
+            denied_checkout = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/checkout-handoffs",
+                json={"effect_approval_id": denied_approval["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:denied-checkout",
+                    "If-Match": '"19"',
+                },
+            )
+            assert denied_checkout.status_code == 409
+
+            approval2_request = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/effect-approvals",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval2-request",
+                    "If-Match": '"19"',
+                },
+            )
+            assert approval2_request.status_code == 201
+            approval2 = approval2_request.json()
+            approval2_resolve = await client.post(
+                f"/api/effect-approvals/{approval2['id']}/resolve",
+                json={
+                    "decision": "approved",
+                    "scope_hash": approval2["scope_hash"],
+                },
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval2-resolve",
+                    "If-Match": '"20"',
+                },
+            )
+            assert approval2_resolve.status_code == 200
+
+            cross_scope = await client.post(
+                f"/api/purchase-proposals/{prop2_id}/checkout-handoffs",
+                json={"effect_approval_id": approval["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:cross-scope-checkout",
+                    "If-Match": '"21"',
+                },
+            )
+            assert cross_scope.status_code == 412
 
             # Make the FakeProvider fail cart creation
             fake_provider.set_cart_failure(ShoppingProviderError("cart service down"))
 
             ambiguous_checkout = await client.post(
                 f"/api/purchase-proposals/{prop2_id}/checkout-handoffs",
+                json={"effect_approval_id": approval2["id"]},
                 headers={
                     "Idempotency-Key": f"{key_prefix}:amb-checkout",
-                    "If-Match": '"14"',
+                    "If-Match": '"21"',
                 },
             )
             assert ambiguous_checkout.status_code == 201
@@ -715,20 +896,98 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             # Proposal must still be READY (NOT handed_off) on ambiguous
             final_snap2 = await client.get(f"/api/projects/{project_id}/snapshot")
             proposals2 = final_snap2.json()["purchase_proposals"]
-            prop2_status = next(
-                p["status"] for p in proposals2 if p["id"] == prop2_id
+            prop2_status = next(p["status"] for p in proposals2 if p["id"] == prop2_id)
+            assert prop2_status == "ready", f"expected ready, got {prop2_status}"
+
+            # Step 8: unexpected provider crash preserves consumed + PREPARED boundary
+            search3 = await client.post(
+                f"/api/projects/{project_id}/shopping/offers/search",
+                json=search_payload,
+                headers={"If-Match": '"22"'},
             )
-            assert prop2_status == "ready", (
-                f"expected ready, got {prop2_status}"
+            assert search3.status_code == 200
+            prop3 = await client.post(
+                f"/api/projects/{project_id}/purchase-proposals",
+                json={**proposal_payload, "offer_snapshot_id": search3.json()[0]["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:prop3",
+                    "If-Match": '"22"',
+                },
+            )
+            assert prop3.status_code == 201
+            prop3_id = prop3.json()["id"]
+            confirm3 = await client.post(
+                f"/api/purchase-proposals/{prop3_id}/confirm-lines",
+                json={"confirmed_line_ids": [active_bom_line_id]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:confirm3",
+                    "If-Match": '"23"',
+                },
+            )
+            assert confirm3.status_code == 200
+            approval3_request = await client.post(
+                f"/api/purchase-proposals/{prop3_id}/effect-approvals",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval3-request",
+                    "If-Match": '"24"',
+                },
+            )
+            assert approval3_request.status_code == 201
+            approval3 = approval3_request.json()
+            approval3_resolve = await client.post(
+                f"/api/effect-approvals/{approval3['id']}/resolve",
+                json={
+                    "decision": "approved",
+                    "scope_hash": approval3["scope_hash"],
+                },
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval3-resolve",
+                    "If-Match": '"25"',
+                },
+            )
+            assert approval3_resolve.status_code == 200
+
+            fake_provider.set_cart_failure(RuntimeError("simulated provider process crash"))
+            crash_headers = {
+                "Idempotency-Key": f"{key_prefix}:crash-checkout",
+                "If-Match": '"26"',
+            }
+            with pytest.raises(RuntimeError, match="simulated provider process crash"):
+                await client.post(
+                    f"/api/purchase-proposals/{prop3_id}/checkout-handoffs",
+                    json={"effect_approval_id": approval3["id"]},
+                    headers=crash_headers,
+                )
+            calls_after_crash = fake_provider.cart_create_called
+            crash_replay = await client.post(
+                f"/api/purchase-proposals/{prop3_id}/checkout-handoffs",
+                json={"effect_approval_id": approval3["id"]},
+                headers=crash_headers,
+            )
+            assert crash_replay.status_code == 201
+            assert crash_replay.json()["status"] == "prepared"
+            assert crash_replay.headers["etag"] == '"27"'
+            assert fake_provider.cart_create_called == calls_after_crash
+            crash_snapshot = await client.get(f"/api/projects/{project_id}/snapshot")
+            assert crash_snapshot.json()["project"]["revision"] == 27
+            approval3_state = next(
+                item
+                for item in crash_snapshot.json()["effect_approvals"]
+                if item["id"] == approval3["id"]
+            )
+            assert approval3_state["status"] == "consumed"
+            assert any(
+                item["proposal_id"] == prop3_id and item["status"] == "prepared"
+                for item in crash_snapshot.json()["checkout_handoffs"]
             )
 
             events = await client.get(f"/api/projects/{project_id}/events")
-            assert [item["sequence"] for item in events.json()] == list(range(1, 19))
+            assert [item["sequence"] for item in events.json()] == list(range(1, 34))
             replayed_events = await client.get(
                 f"/api/projects/{project_id}/events",
                 params={"after": 5},
             )
-            assert [item["sequence"] for item in replayed_events.json()] == list(range(6, 19))
+            assert [item["sequence"] for item in replayed_events.json()] == list(range(6, 34))
             assert replayed_events.json()[0]["id"] == f"{project_id}:6"
     finally:
         await engine.dispose()

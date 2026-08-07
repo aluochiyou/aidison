@@ -9,6 +9,8 @@ from aidison.domain.models import (
     CheckoutHandoff,
     CompatibilityFinding,
     DecisionRequest,
+    EffectApproval,
+    EffectApprovalStatus,
     EvidenceBinding,
     ImpactAnalysis,
     Module,
@@ -155,6 +157,25 @@ class DomainStore(Protocol):
     async def list_purchase_proposals(self, project_id: UUID) -> Sequence[PurchaseProposal]: ...
 
     async def update_purchase_proposal(self, proposal: PurchaseProposal) -> None: ...
+
+    async def add_effect_approval(self, approval: EffectApproval) -> None: ...
+
+    async def get_effect_approval(self, approval_id: UUID) -> EffectApproval | None: ...
+
+    async def list_effect_approvals(self, project_id: UUID) -> Sequence[EffectApproval]: ...
+
+    async def find_live_effect_approval(
+        self,
+        project_id: UUID,
+        scope_hash: str,
+    ) -> EffectApproval | None: ...
+
+    async def update_effect_approval(
+        self,
+        approval: EffectApproval,
+        *,
+        expected_status: EffectApprovalStatus,
+    ) -> None: ...
 
     async def add_checkout_handoff(self, handoff: CheckoutHandoff) -> None: ...
 

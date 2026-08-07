@@ -7,9 +7,12 @@ If-Match-based optimistic concurrency on the project revision.
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
+
+from pydantic import Field
 
 from aidison.application.ports import DomainStore
 from aidison.application.service import (
@@ -19,13 +22,17 @@ from aidison.application.service import (
     ProjectApplication,
     canonical_hash,
 )
+from aidison.config import AidisonSettings
 from aidison.domain.models import (
     CheckoutHandoff,
     CheckoutHandoffStatus,
+    EffectApproval,
+    EffectApprovalStatus,
     OfferSnapshot,
     Project,
     PurchaseProposal,
     PurchaseProposalStatus,
+    SolutionVersion,
 )
 from aidison.providers.shopping import (
     CartLineInput,
@@ -37,6 +44,13 @@ from aidison.providers.shopping import (
 )
 
 _VALID_REGIONS = frozenset({"CN", "US", "GB", "DE", "FR", "JP", "KR", "AU", "CA", "SG"})
+_CREATE_CART_EFFECT = "shopping.create_cart"
+
+
+class ShoppingSettings(AidisonSettings):
+    yaml_section = "shopping"
+
+    effect_approval_ttl_seconds: int = Field(default=900, ge=60, le=86_400)
 
 
 def _validate_region(region: str) -> str:
@@ -52,6 +66,17 @@ class OfferSearchError(RuntimeError):
 
 class CartCreationError(RuntimeError):
     """Wraps policy-violating cart creation failures (not ambiguous — hard fail)."""
+
+
+@dataclass(frozen=True)
+class _CheckoutEffectScope:
+    project: Project
+    proposal: PurchaseProposal
+    offer: OfferSnapshot
+    solution: SolutionVersion
+    basis_hash: str
+    scope_hash: str
+    constraints: dict[str, object]
 
 
 def _compute_offer_snapshot_hash(
@@ -118,10 +143,14 @@ class ShoppingApplication:
         store: DomainStore,
         shopping_provider: ShoppingProvider,
         project_app: ProjectApplication | None = None,
+        effect_approval_ttl_seconds: int = 900,
     ) -> None:
+        if not 1 <= effect_approval_ttl_seconds <= 86_400:
+            raise ValueError("effect approval TTL must be between 1 and 86400 seconds")
         self._store = store
         self._provider = shopping_provider
         self._project_app = project_app or ProjectApplication(store)
+        self._effect_approval_ttl_seconds = effect_approval_ttl_seconds
 
     # ── Offer search (persists snapshots; uses If-Match) ─────────────
 
@@ -338,9 +367,7 @@ class ShoppingApplication:
             "purchase.proposed",
             {"proposal_id": str(proposal.id), "basis_hash": basis_hash},
         )
-        await self._store.save_command_receipt(
-            idempotency_key, payload_hash, str(proposal.id)
-        )
+        await self._store.save_command_receipt(idempotency_key, payload_hash, str(proposal.id))
         await self._store.commit()
         return proposal
 
@@ -441,18 +468,186 @@ class ShoppingApplication:
                 "confirmed_line_ids": list(confirmed),
             },
         )
-        await self._store.save_command_receipt(
-            idempotency_key, payload_hash, str(proposal.id)
-        )
+        await self._store.save_command_receipt(idempotency_key, payload_hash, str(proposal.id))
         await self._store.commit()
         return updated
 
     # ── Checkout handoff ──────────────────────────────────────────────
 
+    async def request_effect_approval(
+        self,
+        *,
+        proposal_id: UUID,
+        expected_proposal_basis: str,
+        expected_project_revision: int,
+        idempotency_key: str,
+    ) -> EffectApproval:
+        payload_hash = canonical_hash(
+            "request_effect_approval",
+            proposal_id,
+            expected_proposal_basis,
+            expected_project_revision,
+            self._provider.name,
+            self._effect_approval_ttl_seconds,
+        )
+        receipt = await self._store.claim_command(idempotency_key, payload_hash)
+        if receipt is not None:
+            approval = await self._store.get_effect_approval(UUID(receipt))
+            if approval is None:
+                raise DomainConflictError("command receipt references a missing effect approval")
+            return approval
+
+        scope = await self._checkout_effect_scope(
+            proposal_id=proposal_id,
+            expected_proposal_basis=expected_proposal_basis,
+            expected_project_revision=expected_project_revision,
+        )
+        now = datetime.now(UTC)
+        live = await self._store.find_live_effect_approval(
+            scope.project.id,
+            scope.scope_hash,
+        )
+        if live is not None and live.expires_at <= now:
+            expired = live.model_copy(
+                update={
+                    "status": EffectApprovalStatus.EXPIRED,
+                    "resolved_at": now,
+                    "resolution_reason": "approval TTL elapsed",
+                }
+            )
+            await self._store.update_effect_approval(
+                expired,
+                expected_status=live.status,
+            )
+            await self._store.append_event(
+                scope.project.id,
+                "effect.approval_expired",
+                {"approval_id": str(expired.id), "scope_hash": expired.scope_hash},
+            )
+            live = None
+        if live is not None:
+            raise DomainConflictError("an effect approval is already live for this scope")
+
+        approval = EffectApproval(
+            project_id=scope.project.id,
+            effect_kind=_CREATE_CART_EFFECT,
+            target_ref=scope.proposal.id,
+            basis_hash=scope.basis_hash,
+            scope_hash=scope.scope_hash,
+            constraints=scope.constraints,
+            requested_at=now,
+            expires_at=now + timedelta(seconds=self._effect_approval_ttl_seconds),
+        )
+        await self._store.update_project(
+            scope.project.model_copy(
+                update={
+                    "revision": scope.project.revision + 1,
+                    "updated_at": now,
+                }
+            ),
+            expected_revision=scope.project.revision,
+        )
+        await self._store.add_effect_approval(approval)
+        await self._store.append_event(
+            scope.project.id,
+            "effect.approval_requested",
+            {
+                "approval_id": str(approval.id),
+                "effect_kind": approval.effect_kind,
+                "target_ref": str(approval.target_ref),
+                "scope_hash": approval.scope_hash,
+            },
+        )
+        await self._store.save_command_receipt(
+            idempotency_key,
+            payload_hash,
+            str(approval.id),
+        )
+        await self._store.commit()
+        return approval
+
+    async def resolve_effect_approval(
+        self,
+        *,
+        approval_id: UUID,
+        decision: EffectApprovalStatus,
+        scope_hash: str,
+        reason: str | None,
+        expected_project_revision: int,
+        idempotency_key: str,
+    ) -> EffectApproval:
+        if decision not in {EffectApprovalStatus.APPROVED, EffectApprovalStatus.DENIED}:
+            raise DomainConflictError("effect approval decision must be approved or denied")
+        if decision is EffectApprovalStatus.DENIED and not (reason and reason.strip()):
+            raise DomainConflictError("denied effect approval requires a reason")
+        payload_hash = canonical_hash(
+            "resolve_effect_approval",
+            approval_id,
+            decision,
+            scope_hash,
+            reason,
+            expected_project_revision,
+        )
+        receipt = await self._store.claim_command(idempotency_key, payload_hash)
+        if receipt is not None:
+            approval = await self._store.get_effect_approval(UUID(receipt))
+            if approval is None:
+                raise DomainConflictError("command receipt references a missing effect approval")
+            return approval
+
+        approval = await self._store.get_effect_approval(approval_id)
+        if approval is None:
+            raise DomainNotFoundError("effect approval not found")
+        project = await self._required_project(approval.project_id)
+        if project.revision != expected_project_revision:
+            raise PreconditionFailedError("project revision is stale")
+        if approval.scope_hash != scope_hash:
+            raise PreconditionFailedError("effect approval scope hash is stale")
+        if approval.status is not EffectApprovalStatus.REQUESTED:
+            raise DomainConflictError("only requested effect approvals can be resolved")
+
+        now = datetime.now(UTC)
+        resolved_status = EffectApprovalStatus.EXPIRED if approval.expires_at <= now else decision
+        resolved_reason = (
+            "approval TTL elapsed" if resolved_status is EffectApprovalStatus.EXPIRED else reason
+        )
+        resolved = approval.model_copy(
+            update={
+                "status": resolved_status,
+                "resolved_at": now,
+                "resolution_reason": resolved_reason,
+            }
+        )
+        await self._store.update_effect_approval(
+            resolved,
+            expected_status=EffectApprovalStatus.REQUESTED,
+        )
+        await self._store.update_project(
+            project.model_copy(update={"revision": project.revision + 1, "updated_at": now}),
+            expected_revision=project.revision,
+        )
+        await self._store.append_event(
+            project.id,
+            "effect.approval_resolved",
+            {
+                "approval_id": str(approval.id),
+                "status": resolved.status.value,
+                "scope_hash": resolved.scope_hash,
+            },
+        )
+        await self._store.save_command_receipt(
+            idempotency_key,
+            payload_hash,
+            str(resolved.id),
+        )
+        await self._store.commit()
+        return resolved
+
     async def create_checkout_handoff(
         self,
         *,
         proposal_id: UUID,
+        effect_approval_id: UUID,
         expected_proposal_basis: str,
         expected_project_revision: int,
         idempotency_key: str,
@@ -469,6 +664,7 @@ class ShoppingApplication:
         payload_hash = canonical_hash(
             "create_checkout_handoff",
             proposal_id,
+            effect_approval_id,
             expected_proposal_basis,
             expected_project_revision,
         )
@@ -479,56 +675,66 @@ class ShoppingApplication:
                 raise DomainConflictError("command receipt references a missing handoff")
             return handoff
 
-        proposal = await self._store.get_purchase_proposal(proposal_id)
-        if proposal is None:
-            raise DomainNotFoundError("purchase proposal not found")
-        if proposal.status is not PurchaseProposalStatus.READY:
-            raise DomainConflictError("only ready proposals can create a checkout")
-
-        # Recompute proposal basis to verify integrity
-        offer = await self._store.get_offer_snapshot(proposal.offer_snapshot_id)
-        if offer is None:
-            raise DomainNotFoundError("offer snapshot not found")
-        recomputed_basis = _compute_proposal_basis_hash(
-            proposal.project_id,
-            proposal.solution_version_id,
-            offer.snapshot_hash,
-            proposal.quantity,
-            proposal.region,
-            proposal.currency,
-            proposal.shipping_estimate,
-            proposal.tax_estimate,
-            proposal.max_total,
+        scope = await self._checkout_effect_scope(
+            proposal_id=proposal_id,
+            expected_proposal_basis=expected_proposal_basis,
+            expected_project_revision=expected_project_revision,
         )
-        if recomputed_basis != expected_proposal_basis:
-            raise PreconditionFailedError("proposal basis is stale (recomputed mismatch)")
+        approval = await self._store.get_effect_approval(effect_approval_id)
+        if approval is None:
+            raise DomainNotFoundError("effect approval not found")
+        if (
+            approval.project_id != scope.project.id
+            or approval.effect_kind != _CREATE_CART_EFFECT
+            or approval.target_ref != scope.proposal.id
+            or approval.basis_hash != scope.basis_hash
+            or approval.scope_hash != scope.scope_hash
+            or approval.constraints != scope.constraints
+        ):
+            raise PreconditionFailedError("effect approval does not match the checkout scope")
+        now = datetime.now(UTC)
+        if approval.expires_at <= now:
+            raise DomainConflictError("effect approval has expired")
+        if approval.status is not EffectApprovalStatus.APPROVED:
+            raise DomainConflictError("effect approval is not approved")
 
-        project = await self._required_project(proposal.project_id)
-        if project.revision != expected_project_revision:
-            raise PreconditionFailedError("project revision is stale")
-
-        # Reject if active solution changed
-        if project.active_solution_version_id != proposal.solution_version_id:
-            raise PreconditionFailedError("active solution has changed since proposal was created")
-
-        # Reject if offer expired
-        if offer.expires_at is not None and offer.expires_at < datetime.now(UTC):
-            raise DomainConflictError("offer snapshot has expired")
-
-        basis_hash = canonical_hash(proposal.id, recomputed_basis, offer.snapshot_hash)
+        consumed = approval.model_copy(
+            update={
+                "status": EffectApprovalStatus.CONSUMED,
+                "consumed_at": now,
+            }
+        )
         handoff = CheckoutHandoff(
-            project_id=proposal.project_id,
-            proposal_id=proposal.id,
-            basis_hash=basis_hash,
+            project_id=scope.proposal.project_id,
+            proposal_id=scope.proposal.id,
+            basis_hash=scope.basis_hash,
             provider=self._provider.name,
             status=CheckoutHandoffStatus.PREPARED,
         )
-
-        # ── Persist PREPARED + command receipt BEFORE provider call ───
-        await self._store.add_checkout_handoff(handoff)
-        await self._store.save_command_receipt(
-            idempotency_key, payload_hash, str(handoff.id)
+        project_after_consumption = scope.project.model_copy(
+            update={"revision": scope.project.revision + 1, "updated_at": now}
         )
+
+        # ── Consume approval + persist PREPARED/receipt BEFORE provider call ───
+        await self._store.update_effect_approval(
+            consumed,
+            expected_status=EffectApprovalStatus.APPROVED,
+        )
+        await self._store.add_checkout_handoff(handoff)
+        await self._store.update_project(
+            project_after_consumption,
+            expected_revision=scope.project.revision,
+        )
+        await self._store.append_event(
+            scope.project.id,
+            "effect.approval_consumed",
+            {
+                "approval_id": str(consumed.id),
+                "handoff_id": str(handoff.id),
+                "scope_hash": consumed.scope_hash,
+            },
+        )
+        await self._store.save_command_receipt(idempotency_key, payload_hash, str(handoff.id))
         await self._store.commit()
 
         # ── Attempt cart creation ─────────────────────────────────────
@@ -539,13 +745,11 @@ class ShoppingApplication:
         try:
             cart_inputs = [
                 CartLineInput(
-                    merchandise_id=offer.merchandise_id or offer.provider_offer_id,
-                    quantity=proposal.quantity,
+                    merchandise_id=scope.offer.merchandise_id or scope.offer.provider_offer_id,
+                    quantity=scope.proposal.quantity,
                 )
             ]
-            cart = await self._provider.create_cart(
-                lines=cart_inputs, region=proposal.region
-            )
+            cart = await self._provider.create_cart(lines=cart_inputs, region=scope.proposal.region)
 
             if not cart.checkout_url.startswith("https://"):
                 raise CartCreationError("provider returned a non-HTTPS checkout URL")
@@ -558,7 +762,7 @@ class ShoppingApplication:
                     "dispatched_at": now,
                 }
             )
-            proposal = proposal.model_copy(
+            proposal = scope.proposal.model_copy(
                 update={
                     "status": PurchaseProposalStatus.HANDED_OFF,
                     "handed_off_at": now,
@@ -580,18 +784,19 @@ class ShoppingApplication:
         if proposal_updated:
             await self._store.update_purchase_proposal(proposal)
 
+        # The externally visible revision was already advanced in the
+        # pre-provider transaction. This no-op CAS rejects concurrent project
+        # changes without claiming a second revision for the same command.
         await self._store.update_project(
-            project=project.model_copy(
-                update={"revision": project.revision + 1, "updated_at": now}
-            ),
-            expected_revision=project.revision,
+            project=project_after_consumption,
+            expected_revision=project_after_consumption.revision,
         )
         await self._store.append_event(
-            project.id,
+            scope.project.id,
             "checkout.handoff_created",
             {
                 "handoff_id": str(handoff.id),
-                "proposal_id": str(proposal.id),
+                "proposal_id": str(scope.proposal.id),
                 "status": handoff.status.value,
             },
         )
@@ -632,3 +837,83 @@ class ShoppingApplication:
         if project is None:
             raise DomainNotFoundError("project not found")
         return project
+
+    async def _checkout_effect_scope(
+        self,
+        *,
+        proposal_id: UUID,
+        expected_proposal_basis: str,
+        expected_project_revision: int,
+    ) -> _CheckoutEffectScope:
+        proposal = await self._store.get_purchase_proposal(proposal_id)
+        if proposal is None:
+            raise DomainNotFoundError("purchase proposal not found")
+        if proposal.status is not PurchaseProposalStatus.READY:
+            raise DomainConflictError("only ready proposals can create a checkout")
+        offer = await self._store.get_offer_snapshot(proposal.offer_snapshot_id)
+        if offer is None:
+            raise DomainNotFoundError("offer snapshot not found")
+        recomputed_basis = _compute_proposal_basis_hash(
+            proposal.project_id,
+            proposal.solution_version_id,
+            offer.snapshot_hash,
+            proposal.quantity,
+            proposal.region,
+            proposal.currency,
+            proposal.shipping_estimate,
+            proposal.tax_estimate,
+            proposal.max_total,
+        )
+        if recomputed_basis != expected_proposal_basis:
+            raise PreconditionFailedError("proposal basis is stale (recomputed mismatch)")
+        project = await self._required_project(proposal.project_id)
+        if project.revision != expected_project_revision:
+            raise PreconditionFailedError("project revision is stale")
+        if project.active_solution_version_id != proposal.solution_version_id:
+            raise PreconditionFailedError("active solution has changed since proposal was created")
+        solution = await self._store.get_solution_version(proposal.solution_version_id)
+        if solution is None:
+            raise DomainNotFoundError("active solution version not found")
+        if offer.solution_version_id != solution.id:
+            raise PreconditionFailedError("offer snapshot belongs to another solution version")
+        if offer.provider != self._provider.name:
+            raise PreconditionFailedError("offer snapshot belongs to another shopping provider")
+        if offer.expires_at is not None and offer.expires_at < datetime.now(UTC):
+            raise DomainConflictError("offer snapshot has expired")
+
+        constraints: dict[str, object] = {
+            "provider": self._provider.name,
+            "solution_version_id": str(solution.id),
+            "solution_basis_hash": solution.basis_hash,
+            "offer_snapshot_id": str(offer.id),
+            "offer_snapshot_hash": offer.snapshot_hash,
+            "provider_offer_id": offer.provider_offer_id,
+            "merchandise_id": offer.merchandise_id,
+            "quantity": proposal.quantity,
+            "region": proposal.region,
+            "currency": proposal.currency,
+            "max_total": proposal.max_total,
+            "confirmed_line_ids": list(proposal.confirmed_line_ids),
+        }
+        basis_hash = canonical_hash(
+            proposal.basis_hash,
+            offer.snapshot_hash,
+            solution.basis_hash,
+            self._provider.name,
+        )
+        scope_hash = canonical_hash(
+            _CREATE_CART_EFFECT,
+            project.id,
+            proposal.id,
+            basis_hash,
+            constraints,
+        )
+        return _CheckoutEffectScope(
+            project=project,
+            proposal=proposal,
+            offer=offer,
+            solution=solution,
+            basis_hash=basis_hash,
+            scope_hash=scope_hash,
+            constraints=constraints,
+        )

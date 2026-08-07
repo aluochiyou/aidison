@@ -9,6 +9,8 @@ from aidison.domain.models import (
     CheckoutHandoff,
     CompatibilityFinding,
     DecisionRequest,
+    EffectApproval,
+    EffectApprovalStatus,
     EvidenceBinding,
     ImpactAnalysis,
     Module,
@@ -41,6 +43,7 @@ class InMemoryDomainStore:
         self.events: list[tuple[UUID, int, str, dict[str, object]]] = []
         self.offer_snapshots: dict[UUID, OfferSnapshot] = {}
         self.purchase_proposals: dict[UUID, PurchaseProposal] = {}
+        self.effect_approvals: dict[UUID, EffectApproval] = {}
         self.checkout_handoffs: dict[UUID, CheckoutHandoff] = {}
 
     async def claim_command(self, idempotency_key: str, payload_hash: str) -> str | None:
@@ -200,6 +203,42 @@ class InMemoryDomainStore:
 
     async def update_purchase_proposal(self, proposal: PurchaseProposal) -> None:
         self.purchase_proposals[proposal.id] = proposal
+
+    async def add_effect_approval(self, approval: EffectApproval) -> None:
+        self.effect_approvals[approval.id] = approval
+
+    async def get_effect_approval(self, approval_id: UUID) -> EffectApproval | None:
+        return self.effect_approvals.get(approval_id)
+
+    async def list_effect_approvals(self, project_id: UUID) -> Sequence[EffectApproval]:
+        return [item for item in self.effect_approvals.values() if item.project_id == project_id]
+
+    async def find_live_effect_approval(
+        self,
+        project_id: UUID,
+        scope_hash: str,
+    ) -> EffectApproval | None:
+        return next(
+            (
+                item
+                for item in self.effect_approvals.values()
+                if item.project_id == project_id
+                and item.scope_hash == scope_hash
+                and item.status in {EffectApprovalStatus.REQUESTED, EffectApprovalStatus.APPROVED}
+            ),
+            None,
+        )
+
+    async def update_effect_approval(
+        self,
+        approval: EffectApproval,
+        *,
+        expected_status: EffectApprovalStatus,
+    ) -> None:
+        current = self.effect_approvals.get(approval.id)
+        if current is None or current.status is not expected_status:
+            raise OptimisticConcurrencyError("effect approval is stale or terminal")
+        self.effect_approvals[approval.id] = approval
 
     async def add_checkout_handoff(self, handoff: CheckoutHandoff) -> None:
         self.checkout_handoffs[handoff.id] = handoff

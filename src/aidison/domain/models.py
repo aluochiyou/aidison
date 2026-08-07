@@ -428,6 +428,55 @@ class CheckoutHandoffStatus(StrEnum):
     AMBIGUOUS = "ambiguous"
 
 
+class EffectApprovalStatus(StrEnum):
+    REQUESTED = "requested"
+    APPROVED = "approved"
+    DENIED = "denied"
+    EXPIRED = "expired"
+    CONSUMED = "consumed"
+
+
+class EffectApproval(FrozenModel):
+    """One expiring authorization for one server-derived external effect scope."""
+
+    id: UUID = Field(default_factory=uuid4)
+    project_id: UUID
+    effect_kind: str = Field(pattern=r"^[a-z][a-z0-9_.-]{2,99}$")
+    target_ref: UUID
+    basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    scope_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    constraints: dict[str, Any]
+    status: EffectApprovalStatus = EffectApprovalStatus.REQUESTED
+    requested_at: datetime = Field(default_factory=utc_now)
+    expires_at: datetime
+    resolved_at: datetime | None = None
+    consumed_at: datetime | None = None
+    resolution_reason: str | None = Field(default=None, max_length=1_000)
+
+    @model_validator(mode="after")
+    def has_consistent_lifecycle(self) -> EffectApproval:
+        if self.expires_at <= self.requested_at:
+            raise ValueError("effect approval expires_at must be after requested_at")
+        if self.status is EffectApprovalStatus.REQUESTED:
+            if self.resolved_at is not None or self.consumed_at is not None:
+                raise ValueError("requested effect approval cannot be resolved or consumed")
+            if self.resolution_reason is not None:
+                raise ValueError("requested effect approval cannot have a resolution reason")
+            return self
+        if self.resolved_at is None:
+            raise ValueError("resolved effect approval requires resolved_at")
+        if self.status is EffectApprovalStatus.DENIED and not (
+            self.resolution_reason and self.resolution_reason.strip()
+        ):
+            raise ValueError("denied effect approval requires a reason")
+        if self.status is EffectApprovalStatus.CONSUMED:
+            if self.consumed_at is None:
+                raise ValueError("consumed effect approval requires consumed_at")
+        elif self.consumed_at is not None:
+            raise ValueError("only consumed effect approval can have consumed_at")
+        return self
+
+
 class OfferSnapshot(FrozenModel):
     """Immutable provider offer captured at observation time."""
 

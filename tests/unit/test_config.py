@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from aidison.application.shopping import ShoppingSettings
 from aidison.providers.gateway import ProviderSettings
 from aidison.tools.web_search import TavilyMcpSearchSettings
 
@@ -22,6 +23,20 @@ def test_yaml_defaults_and_environment_overrides(tmp_path: Path, monkeypatch) ->
     assert provider.openai_model == "env-model"
     assert research.mcp_url == "https://example.test/mcp"
     assert research.search_depth == "basic"
+
+
+def test_effect_approval_ttl_is_non_secret_yaml_configuration(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "shopping:\n  effect_approval_ttl_seconds: 1200\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("AIDISON_CONFIG_FILE", str(config))
+
+    assert ShoppingSettings().effect_approval_ttl_seconds == 1200
 
 
 def test_settings_work_without_config_file(tmp_path: Path, monkeypatch) -> None:
