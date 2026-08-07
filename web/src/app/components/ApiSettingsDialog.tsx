@@ -19,7 +19,10 @@ interface ApiSettingsDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function ApiSettingsDialog({ open, onOpenChange }: ApiSettingsDialogProps) {
+export function ApiSettingsDialog({
+  open,
+  onOpenChange,
+}: ApiSettingsDialogProps) {
   const [apiUrl, setApiUrl] = useState("");
   const [status, setStatus] = useState<"unknown" | "ok" | "error">("unknown");
   const [testing, setTesting] = useState(false);
@@ -52,7 +55,10 @@ export function ApiSettingsDialog({ open, onOpenChange }: ApiSettingsDialogProps
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+    >
       <DialogContent className="sm:max-w-[460px]">
         <DialogHeader>
           <DialogTitle>API Settings</DialogTitle>
@@ -68,9 +74,16 @@ export function ApiSettingsDialog({ open, onOpenChange }: ApiSettingsDialogProps
                 id="api-url"
                 placeholder="http://localhost:8000"
                 value={apiUrl}
-                onChange={(e) => { setApiUrl(e.target.value); setStatus("unknown"); }}
+                onChange={(e) => {
+                  setApiUrl(e.target.value);
+                  setStatus("unknown");
+                }}
               />
-              <Button variant="outline" onClick={handleTest} disabled={testing}>
+              <Button
+                variant="outline"
+                onClick={handleTest}
+                disabled={testing}
+              >
                 {testing ? "Testing..." : "Test"}
               </Button>
             </div>
@@ -83,7 +96,10 @@ export function ApiSettingsDialog({ open, onOpenChange }: ApiSettingsDialogProps
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+          >
             Cancel
           </Button>
           <Button onClick={handleSave}>Save</Button>

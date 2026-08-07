@@ -69,7 +69,7 @@ const DEFAULT_MODULES = JSON.stringify(
     },
   ],
   null,
-  2,
+  2
 );
 
 interface ProjectConsoleProps {
@@ -81,7 +81,9 @@ function shortId(value: string): string {
   return value.slice(0, 8);
 }
 
-function normalizedDecisionOption(option: DecisionOption | string): DecisionOption {
+function normalizedDecisionOption(
+  option: DecisionOption | string
+): DecisionOption {
   if (typeof option !== "string") return option;
   return {
     option_id: option,
@@ -95,15 +97,16 @@ function normalizedDecisionOption(option: DecisionOption | string): DecisionOpti
 }
 
 function moduleSnapshotHash(
-  snapshot: SolutionVersion["module_snapshots"][number],
+  snapshot: SolutionVersion["module_snapshots"][number]
 ): string | null {
-  return "snapshot_hash" in snapshot && typeof snapshot.snapshot_hash === "string"
+  return "snapshot_hash" in snapshot &&
+    typeof snapshot.snapshot_hash === "string"
     ? snapshot.snapshot_hash
     : null;
 }
 
 function moduleSnapshotIdentity(
-  snapshot: SolutionVersion["module_snapshots"][number],
+  snapshot: SolutionVersion["module_snapshots"][number]
 ): string {
   return moduleSnapshotHash(snapshot) ?? JSON.stringify(snapshot);
 }
@@ -120,17 +123,21 @@ function bomUnit(item: SolutionVersion["bom"][number]): string {
   return "unit" in item ? item.unit : "";
 }
 
-function stepLabel(step: SolutionVersion["implementation_steps"][number]): string {
+function stepLabel(
+  step: SolutionVersion["implementation_steps"][number]
+): string {
   return "title" in step ? step.title : step.step;
 }
 
-function stepInstruction(step: SolutionVersion["implementation_steps"][number]): string {
+function stepInstruction(
+  step: SolutionVersion["implementation_steps"][number]
+): string {
   return "instruction" in step ? step.instruction : "";
 }
 
 function stepKey(
   step: SolutionVersion["implementation_steps"][number],
-  index: number,
+  index: number
 ): string {
   return "step_id" in step ? step.step_id : `legacy-step-${index}-${step.step}`;
 }
@@ -167,14 +174,22 @@ function displayError(error: unknown, fallback: string): string {
 
 function eventTime(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "时间未知" : date.toLocaleString("zh-CN");
+  return Number.isNaN(date.getTime())
+    ? "时间未知"
+    : date.toLocaleString("zh-CN");
 }
 
 function statusTone(status: string): string {
   if (
-    ["succeeded", "approved", "supported", "compatible", "joined", "up_to_date", "complete"].includes(
-      status,
-    )
+    [
+      "succeeded",
+      "approved",
+      "supported",
+      "compatible",
+      "joined",
+      "up_to_date",
+      "complete",
+    ].includes(status)
   ) {
     return "tone-good";
   }
@@ -209,13 +224,21 @@ function statusTone(status: string): string {
 }
 
 function StatusTag({ status }: { status: string }) {
-  return <span className={`status-tag ${statusTone(status)}`}>{STATUS_LABELS[status] ?? status}</span>;
+  return (
+    <span className={`status-tag ${statusTone(status)}`}>
+      {STATUS_LABELS[status] ?? status}
+    </span>
+  );
 }
 
 function StageRail({ project }: { project: Project }) {
   const activeIndex = STAGES.findIndex(([stage]) => stage === project.stage);
   return (
-    <div className="stage-rail" aria-label={`当前阶段：${project.stage}`} role="list">
+    <div
+      className="stage-rail"
+      aria-label={`当前阶段：${project.stage}`}
+      role="list"
+    >
       {STAGES.map(([stage, label], index) => (
         <div
           className={`stage-stop ${index < activeIndex ? "is-done" : ""} ${
@@ -224,7 +247,9 @@ function StageRail({ project }: { project: Project }) {
           key={stage}
           role="listitem"
         >
-          <span>{index < activeIndex ? <Check className="h-3 w-3" /> : index + 1}</span>
+          <span>
+            {index < activeIndex ? <Check className="h-3 w-3" /> : index + 1}
+          </span>
           <small>{label}</small>
         </div>
       ))}
@@ -232,7 +257,10 @@ function StageRail({ project }: { project: Project }) {
   );
 }
 
-const ATTENTION_LABELS: Record<ProjectWorkspaceProjectionV1["attention"]["state"], string> = {
+const ATTENTION_LABELS: Record<
+  ProjectWorkspaceProjectionV1["attention"]["state"],
+  string
+> = {
   up_to_date: "已同步",
   working: "处理中",
   needs_input: "需要补充",
@@ -242,10 +270,17 @@ const ATTENTION_LABELS: Record<ProjectWorkspaceProjectionV1["attention"]["state"
   complete: "已完成",
 };
 
-function ProjectPulse({ workspace }: { workspace?: ProjectWorkspaceProjectionV1 }) {
+function ProjectPulse({
+  workspace,
+}: {
+  workspace?: ProjectWorkspaceProjectionV1;
+}) {
   if (!workspace) {
     return (
-      <section className="project-pulse is-unavailable" aria-label="项目状态">
+      <section
+        className="project-pulse is-unavailable"
+        aria-label="项目状态"
+      >
         <div>
           <small>PROJECT PULSE</small>
           <h2>正在整理项目状态</h2>
@@ -254,9 +289,14 @@ function ProjectPulse({ workspace }: { workspace?: ProjectWorkspaceProjectionV1 
       </section>
     );
   }
-  const activeWork = workspace.work.filter((item) => ["queued", "running"].includes(item.state));
+  const activeWork = workspace.work.filter((item) =>
+    ["queued", "running"].includes(item.state)
+  );
   return (
-    <section className={`project-pulse attention-${workspace.attention.state}`} aria-label="项目状态">
+    <section
+      className={`project-pulse attention-${workspace.attention.state}`}
+      aria-label="项目状态"
+    >
       <header>
         <div>
           <small>PROJECT PULSE / 项目脉冲</small>
@@ -265,7 +305,10 @@ function ProjectPulse({ workspace }: { workspace?: ProjectWorkspaceProjectionV1 
         <StatusTag status={workspace.attention.state} />
       </header>
       <p>{workspace.attention.reason}</p>
-      <div className="pulse-track" aria-label="项目状态摘要">
+      <div
+        className="pulse-track"
+        aria-label="项目状态摘要"
+      >
         <div>
           <i />
           <span>项目事实</span>
@@ -274,7 +317,9 @@ function ProjectPulse({ workspace }: { workspace?: ProjectWorkspaceProjectionV1 
         <div>
           <i />
           <span>后台工作</span>
-          <strong>{activeWork.length ? `${activeWork.length} 项进行中` : "当前空闲"}</strong>
+          <strong>
+            {activeWork.length ? `${activeWork.length} 项进行中` : "当前空闲"}
+          </strong>
         </div>
         <div>
           <i />
@@ -286,7 +331,13 @@ function ProjectPulse({ workspace }: { workspace?: ProjectWorkspaceProjectionV1 
   );
 }
 
-function ModuleCard({ module, onClick }: { module: Module; onClick?: () => void }) {
+function ModuleCard({
+  module,
+  onClick,
+}: {
+  module: Module;
+  onClick?: () => void;
+}) {
   return (
     <article
       className="module-card"
@@ -295,7 +346,10 @@ function ModuleCard({ module, onClick }: { module: Module; onClick?: () => void 
       aria-label={`查看模块 ${module.name} 详情`}
       onClick={onClick}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick?.(); }
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onClick?.();
+        }
       }}
     >
       <div className="module-card-head">
@@ -332,16 +386,20 @@ function RequirementsAction({
       if (!Array.isArray(modules) || modules.length < 1 || modules.length > 8) {
         throw new Error("模块必须是包含 1–8 项的 JSON 数组");
       }
-      await getClient().approveRequirements(snapshot.project.id, snapshot.project.revision, {
-        goal: snapshot.project.goal,
-        hard_constraints: ["Agent 只提交建议，事实写入需要用户确认"],
-        preferences: ["个人可维护，优先选择可购买和可验证的方案"],
-        available_resources: ["Windows 工作站", "常见 DIY 工具"],
-        unknowns: ["具体器件、接口和兼容性需要证据确认"],
-        modules: modules as Parameters<
-          ReturnType<typeof getClient>["approveRequirements"]
-        >[2]["modules"],
-      });
+      await getClient().approveRequirements(
+        snapshot.project.id,
+        snapshot.project.revision,
+        {
+          goal: snapshot.project.goal,
+          hard_constraints: ["Agent 只提交建议，事实写入需要用户确认"],
+          preferences: ["个人可维护，优先选择可购买和可验证的方案"],
+          available_resources: ["Windows 工作站", "常见 DIY 工具"],
+          unknowns: ["具体器件、接口和兼容性需要证据确认"],
+          modules: modules as Parameters<
+            ReturnType<typeof getClient>["approveRequirements"]
+          >[2]["modules"],
+        }
+      );
       toast.success("需求版本已批准");
       await onDone();
     } catch (error) {
@@ -360,14 +418,19 @@ function RequirementsAction({
           <h2>批准第一版需求和模块</h2>
         </div>
       </div>
-      <p>这里定义通用 DIY 模块，不把核心写成无人机专用。你可以直接修改 JSON。</p>
+      <p>
+        这里定义通用 DIY 模块，不把核心写成无人机专用。你可以直接修改 JSON。
+      </p>
       <Textarea
         className="code-editor"
         rows={13}
         value={modulesText}
         onChange={(event) => setModulesText(event.target.value)}
       />
-      <Button disabled={busy} onClick={() => void approve()}>
+      <Button
+        disabled={busy}
+        onClick={() => void approve()}
+      >
         {busy ? "正在批准…" : "批准需求版本"}
       </Button>
     </div>
@@ -385,7 +448,10 @@ function ResearchAction({
   const start = async () => {
     setBusy(true);
     try {
-      await getClient().startResearchRun(snapshot.project.id, snapshot.project.revision);
+      await getClient().startResearchRun(
+        snapshot.project.id,
+        snapshot.project.revision
+      );
       toast.success("有界研究已进入 durable Job 队列");
       await onDone();
     } catch (error) {
@@ -405,9 +471,13 @@ function ResearchAction({
         </div>
       </div>
       <p>
-        PostgreSQL 持有 Job、Attempt、Delegation 与 JoinReceipt；Deep Agent 只生成 typed Proposal。
+        PostgreSQL 持有 Job、Attempt、Delegation 与 JoinReceipt；Deep Agent
+        只生成 typed Proposal。
       </p>
-      <Button disabled={busy} onClick={() => void start()}>
+      <Button
+        disabled={busy}
+        onClick={() => void start()}
+      >
         <Bot className="h-4 w-4" />
         {busy ? "正在准备…" : "开始查找资料"}
       </Button>
@@ -433,7 +503,7 @@ function DecisionAction({
         decision.id,
         snapshot.project.revision,
         optionId,
-        decision.basis_hash,
+        decision.basis_hash
       );
       toast.success("决策已写入 canonical state");
       await onDone();
@@ -462,8 +532,8 @@ function DecisionAction({
             <span>{option.label}</span>
             <small>{option.summary}</small>
             <code>
-              {option.option_id} · candidates {option.candidate_ids.length} · evidence{" "}
-              {option.evidence_binding_ids.length}
+              {option.option_id} · candidates {option.candidate_ids.length} ·
+              evidence {option.evidence_binding_ids.length}
             </code>
           </button>
         ))}
@@ -485,10 +555,14 @@ function FreezeAction({
   const freeze = async () => {
     setBusy(true);
     try {
-      await getClient().freezeSolution(snapshot.project.id, snapshot.project.revision, {
-        solution_proposal_id: proposal.id,
-        basis_hash: proposal.basis_hash,
-      });
+      await getClient().freezeSolution(
+        snapshot.project.id,
+        snapshot.project.revision,
+        {
+          solution_proposal_id: proposal.id,
+          basis_hash: proposal.basis_hash,
+        }
+      );
       toast.success("不可变 SolutionVersion 已冻结");
       await onDone();
     } catch (error) {
@@ -507,8 +581,12 @@ function FreezeAction({
         </div>
       </div>
       <p>
-        方案由服务端接纳的 <code>{proposal.profile_id}@{proposal.profile_revision}</code> Proposal
-        生成；浏览器只能批准 proposal ID 和精确 basis，不能上传 BOM 或步骤。
+        方案由服务端接纳的{" "}
+        <code>
+          {proposal.profile_id}@{proposal.profile_revision}
+        </code>{" "}
+        Proposal 生成；浏览器只能批准 proposal ID 和精确 basis，不能上传 BOM
+        或步骤。
       </p>
       <div className="decision-options">
         {proposal.module_selections.map((selection) => (
@@ -519,10 +597,15 @@ function FreezeAction({
         ))}
       </div>
       <p>
-        BOM {proposal.bom.length} 项 · 实施步骤 {proposal.implementation_steps.length} ·
-        台架验证 {proposal.verification_steps.length} · unknown {proposal.unknowns.length}
+        BOM {proposal.bom.length} 项 · 实施步骤{" "}
+        {proposal.implementation_steps.length} · 台架验证{" "}
+        {proposal.verification_steps.length} · unknown{" "}
+        {proposal.unknowns.length}
       </p>
-      <Button disabled={busy} onClick={() => void freeze()}>
+      <Button
+        disabled={busy}
+        onClick={() => void freeze()}
+      >
         {busy ? "正在冻结…" : "冻结 SolutionVersion v1"}
       </Button>
     </div>
@@ -538,7 +621,7 @@ function ObservationAction({
 }) {
   const [statement, setStatement] = useState("");
   const [selected, setSelected] = useState<string[]>(() =>
-    snapshot.modules[0] ? [snapshot.modules[0].id] : [],
+    snapshot.modules[0] ? [snapshot.modules[0].id] : []
   );
   const [busy, setBusy] = useState(false);
   const submit = async () => {
@@ -548,7 +631,7 @@ function ObservationAction({
         snapshot.project.id,
         snapshot.project.revision,
         statement,
-        selected,
+        selected
       );
       setStatement("");
       toast.success("现场观察已记录，durable impact-proposer 已入队");
@@ -584,7 +667,7 @@ function ObservationAction({
                 setSelected((current) =>
                   event.target.checked
                     ? [...current, module.id]
-                    : current.filter((id) => id !== module.id),
+                    : current.filter((id) => id !== module.id)
                 )
               }
             />
@@ -592,7 +675,10 @@ function ObservationAction({
           </label>
         ))}
       </div>
-      <Button disabled={busy || !statement.trim() || selected.length === 0} onClick={() => void submit()}>
+      <Button
+        disabled={busy || !statement.trim() || selected.length === 0}
+        onClick={() => void submit()}
+      >
         提交 Observation
       </Button>
     </div>
@@ -612,7 +698,11 @@ function ImpactAction({
   const approve = async () => {
     setBusy(true);
     try {
-      await getClient().approveImpact(impact.id, snapshot.project.revision, impact.basis_hash);
+      await getClient().approveImpact(
+        impact.id,
+        snapshot.project.revision,
+        impact.basis_hash
+      );
       toast.success("PatchSet 已批准，新 SolutionVersion 已创建");
       await onDone();
     } catch (error) {
@@ -621,7 +711,9 @@ function ImpactAction({
       setBusy(false);
     }
   };
-  const moduleById = new Map(snapshot.modules.map((module) => [module.id, module]));
+  const moduleById = new Map(
+    snapshot.modules.map((module) => [module.id, module])
+  );
   const moduleNames = (ids: string[]) =>
     ids.map((id) => moduleById.get(id)?.name ?? shortId(id)).join("、") || "无";
   return (
@@ -634,7 +726,10 @@ function ImpactAction({
         </div>
       </div>
       <p>{impact.summary}</p>
-      <div className="impact-partition" aria-label="影响闭包">
+      <div
+        className="impact-partition"
+        aria-label="影响闭包"
+      >
         <article>
           <small>DIRECT / 用户事实</small>
           <strong>{moduleNames(impact.direct_affected_module_ids)}</strong>
@@ -655,7 +750,10 @@ function ImpactAction({
               <StatusTag status="proposed" />
               <code>{patch.base_snapshot_hash.slice(0, 12)}…</code>
             </div>
-            <strong>{moduleById.get(patch.module_id)?.name ?? shortId(patch.module_id)}</strong>
+            <strong>
+              {moduleById.get(patch.module_id)?.name ??
+                shortId(patch.module_id)}
+            </strong>
             <span>→ {patch.replacement.candidate_name}</span>
             <small>{patch.replacement.rationale}</small>
           </article>
@@ -669,8 +767,11 @@ function ImpactAction({
       </p>
       {impact.risks.length ? <p>风险：{impact.risks.join("；")}</p> : null}
       <p>
-        Proposal：<code>{impact.profile_id}@{impact.profile_revision}</code>。浏览器只批准该 basis，
-        不能编辑 PatchSet。
+        Proposal：
+        <code>
+          {impact.profile_id}@{impact.profile_revision}
+        </code>
+        。浏览器只批准该 basis， 不能编辑 PatchSet。
       </p>
       <Button
         disabled={busy || impact.status !== "proposed" || !impact.artifact_ref}
@@ -682,7 +783,10 @@ function ImpactAction({
   );
 }
 
-function actionSourceId(action: WorkspaceAction, type: string): string | undefined {
+function actionSourceId(
+  action: WorkspaceAction,
+  type: string
+): string | undefined {
   return action.source_refs.find((item) => item.type === type)?.id;
 }
 
@@ -702,10 +806,16 @@ function ActionNotice({
           <h2>{action?.title ?? "等待项目状态同步"}</h2>
         </div>
       </div>
-      <p>{action?.explanation ?? "当前没有可安全执行的下一步，请刷新项目状态。"}</p>
+      <p>
+        {action?.explanation ?? "当前没有可安全执行的下一步，请刷新项目状态。"}
+      </p>
       {action ? (
-        ["follow_work", "inspect_failure"].includes(action.kind) && onOpenAudit ? (
-          <Button variant="outline" onClick={onOpenAudit}>
+        ["follow_work", "inspect_failure"].includes(action.kind) &&
+        onOpenAudit ? (
+          <Button
+            variant="outline"
+            onClick={onOpenAudit}
+          >
             {action.safe_action}
           </Button>
         ) : (
@@ -730,40 +840,85 @@ function NextAction({
 
   switch (action.kind) {
     case "clarify_requirements":
-      return <RequirementsAction snapshot={snapshot} onDone={onDone} />;
+      return (
+        <RequirementsAction
+          snapshot={snapshot}
+          onDone={onDone}
+        />
+      );
     case "start_research":
-      return <ResearchAction snapshot={snapshot} onDone={onDone} />;
+      return (
+        <ResearchAction
+          snapshot={snapshot}
+          onDone={onDone}
+        />
+      );
     case "review_decision": {
       const decisionId = actionSourceId(action, "decision");
-      const decision = snapshot.decisions.find((item) => item.id === decisionId);
+      const decision = snapshot.decisions.find(
+        (item) => item.id === decisionId
+      );
       return decision ? (
-        <DecisionAction snapshot={snapshot} decision={decision} onDone={onDone} />
+        <DecisionAction
+          snapshot={snapshot}
+          decision={decision}
+          onDone={onDone}
+        />
       ) : (
-        <ActionNotice action={action} onOpenAudit={onOpenAudit} />
+        <ActionNotice
+          action={action}
+          onOpenAudit={onOpenAudit}
+        />
       );
     }
     case "review_solution": {
       const proposalId = actionSourceId(action, "solution_proposal");
-      const proposal = snapshot.solution_proposals.find((item) => item.id === proposalId);
+      const proposal = snapshot.solution_proposals.find(
+        (item) => item.id === proposalId
+      );
       return proposal ? (
-        <FreezeAction snapshot={snapshot} proposal={proposal} onDone={onDone} />
+        <FreezeAction
+          snapshot={snapshot}
+          proposal={proposal}
+          onDone={onDone}
+        />
       ) : (
-        <ActionNotice action={action} onOpenAudit={onOpenAudit} />
+        <ActionNotice
+          action={action}
+          onOpenAudit={onOpenAudit}
+        />
       );
     }
     case "review_impact": {
       const impactId = actionSourceId(action, "impact");
       const impact = snapshot.impacts.find((item) => item.id === impactId);
       return impact ? (
-        <ImpactAction snapshot={snapshot} impact={impact} onDone={onDone} />
+        <ImpactAction
+          snapshot={snapshot}
+          impact={impact}
+          onDone={onDone}
+        />
       ) : (
-        <ActionNotice action={action} onOpenAudit={onOpenAudit} />
+        <ActionNotice
+          action={action}
+          onOpenAudit={onOpenAudit}
+        />
       );
     }
     case "record_observation":
-      return <ObservationAction snapshot={snapshot} onDone={onDone} />;
+      return (
+        <ObservationAction
+          snapshot={snapshot}
+          onDone={onDone}
+        />
+      );
     default:
-      return <ActionNotice action={action} onOpenAudit={onOpenAudit} />;
+      return (
+        <ActionNotice
+          action={action}
+          onOpenAudit={onOpenAudit}
+        />
+      );
   }
 }
 
@@ -781,7 +936,10 @@ function SolutionVersionCard({
   hasPatchSet: boolean;
 }) {
   const previousSnapshots = new Map(
-    (previous?.module_snapshots ?? []).map((snapshot) => [snapshot.module_id, snapshot]),
+    (previous?.module_snapshots ?? []).map((snapshot) => [
+      snapshot.module_id,
+      snapshot,
+    ])
   );
   const affected = new Set(impact?.affected_module_ids ?? []);
   const changedCount = solution.module_snapshots.reduce(
@@ -792,7 +950,7 @@ function SolutionVersionCard({
         moduleSnapshotIdentity(snapshot)
         ? 1
         : 0),
-    0,
+    0
   );
   return (
     <article className="solution-version-card">
@@ -808,17 +966,37 @@ function SolutionVersionCard({
       </header>
       <code>{solution.basis_hash.slice(0, 16)}…</code>
       {previous ? (
-        <div className="reuse-rail" aria-label={`V${previous.version} 到 V${solution.version} 语义差异`}>
+        <div
+          className="reuse-rail"
+          aria-label={`V${previous.version} 到 V${solution.version} 语义差异`}
+        >
           {solution.module_snapshots.map((snapshot) => {
             const prior = previousSnapshots.get(snapshot.module_id);
-            const changed = prior ? moduleSnapshotIdentity(prior) !== moduleSnapshotIdentity(snapshot) : true;
+            const changed = prior
+              ? moduleSnapshotIdentity(prior) !==
+                moduleSnapshotIdentity(snapshot)
+              : true;
             const wasAffected = affected.has(snapshot.module_id);
             return (
-              <div className={changed ? "is-changed" : "is-reused"} key={snapshot.module_id}>
+              <div
+                className={changed ? "is-changed" : "is-reused"}
+                key={snapshot.module_id}
+              >
                 <i />
-                <span>{moduleById.get(snapshot.module_id)?.name ?? shortId(snapshot.module_id)}</span>
-                <small>{changed ? "changed" : wasAffected ? "affected · reused" : "reused"}</small>
-                <code>{moduleSnapshotHash(snapshot)?.slice(0, 10) ?? "legacy"}</code>
+                <span>
+                  {moduleById.get(snapshot.module_id)?.name ??
+                    shortId(snapshot.module_id)}
+                </span>
+                <small>
+                  {changed
+                    ? "changed"
+                    : wasAffected
+                    ? "affected · reused"
+                    : "reused"}
+                </small>
+                <code>
+                  {moduleSnapshotHash(snapshot)?.slice(0, 10) ?? "legacy"}
+                </code>
               </div>
             );
           })}
@@ -828,17 +1006,43 @@ function SolutionVersionCard({
           {solution.module_snapshots.map((snapshot) => (
             <div key={snapshot.module_id}>
               <i />
-              <span>{moduleById.get(snapshot.module_id)?.name ?? shortId(snapshot.module_id)}</span>
+              <span>
+                {moduleById.get(snapshot.module_id)?.name ??
+                  shortId(snapshot.module_id)}
+              </span>
               <small>origin</small>
-              <code>{moduleSnapshotHash(snapshot)?.slice(0, 10) ?? "legacy"}</code>
+              <code>
+                {moduleSnapshotHash(snapshot)?.slice(0, 10) ?? "legacy"}
+              </code>
             </div>
           ))}
         </div>
       )}
       <div className="version-metrics">
-        <span>BOM {solution.bom.length}{previous ? ` (${solution.bom.length - previous.bom.length >= 0 ? "+" : ""}${solution.bom.length - previous.bom.length})` : ""}</span>
+        <span>
+          BOM {solution.bom.length}
+          {previous
+            ? ` (${solution.bom.length - previous.bom.length >= 0 ? "+" : ""}${
+                solution.bom.length - previous.bom.length
+              })`
+            : ""}
+        </span>
         <span>实施 {solution.implementation_steps.length}</span>
-        <span>验证 {solution.verification_steps.length}{previous ? ` (${solution.verification_steps.length - previous.verification_steps.length >= 0 ? "+" : ""}${solution.verification_steps.length - previous.verification_steps.length})` : ""}</span>
+        <span>
+          验证 {solution.verification_steps.length}
+          {previous
+            ? ` (${
+                solution.verification_steps.length -
+                  previous.verification_steps.length >=
+                0
+                  ? "+"
+                  : ""
+              }${
+                solution.verification_steps.length -
+                previous.verification_steps.length
+              })`
+            : ""}
+        </span>
         {previous ? <span>变更模块 {changedCount}</span> : null}
       </div>
       <details>
@@ -847,19 +1051,27 @@ function SolutionVersionCard({
           <section>
             <small>BOM</small>
             {solution.bom.map((item, index) => (
-              <p key={bomKey(item, index)}>{bomLabel(item)} × {item.quantity} {bomUnit(item)}</p>
+              <p key={bomKey(item, index)}>
+                {bomLabel(item)} × {item.quantity} {bomUnit(item)}
+              </p>
             ))}
           </section>
           <section>
             <small>IMPLEMENT</small>
             {solution.implementation_steps.map((step, index) => (
-              <p key={stepKey(step, index)}><strong>{stepLabel(step)}</strong>{stepInstruction(step) ? ` — ${stepInstruction(step)}` : ""}</p>
+              <p key={stepKey(step, index)}>
+                <strong>{stepLabel(step)}</strong>
+                {stepInstruction(step) ? ` — ${stepInstruction(step)}` : ""}
+              </p>
             ))}
           </section>
           <section>
             <small>VERIFY</small>
             {solution.verification_steps.map((step, index) => (
-              <p key={stepKey(step, index)}><strong>{stepLabel(step)}</strong>{stepInstruction(step) ? ` — ${stepInstruction(step)}` : ""}</p>
+              <p key={stepKey(step, index)}>
+                <strong>{stepLabel(step)}</strong>
+                {stepInstruction(step) ? ` — ${stepInstruction(step)}` : ""}
+              </p>
             ))}
           </section>
         </div>
@@ -868,18 +1080,24 @@ function SolutionVersionCard({
   );
 }
 
-export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) {
+export function ProjectConsole({
+  initialProject,
+  onBack,
+}: ProjectConsoleProps) {
   const [auditOpen, setAuditOpen] = useState(false);
   const { data, error, isLoading, mutate } = useSWR(
     ["project-snapshot", initialProject.id],
     () => getClient().getSnapshot(initialProject.id),
-    { keepPreviousData: true },
+    { keepPreviousData: true }
   );
   const refresh = useCallback(async () => mutate(), [mutate]);
   const onRuntimeEvent = useCallback(() => {
     void mutate();
   }, [mutate]);
-  const { connected, events } = useEventStream(initialProject.id, onRuntimeEvent);
+  const { connected, events } = useEventStream(
+    initialProject.id,
+    onRuntimeEvent
+  );
 
   // URL-recoverable view state
   const {
@@ -900,13 +1118,20 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
   const latestEvents = useMemo(() => events.slice(-20).toReversed(), [events]);
 
   if (isLoading && !snapshot) {
-    return <div className="console-loading">正在读取 canonical project snapshot…</div>;
+    return (
+      <div className="console-loading">
+        正在读取 canonical project snapshot…
+      </div>
+    );
   }
   if (error || !snapshot) {
     return (
       <div className="console-loading error-state">
         <CircleAlert className="h-6 w-6" />
-        <p>无法读取项目：{error instanceof Error ? error.message : "unknown error"}</p>
+        <p>
+          无法读取项目：
+          {error instanceof Error ? error.message : "unknown error"}
+        </p>
         <Button onClick={() => void mutate()}>重试</Button>
       </div>
     );
@@ -916,7 +1141,11 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
     <main className="console-shell">
       <header className="console-header">
         <div className="console-title-row">
-          <Button variant="ghost" size="sm" onClick={onBack}>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+          >
             <ArrowLeft className="h-4 w-4" />
             项目列表
           </Button>
@@ -930,7 +1159,11 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
             <i className={connected ? "is-online" : ""} />
             {connected ? "LIVE" : "RECONNECTING"}
           </div>
-          <Button variant="outline" size="sm" onClick={() => void refresh()}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void refresh()}
+          >
             <RefreshCw className="h-4 w-4" />
             刷新
           </Button>
@@ -958,7 +1191,9 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
                 />
               ))
             ) : (
-              <p className="empty-copy">批准需求后，这里会显示通用 DIY 模块。</p>
+              <p className="empty-copy">
+                批准需求后，这里会显示通用 DIY 模块。
+              </p>
             )}
           </div>
         </aside>
@@ -970,7 +1205,11 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
             <span>GOAL</span>
             <p>{project.goal}</p>
           </div>
-          <NextAction snapshot={snapshot} onDone={refresh} onOpenAudit={() => setAuditOpen(true)} />
+          <NextAction
+            snapshot={snapshot}
+            onDone={refresh}
+            onOpenAudit={() => setAuditOpen(true)}
+          />
 
           <section className="solution-board">
             <div className="panel-heading">
@@ -984,23 +1223,31 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
               {snapshot.solutions.map((solution) => {
                 const previous = solution.previous_version_id
                   ? (() => {
-                      const sid = new Map(snapshot.solutions.map((s) => [s.id, s]));
+                      const sid = new Map(
+                        snapshot.solutions.map((s) => [s.id, s])
+                      );
                       return sid.get(solution.previous_version_id);
                     })()
                   : undefined;
-                const moduleById = new Map(snapshot.modules.map((m) => [m.id, m]));
+                const moduleById = new Map(
+                  snapshot.modules.map((m) => [m.id, m])
+                );
                 const impactByBase = new Map(
-                  snapshot.impacts.map((i) => [i.base_solution_version_id, i]),
+                  snapshot.impacts.map((i) => [i.base_solution_version_id, i])
                 );
                 return (
                   <SolutionVersionCard
                     key={solution.id}
                     solution={solution}
                     previous={previous}
-                    impact={previous ? impactByBase.get(previous.id) : undefined}
+                    impact={
+                      previous ? impactByBase.get(previous.id) : undefined
+                    }
                     moduleById={moduleById}
                     hasPatchSet={snapshot.patch_sets.some(
-                      (patch) => patch.base_solution_version_id === solution.previous_version_id,
+                      (patch) =>
+                        patch.base_solution_version_id ===
+                        solution.previous_version_id
                     )}
                   />
                 );
@@ -1049,11 +1296,15 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
                     ? `${item.completed_units} / ${item.total_units} 个子任务已结束`
                     : "正在准备工作范围"}
                 </p>
-                {item.failed_units ? <small>{item.failed_units} 个子任务需要检查</small> : null}
+                {item.failed_units ? (
+                  <small>{item.failed_units} 个子任务需要检查</small>
+                ) : null}
               </article>
             ))}
             {!snapshot.workspace?.work.length ? (
-              <p className="empty-copy">当前没有后台工作；需要启动或确认时会在这里说明。</p>
+              <p className="empty-copy">
+                当前没有后台工作；需要启动或确认时会在这里说明。
+              </p>
             ) : null}
           </div>
 
@@ -1068,7 +1319,10 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
             </summary>
             <div className="advanced-audit-body">
               {snapshot.runtime.budget_accounts.toReversed().map((budget) => (
-                <div className="runtime-stack" key={budget.id}>
+                <div
+                  className="runtime-stack"
+                  key={budget.id}
+                >
                   <article>
                     <div>
                       <strong>Run budget</strong>
@@ -1077,7 +1331,8 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
                     <small>
                       tokens {budget.token_committed.toLocaleString()} /{" "}
                       {budget.token_cap.toLocaleString()}
-                      {" · "}tools {budget.tool_calls_committed} / {budget.tool_call_cap}
+                      {" · "}tools {budget.tool_calls_committed} /{" "}
+                      {budget.tool_call_cap}
                     </small>
                   </article>
                 </div>
@@ -1085,19 +1340,25 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
               <div className="runtime-stack">
                 {snapshot.runtime.jobs.toReversed().map((job) => {
                   const error = snapshot.runtime.attempts.findLast(
-                    (attempt) => attempt.job_id === job.id && attempt.normalized_error,
+                    (attempt) =>
+                      attempt.job_id === job.id && attempt.normalized_error
                   )?.normalized_error;
                   return (
                     <article key={job.id}>
                       <div>
                         <Bot className="h-4 w-4" />
-                        <strong>{job.parent_job_id ? job.profile_id : "Coordinator"}</strong>
+                        <strong>
+                          {job.parent_job_id ? job.profile_id : "Coordinator"}
+                        </strong>
                         <StatusTag status={job.status} />
                       </div>
                       <small>
-                        gen {job.generation} · profile r{job.profile_revision} · {shortId(job.id)}
+                        gen {job.generation} · profile r{job.profile_revision} ·{" "}
+                        {shortId(job.id)}
                       </small>
-                      {error ? <code className="runtime-error">{error}</code> : null}
+                      {error ? (
+                        <code className="runtime-error">{error}</code>
+                      ) : null}
                     </article>
                   );
                 })}
@@ -1117,11 +1378,15 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
                     <div>
                       <strong>{eventLabel(event.type)}</strong>
                       <code>{event.id}</code>
-                      <time dateTime={event.created_at}>{eventTime(event.created_at)}</time>
+                      <time dateTime={event.created_at}>
+                        {eventTime(event.created_at)}
+                      </time>
                     </div>
                   </article>
                 ))}
-                {!latestEvents.length ? <p className="empty-copy">等待事件流连接…</p> : null}
+                {!latestEvents.length ? (
+                  <p className="empty-copy">等待事件流连接…</p>
+                ) : null}
               </div>
             </div>
           </details>

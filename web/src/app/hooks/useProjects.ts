@@ -16,17 +16,23 @@ function getStoredProjects(): StoredProject[] {
   if (typeof window === "undefined") return [];
   const raw = localStorage.getItem(PROJECTS_KEY);
   if (!raw) return [];
-  try { return JSON.parse(raw); } catch { return []; }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
 }
 
 function storeProject(id: string, name: string) {
-  const list = getStoredProjects().filter(p => p.id !== id);
+  const list = getStoredProjects().filter((p) => p.id !== id);
   list.unshift({ id, name, lastAccessed: new Date().toISOString() });
   localStorage.setItem(PROJECTS_KEY, JSON.stringify(list.slice(0, 20)));
 }
 
 export function useProjects() {
-  const [projects, setProjects] = useState<StoredProject[]>(getStoredProjects());
+  const [projects, setProjects] = useState<StoredProject[]>(
+    getStoredProjects()
+  );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -39,52 +45,62 @@ export function useProjects() {
           id: project.id,
           name: project.name,
           lastAccessed: project.updated_at,
-        })),
+        }))
       );
     } catch {
       setProjects(stored);
     }
   }, []);
 
-  const createProject = useCallback(async (name: string, goal: string) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { data } = await getClient().createProject(name, goal);
-      storeProject(data.id, data.name);
-      await refresh();
-      return data;
-    } catch (err: unknown) {
-      const msg = err && typeof err === "object" && "error" in err
-        ? (err as { error: { message: string } }).error.message
-        : String(err);
-      setError(msg);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [refresh]);
+  const createProject = useCallback(
+    async (name: string, goal: string) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const { data } = await getClient().createProject(name, goal);
+        storeProject(data.id, data.name);
+        await refresh();
+        return data;
+      } catch (err: unknown) {
+        const msg =
+          err && typeof err === "object" && "error" in err
+            ? (err as { error: { message: string } }).error.message
+            : String(err);
+        setError(msg);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [refresh]
+  );
 
-  const loadProject = useCallback(async (id: string): Promise<ProjectSnapshot> => {
-    setLoading(true);
-    setError(null);
-    try {
-      const snap = await getClient().getSnapshot(id);
-      storeProject(snap.project.id, snap.project.name);
-      await refresh();
-      return snap;
-    } catch (err: unknown) {
-      const msg = err && typeof err === "object" && "error" in err
-        ? (err as { error: { message: string } }).error.message
-        : String(err);
-      setError(msg);
-      throw err;
-    } finally {
-      setLoading(false);
-    }
-  }, [refresh]);
+  const loadProject = useCallback(
+    async (id: string): Promise<ProjectSnapshot> => {
+      setLoading(true);
+      setError(null);
+      try {
+        const snap = await getClient().getSnapshot(id);
+        storeProject(snap.project.id, snap.project.name);
+        await refresh();
+        return snap;
+      } catch (err: unknown) {
+        const msg =
+          err && typeof err === "object" && "error" in err
+            ? (err as { error: { message: string } }).error.message
+            : String(err);
+        setError(msg);
+        throw err;
+      } finally {
+        setLoading(false);
+      }
+    },
+    [refresh]
+  );
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   return { projects, loading, error, createProject, loadProject, refresh };
 }

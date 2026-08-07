@@ -26,11 +26,16 @@ import { MarkdownContent } from "@/app/components/MarkdownContent";
 function deriveDisposition(meta: ArtifactMeta): DisplayDisposition {
   if (meta.status !== "present") return "blocked";
   const mime = meta.media_type;
-  if (mime.startsWith("text/") || mime === "text/markdown" || mime.includes("markdown")) {
+  if (
+    mime.startsWith("text/") ||
+    mime === "text/markdown" ||
+    mime.includes("markdown")
+  ) {
     return "inline";
   }
   if (mime.startsWith("image/")) return "download_only";
-  if (mime.startsWith("application/") || mime === "application/octet-stream") return "download_only";
+  if (mime.startsWith("application/") || mime === "application/octet-stream")
+    return "download_only";
   return "blocked";
 }
 
@@ -104,7 +109,7 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
           setError(
             e && typeof e === "object" && "error" in e
               ? (e as { error: { message: string } }).error.message
-              : "无法加载 Artifact",
+              : "无法加载 Artifact"
           );
         }
       } finally {
@@ -112,14 +117,24 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
       }
     }
     void load();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [artifactId]);
 
   return (
-    <div className="artifact-viewer" role="dialog" aria-label="Artifact 查看器">
+    <div
+      className="artifact-viewer"
+      role="dialog"
+      aria-label="Artifact 查看器"
+    >
       <div className="artifact-viewer-header">
         <h2>Artifact 查看器</h2>
-        <Button variant="ghost" size="sm" onClick={onClose}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onClose}
+        >
           关闭
         </Button>
       </div>
@@ -134,7 +149,10 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
       ) : meta ? (
         <div className="artifact-body">
           {/* Metadata grid */}
-          <div className="artifact-meta-grid" aria-label="Artifact 元数据">
+          <div
+            className="artifact-meta-grid"
+            aria-label="Artifact 元数据"
+          >
             <div className="artifact-meta-item">
               <small>状态</small>
               <span className={`status-tag ${statusBadge(meta.status).tone}`}>
@@ -164,7 +182,12 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
             {meta.source_url && (
               <div className="artifact-meta-item artifact-meta-item--wide">
                 <small>来源 URL</small>
-                <a href={meta.source_url} target="_blank" rel="noreferrer" className="evidence-link">
+                <a
+                  href={meta.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="evidence-link"
+                >
                   {meta.source_url}
                 </a>
               </div>
@@ -177,7 +200,9 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
               <FileQuestion className="h-5 w-5" />
               <div>
                 <strong>Artifact 内容丢失</strong>
-                <p>元数据存在，但后端报告内容已丢失。请联系项目管理员判断是否重新生成。</p>
+                <p>
+                  元数据存在，但后端报告内容已丢失。请联系项目管理员判断是否重新生成。
+                </p>
               </div>
             </div>
           )}
@@ -260,45 +285,53 @@ export function ArtifactViewer({ artifactId, onClose }: ArtifactViewerProps) {
           })()}
 
           {/* Non-inline disposition messages */}
-          {meta.status === "present" && (() => {
-            const disp = deriveDisposition(meta);
-            if (disp === "download_only") {
-              return (
-                <div className="artifact-notice artifact-notice--info">
-                  <HardDrive className="h-5 w-5" />
-                  <div>
-                    <strong>仅可下载</strong>
-                    <p>
-                      此 Artifact 为{meta.kind}类型，仅提供下载链接。浏览器不执行或渲染该内容。
-                    </p>
-                    <Button variant="outline" size="sm" asChild className="artifact-download-btn">
-                      <a
-                        href={getClient().getArtifactContentUrl(meta.id)}
-                        download
-                        rel="noreferrer"
+          {meta.status === "present" &&
+            (() => {
+              const disp = deriveDisposition(meta);
+              if (disp === "download_only") {
+                return (
+                  <div className="artifact-notice artifact-notice--info">
+                    <HardDrive className="h-5 w-5" />
+                    <div>
+                      <strong>仅可下载</strong>
+                      <p>
+                        此 Artifact 为{meta.kind}
+                        类型，仅提供下载链接。浏览器不执行或渲染该内容。
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        asChild
+                        className="artifact-download-btn"
                       >
-                        <Download className="h-4 w-4" /> 下载文件
-                      </a>
-                    </Button>
+                        <a
+                          href={getClient().getArtifactContentUrl(meta.id)}
+                          download
+                          rel="noreferrer"
+                        >
+                          <Download className="h-4 w-4" /> 下载文件
+                        </a>
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              );
-            }
-            if (disp === "blocked") {
-              return (
-                <div className="artifact-notice artifact-notice--warn">
-                  <FileLock2 className="h-5 w-5" />
-                  <div>
-                    <strong>内容已阻止</strong>
-                    <p>
-                      安全策略禁止显示此文件（{meta.media_type}）。如确需查看，请通过其他安全渠道。
-                    </p>
+                );
+              }
+              if (disp === "blocked") {
+                return (
+                  <div className="artifact-notice artifact-notice--warn">
+                    <FileLock2 className="h-5 w-5" />
+                    <div>
+                      <strong>内容已阻止</strong>
+                      <p>
+                        安全策略禁止显示此文件（{meta.media_type}
+                        ）。如确需查看，请通过其他安全渠道。
+                      </p>
+                    </div>
                   </div>
-                </div>
-              );
-            }
-            return null;
-          })()}
+                );
+              }
+              return null;
+            })()}
         </div>
       ) : null}
     </div>

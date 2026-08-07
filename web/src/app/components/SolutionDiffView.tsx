@@ -24,46 +24,55 @@ interface SolutionDiffViewProps {
 }
 
 function moduleSnapshotKey(
-  snapshot: SolutionVersion["module_snapshots"][number],
+  snapshot: SolutionVersion["module_snapshots"][number]
 ): string {
-  return "snapshot_hash" in snapshot && typeof snapshot.snapshot_hash === "string"
+  return "snapshot_hash" in snapshot &&
+    typeof snapshot.snapshot_hash === "string"
     ? snapshot.snapshot_hash
     : JSON.stringify(snapshot);
 }
 
 function moduleSnapshotCandidate(
-  snapshot: SolutionVersion["module_snapshots"][number],
+  snapshot: SolutionVersion["module_snapshots"][number]
 ): string | null {
   return "candidate_id" in snapshot && typeof snapshot.candidate_id === "string"
     ? (snapshot as { candidate_name?: string }).candidate_name ?? null
     : null;
 }
 
-export function SolutionDiffView({ versionId, snapshot, onClose }: SolutionDiffViewProps) {
+export function SolutionDiffView({
+  versionId,
+  snapshot,
+  onClose,
+}: SolutionDiffViewProps) {
   const solution = useMemo(
     () => snapshot.solutions.find((s) => s.id === versionId) ?? null,
-    [snapshot.solutions, versionId],
+    [snapshot.solutions, versionId]
   );
 
   const previous = useMemo(
     () =>
       solution?.previous_version_id
-        ? snapshot.solutions.find((s) => s.id === solution.previous_version_id) ?? null
+        ? snapshot.solutions.find(
+            (s) => s.id === solution.previous_version_id
+          ) ?? null
         : null,
-    [snapshot.solutions, solution?.previous_version_id],
+    [snapshot.solutions, solution?.previous_version_id]
   );
 
   const moduleById = useMemo(
     () => new Map(snapshot.modules.map((m) => [m.id, m])),
-    [snapshot.modules],
+    [snapshot.modules]
   );
 
   const impact = useMemo(
     () =>
       previous
-        ? snapshot.impacts.find((i) => i.base_solution_version_id === previous.id) ?? null
+        ? snapshot.impacts.find(
+            (i) => i.base_solution_version_id === previous.id
+          ) ?? null
         : null,
-    [snapshot.impacts, previous],
+    [snapshot.impacts, previous]
   );
 
   if (!solution) {
@@ -75,7 +84,16 @@ export function SolutionDiffView({ versionId, snapshot, onClose }: SolutionDiffV
     );
   }
 
-  return <SolutionDiffInner solution={solution} previous={previous} impact={impact} snapshot={snapshot} moduleById={moduleById} onClose={onClose} />;
+  return (
+    <SolutionDiffInner
+      solution={solution}
+      previous={previous}
+      impact={impact}
+      snapshot={snapshot}
+      moduleById={moduleById}
+      onClose={onClose}
+    />
+  );
 }
 
 interface SolutionDiffInnerProps {
@@ -87,21 +105,42 @@ interface SolutionDiffInnerProps {
   onClose: () => void;
 }
 
-function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, onClose }: SolutionDiffInnerProps) {
+function SolutionDiffInner({
+  solution,
+  previous,
+  impact,
+  snapshot,
+  moduleById,
+  onClose,
+}: SolutionDiffInnerProps) {
   // Compute changed / reused module sets
   const previousHashes = useMemo(
-    () => new Map((previous?.module_snapshots ?? []).map((ms) => [ms.module_id, moduleSnapshotKey(ms)])),
-    [previous],
+    () =>
+      new Map(
+        (previous?.module_snapshots ?? []).map((ms) => [
+          ms.module_id,
+          moduleSnapshotKey(ms),
+        ])
+      ),
+    [previous]
   );
 
   const { changed, reused, added, removed } = useMemo(() => {
-    const currentIds = new Set(solution.module_snapshots.map((s) => s.module_id));
-    const previousIds = new Set(previous?.module_snapshots.map((s) => s.module_id) ?? []);
+    const currentIds = new Set(
+      solution.module_snapshots.map((s) => s.module_id)
+    );
+    const previousIds = new Set(
+      previous?.module_snapshots.map((s) => s.module_id) ?? []
+    );
 
     const ch: SolutionVersion["module_snapshots"] = [];
     const re: SolutionVersion["module_snapshots"] = [];
-    const ad = solution.module_snapshots.filter((s) => !previousIds.has(s.module_id));
-    const rm = (previous?.module_snapshots ?? []).filter((s) => !currentIds.has(s.module_id));
+    const ad = solution.module_snapshots.filter(
+      (s) => !previousIds.has(s.module_id)
+    );
+    const rm = (previous?.module_snapshots ?? []).filter(
+      (s) => !currentIds.has(s.module_id)
+    );
 
     for (const ms of solution.module_snapshots) {
       if (!previousIds.has(ms.module_id)) continue;
@@ -119,7 +158,9 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
   // BOM diff
   const bomDiff = useMemo(() => {
     const prevBomIds = new Set(
-      (previous?.bom ?? []).map((item, i) => "line_id" in item ? item.line_id : `legacy-${i}`),
+      (previous?.bom ?? []).map((item, i) =>
+        "line_id" in item ? item.line_id : `legacy-${i}`
+      )
     );
     const changedBom = solution.bom.filter((item, i) => {
       const key = "line_id" in item ? item.line_id : `legacy-${i}`;
@@ -135,7 +176,9 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
   // Steps diff
   const stepDiff = useMemo(() => {
     const prevStepIds = new Set(
-      (previous?.implementation_steps ?? []).map((s, i) => "step_id" in s ? s.step_id : `legacy-${i}`),
+      (previous?.implementation_steps ?? []).map((s, i) =>
+        "step_id" in s ? s.step_id : `legacy-${i}`
+      )
     );
     const changedSteps = solution.implementation_steps.filter((s, i) => {
       const key = "step_id" in s ? s.step_id : `legacy-${i}`;
@@ -157,16 +200,24 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
   }, [impact, snapshot.evidence]);
 
   return (
-    <div className="solution-diff-view" role="region" aria-label="方案版本对比">
+    <div
+      className="solution-diff-view"
+      role="region"
+      aria-label="方案版本对比"
+    >
       <div className="solution-diff-header">
-        <button className="solution-diff-back" onClick={onClose}>
+        <button
+          className="solution-diff-back"
+          onClick={onClose}
+        >
           ← 返回
         </button>
         <div className="solution-diff-titles">
           <h2>
             {previous ? (
               <>
-                V{previous.version} <ArrowRight className="h-4 w-4" /> V{solution.version}
+                V{previous.version} <ArrowRight className="h-4 w-4" /> V
+                {solution.version}
               </>
             ) : (
               <>V{solution.version} (初始版本)</>
@@ -208,9 +259,14 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
           <div className="solution-diff-modules">
             <h3>模块快照</h3>
             {solution.module_snapshots.map((ms) => (
-              <div className="diff-module-row origin" key={ms.module_id}>
+              <div
+                className="diff-module-row origin"
+                key={ms.module_id}
+              >
                 <Check className="h-3 w-3" />
-                <span>{moduleById.get(ms.module_id)?.name ?? shortId(ms.module_id)}</span>
+                <span>
+                  {moduleById.get(ms.module_id)?.name ?? shortId(ms.module_id)}
+                </span>
                 <span className="diff-module-tag tone-good">origin</span>
                 <code>{moduleSnapshotKey(ms).slice(0, 10)}…</code>
               </div>
@@ -225,26 +281,37 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
 
             {changed.length > 0 && (
               <div className="diff-group">
-                <small className="diff-group-label tone-live">CHANGED ({changed.length})</small>
+                <small className="diff-group-label tone-live">
+                  CHANGED ({changed.length})
+                </small>
                 {changed.map((ms) => {
                   const prevMs = previous.module_snapshots.find(
-                    (p) => p.module_id === ms.module_id,
+                    (p) => p.module_id === ms.module_id
                   );
                   const prevName = prevMs
                     ? moduleSnapshotCandidate(prevMs)
                     : null;
-                  const currName = moduleSnapshotCandidate(ms) ?? shortId(ms.module_id);
+                  const currName =
+                    moduleSnapshotCandidate(ms) ?? shortId(ms.module_id);
                   return (
-                    <div className="diff-module-row changed" key={ms.module_id}>
+                    <div
+                      className="diff-module-row changed"
+                      key={ms.module_id}
+                    >
                       <RotateCw className="h-3 w-3" />
-                      <span>{moduleById.get(ms.module_id)?.name ?? shortId(ms.module_id)}</span>
+                      <span>
+                        {moduleById.get(ms.module_id)?.name ??
+                          shortId(ms.module_id)}
+                      </span>
                       <div className="diff-module-change-detail">
                         {prevName && prevName !== currName ? (
                           <span className="diff-module-candidate-change">
                             {prevName} → {currName}
                           </span>
                         ) : (
-                          <span className="diff-module-hash-change">hash 变更</span>
+                          <span className="diff-module-hash-change">
+                            hash 变更
+                          </span>
                         )}
                       </div>
                       <code>{moduleSnapshotKey(ms).slice(0, 10)}…</code>
@@ -256,11 +323,19 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
 
             {added.length > 0 && (
               <div className="diff-group">
-                <small className="diff-group-label tone-good">ADDED ({added.length})</small>
+                <small className="diff-group-label tone-good">
+                  ADDED ({added.length})
+                </small>
                 {added.map((ms) => (
-                  <div className="diff-module-row added" key={ms.module_id}>
+                  <div
+                    className="diff-module-row added"
+                    key={ms.module_id}
+                  >
                     <span>+</span>
-                    <span>{moduleById.get(ms.module_id)?.name ?? shortId(ms.module_id)}</span>
+                    <span>
+                      {moduleById.get(ms.module_id)?.name ??
+                        shortId(ms.module_id)}
+                    </span>
                     <code>{moduleSnapshotKey(ms).slice(0, 10)}…</code>
                   </div>
                 ))}
@@ -269,11 +344,19 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
 
             {removed.length > 0 && (
               <div className="diff-group">
-                <small className="diff-group-label tone-bad">REMOVED ({removed.length})</small>
+                <small className="diff-group-label tone-bad">
+                  REMOVED ({removed.length})
+                </small>
                 {removed.map((ms) => (
-                  <div className="diff-module-row removed" key={ms.module_id}>
+                  <div
+                    className="diff-module-row removed"
+                    key={ms.module_id}
+                  >
                     <span>−</span>
-                    <span>{moduleById.get(ms.module_id)?.name ?? shortId(ms.module_id)}</span>
+                    <span>
+                      {moduleById.get(ms.module_id)?.name ??
+                        shortId(ms.module_id)}
+                    </span>
                     <code>{moduleSnapshotKey(ms).slice(0, 10)}…</code>
                   </div>
                 ))}
@@ -282,13 +365,23 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
 
             {reused.length > 0 && (
               <div className="diff-group">
-                <small className="diff-group-label tone-muted">REUSED ({reused.length})</small>
+                <small className="diff-group-label tone-muted">
+                  REUSED ({reused.length})
+                </small>
                 {reused.map((ms) => {
-                  const wasAffected = impact?.affected_module_ids.includes(ms.module_id);
+                  const wasAffected = impact?.affected_module_ids.includes(
+                    ms.module_id
+                  );
                   return (
-                    <div className="diff-module-row reused" key={ms.module_id}>
+                    <div
+                      className="diff-module-row reused"
+                      key={ms.module_id}
+                    >
                       <Check className="h-3 w-3" />
-                      <span>{moduleById.get(ms.module_id)?.name ?? shortId(ms.module_id)}</span>
+                      <span>
+                        {moduleById.get(ms.module_id)?.name ??
+                          shortId(ms.module_id)}
+                      </span>
                       <span className="diff-module-tag tone-muted">
                         {wasAffected ? "affected · reused" : "reused"}
                       </span>
@@ -316,9 +409,14 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
                   const label = "name" in item ? item.name : item.item;
                   const key = "line_id" in item ? item.line_id : `bom-${i}`;
                   return (
-                    <div className="diff-item-row" key={key}>
+                    <div
+                      className="diff-item-row"
+                      key={key}
+                    >
                       <span>+</span>
-                      <span>{label} × {item.quantity}</span>
+                      <span>
+                        {label} × {item.quantity}
+                      </span>
                     </div>
                   );
                 })}
@@ -331,9 +429,14 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
                   const label = "name" in item ? item.name : item.item;
                   const key = "line_id" in item ? item.line_id : `bom-${i}`;
                   return (
-                    <div className="diff-item-row" key={key}>
+                    <div
+                      className="diff-item-row"
+                      key={key}
+                    >
                       <RotateCw className="h-3 w-3" />
-                      <span>{label} × {item.quantity}</span>
+                      <span>
+                        {label} × {item.quantity}
+                      </span>
                     </div>
                   );
                 })}
@@ -355,10 +458,14 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
                 <small className="diff-group-label tone-good">NEW STEPS</small>
                 {stepDiff.added.map((step, i) => {
                   const title = "title" in step ? step.title : step.step;
-                  const instruction = "instruction" in step ? step.instruction : "";
+                  const instruction =
+                    "instruction" in step ? step.instruction : "";
                   const key = "step_id" in step ? step.step_id : `step-${i}`;
                   return (
-                    <div className="diff-item-row" key={key}>
+                    <div
+                      className="diff-item-row"
+                      key={key}
+                    >
                       <span>+</span>
                       <div>
                         <strong>{title}</strong>
@@ -376,7 +483,10 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
                   const title = "title" in step ? step.title : step.step;
                   const key = "step_id" in step ? step.step_id : `step-${i}`;
                   return (
-                    <div className="diff-item-row" key={key}>
+                    <div
+                      className="diff-item-row"
+                      key={key}
+                    >
                       <RotateCw className="h-3 w-3" />
                       <strong>{title}</strong>
                     </div>
@@ -396,12 +506,15 @@ function SolutionDiffInner({ solution, previous, impact, snapshot, moduleById, o
               <div className="stale-evidence-list">
                 {staleEvidence.map((eb) =>
                   eb ? (
-                    <article className="stale-evidence-card" key={eb.id}>
+                    <article
+                      className="stale-evidence-card"
+                      key={eb.id}
+                    >
                       <span className="status-tag tone-bad">过时</span>
                       <p>{eb.claim}</p>
                       <code>{eb.snapshot_hash.slice(0, 16)}…</code>
                     </article>
-                  ) : null,
+                  ) : null
                 )}
               </div>
             </section>

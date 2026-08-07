@@ -14,7 +14,10 @@ function sequenceFromId(id: string): number {
   return Number.isFinite(value) ? value : 0;
 }
 
-function mergeEvents(current: ProjectEvent[], incoming: ProjectEvent[]): ProjectEvent[] {
+function mergeEvents(
+  current: ProjectEvent[],
+  incoming: ProjectEvent[]
+): ProjectEvent[] {
   const byId = new Map(current.map((event) => [event.id, event]));
   for (const event of incoming) byId.set(event.id, event);
   return [...byId.values()]
@@ -24,7 +27,7 @@ function mergeEvents(current: ProjectEvent[], incoming: ProjectEvent[]): Project
 
 export function useEventStream(
   projectId: string | null,
-  onEvent?: (event: ProjectEvent) => void,
+  onEvent?: (event: ProjectEvent) => void
 ) {
   const [connected, setConnected] = useState(false);
   const [events, setEvents] = useState<ProjectEvent[]>([]);
@@ -87,7 +90,7 @@ export function useEventStream(
         const page = await getClient().getEvents(
           projectId,
           historyCursor,
-          EVENT_HISTORY_PAGE_SIZE,
+          EVENT_HISTORY_PAGE_SIZE
         );
         if (!page.length) break;
         history = mergeEvents(history, page);
@@ -103,12 +106,18 @@ export function useEventStream(
 
       while (!controller.signal.aborted) {
         try {
-          const headers: HeadersInit = cursor ? { "Last-Event-ID": cursor } : {};
-          const response = await fetch(getClient().createEventStreamUrl(projectId), {
-            headers,
-            signal: controller.signal,
-          });
-          if (!response.ok || !response.body) throw new Error(`SSE HTTP ${response.status}`);
+          const headers: HeadersInit = cursor
+            ? { "Last-Event-ID": cursor }
+            : {};
+          const response = await fetch(
+            getClient().createEventStreamUrl(projectId),
+            {
+              headers,
+              signal: controller.signal,
+            }
+          );
+          if (!response.ok || !response.body)
+            throw new Error(`SSE HTTP ${response.status}`);
           streamConnected = true;
           setConnected(true);
           const reader = response.body.getReader();
@@ -117,7 +126,9 @@ export function useEventStream(
           while (!controller.signal.aborted) {
             const { done, value } = await reader.read();
             if (done) break;
-            buffer += decoder.decode(value, { stream: true }).replaceAll("\r\n", "\n");
+            buffer += decoder
+              .decode(value, { stream: true })
+              .replaceAll("\r\n", "\n");
             let boundary = buffer.indexOf("\n\n");
             while (boundary >= 0) {
               parseFrame(buffer.slice(0, boundary));
@@ -143,7 +154,10 @@ export function useEventStream(
         // only as the fallback for environments where streaming is unavailable.
         if (!streamConnected) {
           try {
-            const updates = await getClient().getEvents(projectId, sequenceFromId(cursor));
+            const updates = await getClient().getEvents(
+              projectId,
+              sequenceFromId(cursor)
+            );
             for (const event of updates) accept(event);
           } catch (error) {
             if (controller.signal.aborted) return;

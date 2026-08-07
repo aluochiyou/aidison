@@ -1,12 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import {
-  AlertTriangle,
-  GitBranch,
-  RotateCw,
-  Wrench,
-} from "lucide-react";
+import { AlertTriangle, GitBranch, RotateCw, Wrench } from "lucide-react";
 import type { ProjectSnapshot } from "@/app/types/types";
 
 function shortId(value: string): string {
@@ -24,7 +19,7 @@ export function VerificationRevisionsView({
 }: VerificationRevisionsViewProps) {
   const moduleById = useMemo(
     () => new Map(snapshot.modules.map((m) => [m.id, m])),
-    [snapshot.modules],
+    [snapshot.modules]
   );
 
   return (
@@ -49,7 +44,10 @@ export function VerificationRevisionsView({
         {snapshot.observations.length > 0 ? (
           <div className="observations-list">
             {snapshot.observations.map((obs) => (
-              <article className="observation-card" key={obs.id}>
+              <article
+                className="observation-card"
+                key={obs.id}
+              >
                 <p>{obs.statement}</p>
                 <footer>
                   <span>
@@ -57,7 +55,7 @@ export function VerificationRevisionsView({
                     {obs.affected_module_hints
                       .map((hint) => {
                         const m = snapshot.modules.find(
-                          (mod) => mod.id === hint,
+                          (mod) => mod.id === hint
                         );
                         return m?.name ?? shortId(hint);
                       })
@@ -87,12 +85,20 @@ export function VerificationRevisionsView({
           <div className="impacts-list">
             {snapshot.impacts.map((impact) => (
               <article
-                className={`impact-summary-card ${impact.status === "proposed" ? "is-active" : ""}`}
+                className={`impact-summary-card ${
+                  impact.status === "proposed" ? "is-active" : ""
+                }`}
                 key={impact.id}
               >
                 <header>
                   <span
-                    className={`status-tag ${impact.status === "approved" ? "tone-good" : impact.status === "rejected" ? "tone-bad" : "tone-live"}`}
+                    className={`status-tag ${
+                      impact.status === "approved"
+                        ? "tone-good"
+                        : impact.status === "rejected"
+                        ? "tone-bad"
+                        : "tone-live"
+                    }`}
                   >
                     {impact.status}
                   </span>
@@ -103,7 +109,8 @@ export function VerificationRevisionsView({
                     直接影响: {impact.direct_affected_module_ids.length} 模块
                   </span>
                   <span>
-                    传递影响: {impact.transitive_affected_module_ids.length} 模块
+                    传递影响: {impact.transitive_affected_module_ids.length}{" "}
+                    模块
                   </span>
                   {impact.stale_evidence_binding_ids.length > 0 && (
                     <span className="impact-stale-evidence">
@@ -116,7 +123,10 @@ export function VerificationRevisionsView({
                     {impact.module_patches.map((patch) => {
                       const m = moduleById.get(patch.module_id);
                       return (
-                        <div className="impact-patch-mini" key={patch.module_id}>
+                        <div
+                          className="impact-patch-mini"
+                          key={patch.module_id}
+                        >
                           <RotateCw className="h-3 w-3" />
                           <span>
                             {m?.name ?? shortId(patch.module_id)} →{" "}
@@ -151,7 +161,10 @@ export function VerificationRevisionsView({
         {snapshot.solutions.length > 0 ? (
           <div className="solution-chain">
             {snapshot.solutions.map((solution, index) => (
-              <div className="solution-chain-node" key={solution.id}>
+              <div
+                className="solution-chain-node"
+                key={solution.id}
+              >
                 <div className="solution-chain-indicator">
                   <span className="solution-chain-dot" />
                   {index < snapshot.solutions.length - 1 && (
@@ -162,7 +175,11 @@ export function VerificationRevisionsView({
                   <header>
                     <strong>V{solution.version}</strong>
                     <span
-                      className={`status-tag ${solution.approved_decision_id ? "tone-good" : "tone-muted"}`}
+                      className={`status-tag ${
+                        solution.approved_decision_id
+                          ? "tone-good"
+                          : "tone-muted"
+                      }`}
                     >
                       {solution.id ===
                       snapshot.project.active_solution_version_id
@@ -185,7 +202,11 @@ export function VerificationRevisionsView({
                       className="solution-diff-link"
                       onClick={() => onSelectSolution(solution.id)}
                     >
-                      查看 V{snapshot.solutions.find((s) => s.id === solution.previous_version_id)?.version ?? "?"} → V{solution.version} 语义 Diff
+                      查看 V
+                      {snapshot.solutions.find(
+                        (s) => s.id === solution.previous_version_id
+                      )?.version ?? "?"}{" "}
+                      → V{solution.version} 语义 Diff
                     </button>
                   )}
                 </div>

@@ -42,7 +42,8 @@ export function ProjectSelector({
     const normalized = query.toLocaleLowerCase("zh-CN");
     const match = projects.find(
       (project) =>
-        project.id === query || project.name.toLocaleLowerCase("zh-CN").includes(normalized),
+        project.id === query ||
+        project.name.toLocaleLowerCase("zh-CN").includes(normalized)
     );
     if (!match) {
       setQueryError("没有找到该项目，请输入项目名称或 UUID");
@@ -52,7 +53,10 @@ export function ProjectSelector({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={onOpenChange}
+    >
       <DialogContent className="sm:max-w-[560px]">
         <DialogHeader>
           <DialogTitle>打开工程项目</DialogTitle>
@@ -63,7 +67,10 @@ export function ProjectSelector({
         <div className="project-picker-list">
           {projects.length ? (
             projects.map((project) => (
-              <button key={project.id} onClick={() => void openProject(project.id)}>
+              <button
+                key={project.id}
+                onClick={() => void openProject(project.id)}
+              >
                 <FolderClock className="h-4 w-4" />
                 <span>
                   <strong>{project.name}</strong>
@@ -92,7 +99,9 @@ export function ProjectSelector({
             读取
           </Button>
         </div>
-        {queryError || error ? <p className="form-error">{queryError || error}</p> : null}
+        {queryError || error ? (
+          <p className="form-error">{queryError || error}</p>
+        ) : null}
       </DialogContent>
     </Dialog>
   );

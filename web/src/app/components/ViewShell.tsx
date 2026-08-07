@@ -77,7 +77,15 @@ function useEscapeClose(onClose: () => void) {
   }, [onClose]);
 }
 
-function Overlay({ children, onClose, wide }: { children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+function Overlay({
+  children,
+  onClose,
+  wide,
+}: {
+  children: React.ReactNode;
+  onClose: () => void;
+  wide?: boolean;
+}) {
   const panelRef = useRef<HTMLDivElement>(null);
   useEscapeClose(onClose);
 
@@ -86,7 +94,7 @@ function Overlay({ children, onClose, wide }: { children: React.ReactNode; onClo
     const el = panelRef.current;
     if (el) {
       const firstFocusable = el.querySelector<HTMLElement>(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
       );
       firstFocusable?.focus();
     }
@@ -101,7 +109,9 @@ function Overlay({ children, onClose, wide }: { children: React.ReactNode; onClo
     >
       <div
         ref={panelRef}
-        className={`view-overlay-panel ${wide ? "view-overlay-panel--wide" : ""}`}
+        className={`view-overlay-panel ${
+          wide ? "view-overlay-panel--wide" : ""
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {children}
@@ -126,10 +136,8 @@ export function ViewShell({
   // compute focused module for drill-down
   const focusedModule = useMemo(
     () =>
-      moduleId
-        ? snapshot.modules.find((m) => m.id === moduleId) ?? null
-        : null,
-    [snapshot.modules, moduleId],
+      moduleId ? snapshot.modules.find((m) => m.id === moduleId) ?? null : null,
+    [snapshot.modules, moduleId]
   );
 
   // ── Render main view ──
@@ -144,7 +152,12 @@ export function ViewShell({
           />
         );
       case "decision-inbox":
-        return <DecisionInbox snapshot={snapshot} onResolved={onRefresh} />;
+        return (
+          <DecisionInbox
+            snapshot={snapshot}
+            onResolved={onRefresh}
+          />
+        );
       case "verification":
         return (
           <VerificationRevisionsView
@@ -169,7 +182,10 @@ export function ViewShell({
   return (
     <div className="view-shell">
       {/* Left Nav Rail */}
-      <nav className="view-nav" aria-label="视图导航">
+      <nav
+        className="view-nav"
+        aria-label="视图导航"
+      >
         <div className="view-nav-label">
           <Monitor className="h-4 w-4" />
           <small>VIEWS</small>
@@ -178,7 +194,9 @@ export function ViewShell({
           {NAV_ITEMS.map((item) => (
             <li key={item.view}>
               <button
-                className={`view-nav-item ${view === item.view ? "is-active" : ""}`}
+                className={`view-nav-item ${
+                  view === item.view ? "is-active" : ""
+                }`}
                 onClick={() => onSetView(item.view)}
                 aria-current={view === item.view ? "page" : undefined}
               >
@@ -190,16 +208,14 @@ export function ViewShell({
                     .length > 0 && (
                     <span className="view-nav-badge">
                       {
-                        snapshot.decisions.filter(
-                          (d) => d.status === "pending",
-                        ).length
+                        snapshot.decisions.filter((d) => d.status === "pending")
+                          .length
                       }
                     </span>
                   )}
-                {item.view === "shopping" &&
-                  snapshot.solutions.length > 0 && (
-                    <CheckCircle2 className="h-3 w-3 tone-good" />
-                  )}
+                {item.view === "shopping" && snapshot.solutions.length > 0 && (
+                  <CheckCircle2 className="tone-good h-3 w-3" />
+                )}
               </button>
             </li>
           ))}
@@ -207,9 +223,7 @@ export function ViewShell({
       </nav>
 
       {/* Main Content Area */}
-      <div className="view-content">
-        {renderMainView()}
-      </div>
+      <div className="view-content">{renderMainView()}</div>
 
       {/* Overlays: Module Detail, Artifact Viewer, Solution Diff */}
       {focusedModule && (
@@ -232,7 +246,10 @@ export function ViewShell({
       )}
 
       {solutionVersionId && (
-        <Overlay onClose={onClearOverlay} wide>
+        <Overlay
+          onClose={onClearOverlay}
+          wide
+        >
           <SolutionDiffView
             versionId={solutionVersionId}
             snapshot={snapshot}

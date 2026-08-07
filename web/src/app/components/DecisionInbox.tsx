@@ -37,8 +37,12 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
   const [busy, setBusy] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const pendingDecisions = snapshot.decisions.filter((d) => d.status === "pending");
-  const resolvedDecisions = snapshot.decisions.filter((d) => d.status !== "pending");
+  const pendingDecisions = snapshot.decisions.filter(
+    (d) => d.status === "pending"
+  );
+  const resolvedDecisions = snapshot.decisions.filter(
+    (d) => d.status !== "pending"
+  );
 
   const resolve = async (decision: DecisionRequest, optionId: string) => {
     if (busy) return;
@@ -48,7 +52,7 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
         decision.id,
         snapshot.project.revision,
         optionId,
-        decision.basis_hash,
+        decision.basis_hash
       );
       toast.success("决策已提交");
       onResolved();
@@ -64,7 +68,11 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
   };
 
   return (
-    <div className="decision-inbox" role="region" aria-label="决策收件箱">
+    <div
+      className="decision-inbox"
+      role="region"
+      aria-label="决策收件箱"
+    >
       <div className="decision-inbox-header">
         <div>
           <small>DECISION INBOX</small>
@@ -85,7 +93,9 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
       {/* Pending decisions */}
       {pendingDecisions.map((decision) => (
         <article
-          className={`decision-card ${expandedId === decision.id ? "is-expanded" : ""}`}
+          className={`decision-card ${
+            expandedId === decision.id ? "is-expanded" : ""
+          }`}
           key={decision.id}
         >
           <header>
@@ -121,7 +131,10 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
             {decision.options.map((raw) => {
               const option = normalizedOption(raw);
               return (
-                <div className="decision-option-card" key={option.option_id}>
+                <div
+                  className="decision-option-card"
+                  key={option.option_id}
+                >
                   <div className="decision-option-header">
                     <strong>{option.label}</strong>
                     {option.legacy_unbound && (
@@ -141,14 +154,16 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
                   </div>
                   <Button
                     size="sm"
-                    disabled={busy === option.option_id || option.legacy_unbound}
+                    disabled={
+                      busy === option.option_id || option.legacy_unbound
+                    }
                     onClick={() => resolve(decision, option.option_id)}
                   >
                     {busy === option.option_id
                       ? "提交中…"
                       : option.legacy_unbound
-                        ? "审计选项不可选"
-                        : "选择此方案"}
+                      ? "审计选项不可选"
+                      : "选择此方案"}
                   </Button>
                 </div>
               );
@@ -164,22 +179,25 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
           {resolvedDecisions.map((decision) => {
             const selected = decision.options
               .map((o) => (typeof o === "string" ? null : o))
-              .find(
-                (o) =>
-                  o && o.option_id === decision.selected_option_id,
-              );
+              .find((o) => o && o.option_id === decision.selected_option_id);
             return (
-              <article className="decision-resolved-card" key={decision.id}>
+              <article
+                className="decision-resolved-card"
+                key={decision.id}
+              >
                 <div>
                   <span
-                    className={`status-tag ${decision.status === "approved" ? "tone-good" : "tone-bad"}`}
+                    className={`status-tag ${
+                      decision.status === "approved" ? "tone-good" : "tone-bad"
+                    }`}
                   >
                     {decision.status}
                   </span>
                   <strong>{decision.question}</strong>
                 </div>
                 <p>
-                  已选: {selected?.label ?? decision.selected_option_id ?? "未选择"}
+                  已选:{" "}
+                  {selected?.label ?? decision.selected_option_id ?? "未选择"}
                 </p>
                 <code>
                   {decision.resolved_at
@@ -196,7 +214,8 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
       <div className="decision-server-guard">
         <AlertTriangle className="h-4 w-4" />
         <small>
-          决策选项由服务端根据 bound evidence 生成。浏览器不可编造 canonical solution/patch。
+          决策选项由服务端根据 bound evidence 生成。浏览器不可编造 canonical
+          solution/patch。
         </small>
       </div>
     </div>

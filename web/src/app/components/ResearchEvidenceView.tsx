@@ -1,14 +1,12 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
-  Beaker,
-  FileText,
-  FlaskConical,
-  Globe,
-  Sparkles,
-} from "lucide-react";
-import type { Candidate, EvidenceBinding, ProjectSnapshot } from "@/app/types/types";
+import { Beaker, FileText, FlaskConical, Globe, Sparkles } from "lucide-react";
+import type {
+  Candidate,
+  EvidenceBinding,
+  ProjectSnapshot,
+} from "@/app/types/types";
 import { computeFreshness, freshLabel, freshTone } from "@/app/utils/freshness";
 import { EvidenceDrawer } from "@/app/components/EvidenceDrawer";
 
@@ -25,7 +23,9 @@ export function ResearchEvidenceView({
   snapshot,
   onSelectModule,
 }: ResearchEvidenceViewProps) {
-  const [drawerEvidence, setDrawerEvidence] = useState<EvidenceBinding | null>(null);
+  const [drawerEvidence, setDrawerEvidence] = useState<EvidenceBinding | null>(
+    null
+  );
 
   // Group candidates by module
   const candidatesByModule = useMemo(() => {
@@ -51,16 +51,16 @@ export function ResearchEvidenceView({
 
   // All module IDs that have any evidence or candidates
   const activeModuleIds = useMemo(
-    () =>
-      new Set([
-        ...candidatesByModule.keys(),
-        ...evidenceByModule.keys(),
-      ]),
-    [candidatesByModule, evidenceByModule],
+    () => new Set([...candidatesByModule.keys(), ...evidenceByModule.keys()]),
+    [candidatesByModule, evidenceByModule]
   );
 
   return (
-    <div className="research-evidence-view" role="region" aria-label="研究与证据">
+    <div
+      className="research-evidence-view"
+      role="region"
+      aria-label="研究与证据"
+    >
       <div className="research-header">
         <div>
           <small>INDEPENDENT RESEARCH & EVIDENCE</small>
@@ -79,7 +79,9 @@ export function ResearchEvidenceView({
       {snapshot.candidates.length === 0 && snapshot.evidence.length === 0 ? (
         <div className="research-empty">
           <FlaskConical className="h-8 w-8" />
-          <p>尚未有研究结果。启动 Research Wave 后，证据和候选方案会出现在这里。</p>
+          <p>
+            尚未有研究结果。启动 Research Wave 后，证据和候选方案会出现在这里。
+          </p>
         </div>
       ) : (
         <div className="research-content">
@@ -93,17 +95,18 @@ export function ResearchEvidenceView({
               <div className="candidates-grid">
                 {snapshot.candidates.map((candidate) => {
                   const module = snapshot.modules.find(
-                    (m) => m.id === candidate.module_id,
+                    (m) => m.id === candidate.module_id
                   );
                   return (
-                    <article className="candidate-research-card" key={candidate.id}>
+                    <article
+                      className="candidate-research-card"
+                      key={candidate.id}
+                    >
                       <header>
                         <strong>{candidate.name}</strong>
                         <button
                           className="candidate-module-link"
-                          onClick={() =>
-                            module && onSelectModule(module.id)
-                          }
+                          onClick={() => module && onSelectModule(module.id)}
                         >
                           {module?.name ?? shortId(candidate.module_id)}
                         </button>
@@ -117,13 +120,16 @@ export function ResearchEvidenceView({
                       <div className="candidate-attrs">
                         {Object.entries(candidate.attributes).map(
                           ([key, value]) => (
-                            <span className="candidate-attr-tag" key={key}>
+                            <span
+                              className="candidate-attr-tag"
+                              key={key}
+                            >
                               {key}:{" "}
                               {typeof value === "string"
                                 ? value.slice(0, 40)
                                 : JSON.stringify(value).slice(0, 40)}
                             </span>
-                          ),
+                          )
                         )}
                       </div>
                       <div className="candidate-evidence-count">
@@ -149,20 +155,17 @@ export function ResearchEvidenceView({
               {Array.from(activeModuleIds).map((moduleId) => {
                 const evidence = evidenceByModule.get(moduleId) ?? [];
                 if (evidence.length === 0) return null;
-                const module = snapshot.modules.find(
-                  (m) => m.id === moduleId,
-                );
+                const module = snapshot.modules.find((m) => m.id === moduleId);
                 return (
-                  <div className="evidence-module-group" key={moduleId}>
+                  <div
+                    className="evidence-module-group"
+                    key={moduleId}
+                  >
                     <div className="evidence-module-group-header">
-                      <h4>
-                        {module?.name ?? shortId(moduleId)}
-                      </h4>
+                      <h4>{module?.name ?? shortId(moduleId)}</h4>
                       <button
                         className="evidence-module-link"
-                        onClick={() =>
-                          module && onSelectModule(module.id)
-                        }
+                        onClick={() => module && onSelectModule(module.id)}
                       >
                         查看模块 →
                       </button>
@@ -177,12 +180,18 @@ export function ResearchEvidenceView({
                           >
                             <header>
                               <span
-                                className={`status-tag ${binding.status === "supported" ? "tone-good" : "tone-bad"}`}
+                                className={`status-tag ${
+                                  binding.status === "supported"
+                                    ? "tone-good"
+                                    : "tone-bad"
+                                }`}
                               >
                                 {binding.status}
                               </span>
                               <span
-                                className={`status-tag ${freshTone(freshness.freshness)}`}
+                                className={`status-tag ${freshTone(
+                                  freshness.freshness
+                                )}`}
                               >
                                 {freshLabel(freshness.freshness)}
                               </span>
@@ -205,9 +214,7 @@ export function ResearchEvidenceView({
                                   SOURCE
                                 </a>
                               )}
-                              <code>
-                                {binding.snapshot_hash.slice(0, 12)}…
-                              </code>
+                              <code>{binding.snapshot_hash.slice(0, 12)}…</code>
                               <button
                                 className="evidence-detail-btn"
                                 onClick={() => setDrawerEvidence(binding)}

@@ -11,13 +11,20 @@ interface EvidenceDrawerProps {
 
 export function EvidenceDrawer({ evidence, onClose }: EvidenceDrawerProps) {
   return (
-    <div className="evidence-drawer" role="dialog" aria-label={`证据详情: ${evidence.claim.slice(0, 60)}`}>
+    <div
+      className="evidence-drawer"
+      role="dialog"
+      aria-label={`证据详情: ${evidence.claim.slice(0, 60)}`}
+    >
       <div className="evidence-drawer-header">
         <div>
           <small>EVIDENCE BINDING</small>
           <h3>{evidence.claim}</h3>
         </div>
-        <button onClick={onClose} aria-label="关闭证据抽屉">
+        <button
+          onClick={onClose}
+          aria-label="关闭证据抽屉"
+        >
           <X className="h-4 w-4" />
         </button>
       </div>
@@ -52,7 +59,11 @@ export function EvidenceDrawer({ evidence, onClose }: EvidenceDrawerProps) {
 
           <div className="evidence-field">
             <small>状态</small>
-            <span className={`status-tag ${evidence.status === "supported" ? "tone-good" : "tone-bad"}`}>
+            <span
+              className={`status-tag ${
+                evidence.status === "supported" ? "tone-good" : "tone-bad"
+              }`}
+            >
               {evidence.status}
             </span>
           </div>
@@ -74,7 +85,10 @@ export function EvidenceDrawer({ evidence, onClose }: EvidenceDrawerProps) {
               <small>适用范围</small>
               <div className="evidence-tags">
                 {evidence.applicability.map((tag) => (
-                  <span className="evidence-applicability-tag" key={tag}>
+                  <span
+                    className="evidence-applicability-tag"
+                    key={tag}
+                  >
                     {tag}
                   </span>
                 ))}

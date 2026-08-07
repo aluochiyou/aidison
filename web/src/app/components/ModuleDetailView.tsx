@@ -25,9 +25,32 @@ function shortId(value: string): string {
 }
 
 function statusTagClass(status: string): string {
-  const good = ["approved", "supported", "compatible", "succeeded", "selected", "revised"];
-  const bad = ["rejected", "contradicted", "incompatible", "stale", "retracted", "corrupt"];
-  const live = ["pending", "researching", "comparing", "deciding", "verifying", "draft", "conditional", "needs_test"];
+  const good = [
+    "approved",
+    "supported",
+    "compatible",
+    "succeeded",
+    "selected",
+    "revised",
+  ];
+  const bad = [
+    "rejected",
+    "contradicted",
+    "incompatible",
+    "stale",
+    "retracted",
+    "corrupt",
+  ];
+  const live = [
+    "pending",
+    "researching",
+    "comparing",
+    "deciding",
+    "verifying",
+    "draft",
+    "conditional",
+    "needs_test",
+  ];
   if (good.includes(status)) return "tone-good";
   if (bad.includes(status)) return "tone-bad";
   if (live.includes(status)) return "tone-live";
@@ -40,59 +63,69 @@ interface ModuleDetailViewProps {
   onClose: () => void;
 }
 
-export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailViewProps) {
-  const [drawerEvidence, setDrawerEvidence] = useState<EvidenceBinding | null>(null);
+export function ModuleDetailView({
+  module,
+  snapshot,
+  onClose,
+}: ModuleDetailViewProps) {
+  const [drawerEvidence, setDrawerEvidence] = useState<EvidenceBinding | null>(
+    null
+  );
 
   // Filter data scoped to this module
   const moduleCandidates = useMemo(
     () => snapshot.candidates.filter((c) => c.module_id === module.id),
-    [snapshot.candidates, module.id],
+    [snapshot.candidates, module.id]
   );
 
   const moduleEvidence = useMemo(
     () => snapshot.evidence.filter((e) => e.module_id === module.id),
-    [snapshot.evidence, module.id],
+    [snapshot.evidence, module.id]
   );
 
   const moduleCompatibility = useMemo(
     () =>
       snapshot.compatibility_findings.filter((cf) =>
-        cf.module_ids.includes(module.id),
+        cf.module_ids.includes(module.id)
       ),
-    [snapshot.compatibility_findings, module.id],
+    [snapshot.compatibility_findings, module.id]
   );
 
   const moduleDecisions = useMemo(
     () =>
       snapshot.decisions.filter((d) =>
-        d.affected_module_ids.includes(module.id),
+        d.affected_module_ids.includes(module.id)
       ),
-    [snapshot.decisions, module.id],
+    [snapshot.decisions, module.id]
   );
 
   // Find current selection for this module across approved solutions
   const currentSelection = useMemo((): ModuleSelection | null => {
     const approvedSolution = snapshot.solutions.find(
-      (s) => s.id === snapshot.project.active_solution_version_id,
+      (s) => s.id === snapshot.project.active_solution_version_id
     );
     if (!approvedSolution) {
       // latest solution
       const latest = snapshot.solutions.at(-1);
       if (!latest) return null;
       const sel = latest.module_snapshots.find(
-        (ms) => ms.module_id === module.id,
+        (ms) => ms.module_id === module.id
       );
       return sel && "candidate_id" in sel
         ? (sel as unknown as ModuleSelection)
         : null;
     }
     const sel = approvedSolution.module_snapshots.find(
-      (ms) => ms.module_id === module.id,
+      (ms) => ms.module_id === module.id
     );
     return sel && "candidate_id" in sel
       ? (sel as unknown as ModuleSelection)
       : null;
-  }, [snapshot.solutions, snapshot.project.active_solution_version_id, module.id]);
+  }, [
+    snapshot.solutions,
+    snapshot.project.active_solution_version_id,
+    module.id,
+  ]);
 
   // Dependencies
   const dependencyModules = useMemo(
@@ -100,14 +133,21 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
       module.dependency_ids
         .map((depId) => snapshot.modules.find((m) => m.id === depId))
         .filter(Boolean) as Module[],
-    [module.dependency_ids, snapshot.modules],
+    [module.dependency_ids, snapshot.modules]
   );
 
   return (
-    <div className="module-detail-view" role="region" aria-label={`模块详情: ${module.name}`}>
+    <div
+      className="module-detail-view"
+      role="region"
+      aria-label={`模块详情: ${module.name}`}
+    >
       {/* Header */}
       <div className="module-detail-header">
-        <button className="module-detail-back" onClick={onClose}>
+        <button
+          className="module-detail-back"
+          onClick={onClose}
+        >
           ← 返回模块列表
         </button>
         <div className="module-detail-title">
@@ -141,7 +181,9 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
               ))}
             </ul>
           ) : (
-            <p className="module-detail-empty">无上游依赖 — 该模块可独立决策。</p>
+            <p className="module-detail-empty">
+              无上游依赖 — 该模块可独立决策。
+            </p>
           )}
         </section>
 
@@ -198,7 +240,10 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
         {moduleCandidates.length > 0 ? (
           <div className="module-candidates-grid">
             {moduleCandidates.map((candidate) => (
-              <article className="candidate-detail-card" key={candidate.id}>
+              <article
+                className="candidate-detail-card"
+                key={candidate.id}
+              >
                 <header>
                   <strong>{candidate.name}</strong>
                   <code>{shortId(candidate.id)}</code>
@@ -222,7 +267,7 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
                     <div className="candidate-evidence-links">
                       {candidate.evidence_binding_ids.map((ebId) => {
                         const binding = snapshot.evidence.find(
-                          (e) => e.id === ebId,
+                          (e) => e.id === ebId
                         );
                         if (!binding) return null;
                         return (
@@ -232,7 +277,9 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
                             onClick={() => setDrawerEvidence(binding)}
                           >
                             <span
-                              className={`status-tag ${statusTagClass(binding.status)}`}
+                              className={`status-tag ${statusTagClass(
+                                binding.status
+                              )}`}
                             >
                               {binding.status}
                             </span>
@@ -249,7 +296,9 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
             ))}
           </div>
         ) : (
-          <p className="module-detail-empty">尚未生成候选方案 — 等待研究完成。</p>
+          <p className="module-detail-empty">
+            尚未生成候选方案 — 等待研究完成。
+          </p>
         )}
       </section>
 
@@ -275,9 +324,19 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
                       {binding.status}
                     </span>
                     <span
-                      className={`status-tag ${freshness.freshness === "fresh" ? "tone-good" : freshness.freshness === "aging" ? "tone-live" : "tone-bad"}`}
+                      className={`status-tag ${
+                        freshness.freshness === "fresh"
+                          ? "tone-good"
+                          : freshness.freshness === "aging"
+                          ? "tone-live"
+                          : "tone-bad"
+                      }`}
                     >
-                      {freshness.freshness === "fresh" ? "新鲜" : freshness.freshness === "aging" ? "老化中" : "过时"}
+                      {freshness.freshness === "fresh"
+                        ? "新鲜"
+                        : freshness.freshness === "aging"
+                        ? "老化中"
+                        : "过时"}
                     </span>
                   </header>
                   <p>{binding.claim}</p>
@@ -295,7 +354,9 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
             })}
           </div>
         ) : (
-          <p className="module-detail-empty">尚未收集证据 — 启动研究后证据会出现在这里。</p>
+          <p className="module-detail-empty">
+            尚未收集证据 — 启动研究后证据会出现在这里。
+          </p>
         )}
       </section>
 
@@ -308,7 +369,10 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
           </h3>
           <div className="module-compat-grid">
             {moduleCompatibility.map((cf) => (
-              <article className="compat-card" key={cf.id}>
+              <article
+                className="compat-card"
+                key={cf.id}
+              >
                 <header>
                   <span className={`status-tag ${statusTagClass(cf.status)}`}>
                     {cf.status}
@@ -337,9 +401,14 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
           </h3>
           <div className="module-decisions-list">
             {moduleDecisions.map((decision) => (
-              <article className="decision-ref-card" key={decision.id}>
+              <article
+                className="decision-ref-card"
+                key={decision.id}
+              >
                 <header>
-                  <span className={`status-tag ${statusTagClass(decision.status)}`}>
+                  <span
+                    className={`status-tag ${statusTagClass(decision.status)}`}
+                  >
                     {decision.status}
                   </span>
                   <strong>{decision.question}</strong>
@@ -381,7 +450,10 @@ export function ModuleDetailView({ module, snapshot, onClose }: ModuleDetailView
 
       {/* Evidence Drawer (overlay) */}
       {drawerEvidence && (
-        <div className="evidence-drawer-overlay" onClick={() => setDrawerEvidence(null)}>
+        <div
+          className="evidence-drawer-overlay"
+          onClick={() => setDrawerEvidence(null)}
+        >
           <div onClick={(e) => e.stopPropagation()}>
             <EvidenceDrawer
               evidence={computeFreshness(drawerEvidence)}

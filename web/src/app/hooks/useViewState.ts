@@ -25,33 +25,33 @@ export function useViewState() {
       decisionId: parseAsString.withDefault(""),
       solutionVersionId: parseAsString.withDefault(""),
     },
-    { history: "replace" },
+    { history: "replace" }
   );
 
   const setView = useCallback(
     (view: ConsoleView) => setState({ view }),
-    [setState],
+    [setState]
   );
 
   const selectModule = useCallback(
     (moduleId: string) => setState({ moduleId: moduleId || null }),
-    [setState],
+    [setState]
   );
 
   const selectArtifact = useCallback(
     (artifactId: string) => setState({ artifactId: artifactId || null }),
-    [setState],
+    [setState]
   );
 
   const selectDecision = useCallback(
     (decisionId: string) => setState({ decisionId: decisionId || null }),
-    [setState],
+    [setState]
   );
 
   const selectSolutionVersion = useCallback(
     (solutionVersionId: string) =>
       setState({ solutionVersionId: solutionVersionId || null }),
-    [setState],
+    [setState]
   );
 
   const clearOverlay = useCallback(
@@ -62,24 +62,24 @@ export function useViewState() {
         decisionId: null,
         solutionVersionId: null,
       }),
-    [setState],
+    [setState]
   );
 
   const effectiveModuleId = useMemo(
     () => state.moduleId || null,
-    [state.moduleId],
+    [state.moduleId]
   );
   const effectiveArtifactId = useMemo(
     () => state.artifactId || null,
-    [state.artifactId],
+    [state.artifactId]
   );
   const effectiveDecisionId = useMemo(
     () => state.decisionId || null,
-    [state.decisionId],
+    [state.decisionId]
   );
   const effectiveSolutionVersionId = useMemo(
     () => state.solutionVersionId || null,
-    [state.solutionVersionId],
+    [state.solutionVersionId]
   );
 
   return {
