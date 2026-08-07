@@ -889,10 +889,32 @@ class PostgresRuntime:
         )
         if not candidate_ids:
             return
+        observed_jobs = list(
+            await self._session.scalars(
+                select(JobRow).where(JobRow.id.in_(candidate_ids)).order_by(JobRow.id)
+            )
+        )
+        cancelled_ids = [item.id for item in observed_jobs if item.status not in terminal_jobs]
+        if not cancelled_ids:
+            return
+
+        try:
+            ledger = BudgetLedger(self._session)
+            account_id = await ledger.get_account_id(parent.id)
+            for child_id in cancelled_ids:
+                await ledger.reconcile_reclaimed_owner(
+                    account_id=account_id,
+                    owner_kind=BudgetOwnerKind.CHILD,
+                    owner_ref=child_id,
+                    normalized_error=normalized_error,
+                )
+        except BudgetConflictError as exc:
+            raise RuntimeConflictError("join cleanup could not reconcile child budget") from exc
+
         jobs = list(
             await self._session.scalars(
                 select(JobRow)
-                .where(JobRow.id.in_(candidate_ids))
+                .where(JobRow.id.in_(cancelled_ids))
                 .order_by(JobRow.id)
                 .with_for_update()
             )
@@ -900,7 +922,6 @@ class PostgresRuntime:
         cancelled_ids = [item.id for item in jobs if item.status not in terminal_jobs]
         if not cancelled_ids:
             return
-
         now = datetime.now(UTC)
         for job in jobs:
             if job.id not in cancelled_ids:
@@ -942,18 +963,6 @@ class PostgresRuntime:
             )
             .values(status="cancelled")
         )
-        try:
-            ledger = BudgetLedger(self._session)
-            account_id = await ledger.get_account_id(parent.id)
-            for child_id in cancelled_ids:
-                await ledger.reconcile_reclaimed_owner(
-                    account_id=account_id,
-                    owner_kind=BudgetOwnerKind.CHILD,
-                    owner_ref=child_id,
-                    normalized_error=normalized_error,
-                )
-        except BudgetConflictError as exc:
-            raise RuntimeConflictError("join cleanup could not reconcile child budget") from exc
         await self._events.append_event(
             parent.project_id,
             "delegation.siblings_cancelled",
@@ -1254,11 +1263,26 @@ class PostgresRuntime:
         if {item.id for item in delegations} != set(policy.expected_delegation_ids):
             raise RuntimeConflictError("durable join group differs from frozen policy")
 
-        selected, ready, _, _ = _evaluate_open_join(
+        selected, ready, impossible, deadline_reached = _evaluate_open_join(
             policy=policy,
             delegations=delegations,
             now=datetime.now(UTC),
         )
+        if impossible:
+            await self._cancel_join_siblings(
+                parent=parent,
+                delegations=delegations,
+                keep_child_ids=set(),
+                normalized_error="join_closed_sibling_cancelled",
+            )
+            group.status = JoinStatus.EXPIRED.value if deadline_reached else JoinStatus.FAILED.value
+            await self._events.append_event(
+                parent.project_id,
+                "delegation.join_failed",
+                {"join_group_id": str(group.id), "reason": group.status},
+            )
+            await self._session.commit()
+            return None
         if not ready:
             await self._session.commit()
             return None
@@ -1357,24 +1381,15 @@ class PostgresRuntime:
             )
         )
         locked_job_ids = sorted({job_id, *child_ids}, key=str)
-        jobs = list(
-            await self._session.scalars(
-                select(JobRow)
-                .where(JobRow.id.in_(locked_job_ids))
-                .order_by(JobRow.id)
-                .with_for_update()
-            )
-        )
-        jobs_by_id = {item.id: item for item in jobs}
-        requested = jobs_by_id.get(job_id)
-        if requested is None:
+        requested_identity = await self._session.get(JobRow, job_id)
+        if requested_identity is None:
             raise RuntimeNotFoundError("job not found")
         terminal = {
             JobStatus.SUCCEEDED.value,
             JobStatus.FAILED.value,
             JobStatus.CANCELLED.value,
         }
-        if requested.status in terminal:
+        if requested_identity.status in terminal:
             await self._session.commit()
             return False
 
@@ -1391,11 +1406,27 @@ class PostgresRuntime:
         )
         if direct_delegations:
             await self._cancel_join_siblings(
-                parent=requested,
+                parent=requested_identity,
                 delegations=direct_delegations,
                 keep_child_ids=set(),
                 normalized_error="parent_cancelled_sibling_cancelled",
             )
+
+        jobs = list(
+            await self._session.scalars(
+                select(JobRow)
+                .where(JobRow.id.in_(locked_job_ids))
+                .order_by(JobRow.id)
+                .with_for_update()
+            )
+        )
+        jobs_by_id = {item.id: item for item in jobs}
+        requested = jobs_by_id.get(job_id)
+        if requested is None:
+            raise RuntimeNotFoundError("job not found")
+        if requested.status in terminal:
+            await self._session.commit()
+            return False
 
         now = datetime.now(UTC)
         for job in jobs:

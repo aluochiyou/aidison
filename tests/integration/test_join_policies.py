@@ -141,6 +141,27 @@ async def _succeed(
     return registered.result_hash
 
 
+async def _fail(
+    runtime: PostgresRuntime,
+    *,
+    spec: DelegationSpec,
+    claim: JobClaim,
+) -> None:
+    registered = await runtime.register_result(
+        result=DelegationResult(
+            delegation_id=spec.delegation_id,
+            child_job_id=claim.job_id,
+            attempt_id=claim.attempt_id,
+            child_claim_generation=claim.claim_generation,
+            status=DelegationStatus.FAILED,
+            basis_hash=spec.basis_hash,
+            normalized_error="provider_unavailable",
+        ),
+        lease_token=claim.lease_token,
+    )
+    assert registered.disposition is ResultDisposition.ELIGIBLE
+
+
 @pytest.mark.asyncio
 async def test_first_valid_commit_cancels_siblings_reconciles_budget_and_replays() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
@@ -330,6 +351,40 @@ async def test_first_valid_winner_is_deterministic_for_concurrent_successes() ->
 
 
 @pytest.mark.asyncio
+async def test_first_valid_all_terminal_without_success_fails_and_leaves_no_work() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            runtime, root_claim, specs, wave = await _create_wave(
+                session,
+                mode=JoinMode.FIRST_VALID,
+                min_successes=1,
+                deadline=datetime.now(UTC) + timedelta(minutes=5),
+            )
+            claims = await _claim_children(runtime, wave)
+            for child_id, spec in zip(wave.child_job_ids, specs, strict=True):
+                await _fail(runtime, spec=spec, claim=claims[child_id])
+
+            snapshot = await runtime.inspect_join(
+                join_group_id=wave.join_group_id,
+                parent_claim=root_claim,
+            )
+            assert snapshot.status is JoinStatus.FAILED
+            assert snapshot.ready is False
+            assert snapshot.impossible is True
+            assert (
+                await runtime.claim_next_job(worker_id="no-work-after-first-valid-failure")
+                is None
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_bounded_partial_waits_for_boundary_and_accepts_all_successes() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
@@ -442,7 +497,17 @@ async def test_bounded_partial_deadline_commits_threshold_and_cancels_running_si
 
 
 @pytest.mark.asyncio
-async def test_expired_join_cancels_all_children_and_leaves_no_runnable_work() -> None:
+@pytest.mark.parametrize(
+    ("mode", "min_successes"),
+    (
+        (JoinMode.BOUNDED_PARTIAL, 2),
+        (JoinMode.FIRST_VALID, 1),
+    ),
+)
+async def test_expired_join_cancels_all_children_and_leaves_no_runnable_work(
+    mode: JoinMode,
+    min_successes: int,
+) -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
         pytest.skip("TEST_DATABASE_URL is not configured")
@@ -452,8 +517,8 @@ async def test_expired_join_cancels_all_children_and_leaves_no_runnable_work() -
         async with factory() as session:
             runtime, root_claim, _, wave = await _create_wave(
                 session,
-                mode=JoinMode.BOUNDED_PARTIAL,
-                min_successes=2,
+                mode=mode,
+                min_successes=min_successes,
                 deadline=datetime.now(UTC) - timedelta(seconds=1),
             )
             await _claim_children(runtime, wave)
@@ -477,5 +542,39 @@ async def test_expired_join_cancels_all_children_and_leaves_no_runnable_work() -
             )
             assert {item.status for item in allocations} == {"closed"}
             assert await runtime.claim_next_job(worker_id="should-find-no-expired-child") is None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_commit_join_closes_impossible_group_without_prior_inspection() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            runtime, root_claim, _, wave = await _create_wave(
+                session,
+                mode=JoinMode.BOUNDED_PARTIAL,
+                min_successes=2,
+                deadline=datetime.now(UTC) - timedelta(seconds=1),
+            )
+            await _claim_children(runtime, wave)
+            assert (
+                await runtime.commit_join(
+                    join_group_id=wave.join_group_id,
+                    merged_proposal_ref="proposal://impossible",
+                )
+                is None
+            )
+            snapshot = await runtime.inspect_join(
+                join_group_id=wave.join_group_id,
+                parent_claim=root_claim,
+            )
+            assert snapshot.status is JoinStatus.EXPIRED
+            assert snapshot.impossible is True
+            assert await runtime.claim_next_job(worker_id="no-work-after-direct-commit") is None
     finally:
         await engine.dispose()

@@ -10,6 +10,7 @@ from sqlalchemy import func, select, text, update
 
 from aidison.agents.profiles import RESEARCH_WORKER_PROFILE
 from aidison.application.service import ProjectApplication
+from aidison.infrastructure.budget import BudgetLedger
 from aidison.infrastructure.database import (
     DatabaseSettings,
     create_engine,
@@ -19,6 +20,7 @@ from aidison.infrastructure.orm import (
     AttemptResultRow,
     AttemptRow,
     BudgetAllocationRow,
+    BudgetOperationRow,
     DelegationRow,
     JobRow,
     JoinGroupRow,
@@ -28,6 +30,8 @@ from aidison.infrastructure.orm import (
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.contracts import (
+    BudgetOperationKind,
+    BudgetOperationState,
     DelegationResult,
     DelegationSpec,
     DelegationStatus,
@@ -475,6 +479,26 @@ async def test_parent_cancel_propagates_and_late_child_result_is_quarantined() -
             assert child_claim is not None
             assert child_claim.job_id == wave.child_job_ids[0]
 
+            allocation_id = await session.scalar(
+                select(BudgetAllocationRow.id).where(
+                    BudgetAllocationRow.owner_ref == child_claim.job_id
+                )
+            )
+            assert allocation_id is not None
+            reserved = await BudgetLedger(session).reserve_operation(
+                allocation_id=allocation_id,
+                claim=child_claim,
+                kind=BudgetOperationKind.MODEL,
+                logical_step="cancel.parent.reserved",
+                physical_attempt_no=1,
+                idempotency_key=f"cancel-operation-{uuid4()}",
+                request_hash="c" * 64,
+                provider="fake",
+                model_or_tool="fake-model",
+                reserved_tokens=250,
+            )
+            await session.commit()
+
             assert await runtime.cancel_job(root_job_id) is True
             assert await runtime.cancel_job(root_job_id) is False
             late = await runtime.register_result(
@@ -502,9 +526,14 @@ async def test_parent_cancel_propagates_and_late_child_result_is_quarantined() -
             root = await session.get(JobRow, root_job_id)
             child = await session.get(JobRow, child_claim.job_id)
             group = await session.get(JoinGroupRow, wave.join_group_id)
+            allocation = await session.get(BudgetAllocationRow, allocation_id)
+            operation = await session.get(BudgetOperationRow, reserved.operation_id)
             assert root is not None and root.status == "cancelled"
             assert child is not None and child.status == "cancelled"
             assert group is not None and group.status == "cancelled"
+            assert allocation is not None and allocation.status == "closed"
+            assert operation is not None
+            assert operation.state == BudgetOperationState.RELEASED.value
     finally:
         await engine.dispose()
 
