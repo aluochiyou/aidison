@@ -729,6 +729,16 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert approval_resolve.status_code == 200, approval_resolve.text
             assert approval_resolve.json()["status"] == "approved"
             assert approval_resolve.headers["etag"] == '"13"'
+            replayed_approval_request = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/effect-approvals",
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval-request",
+                    "If-Match": '"11"',
+                },
+            )
+            assert replayed_approval_request.status_code == 201
+            assert replayed_approval_request.json()["status"] == "approved"
+            assert replayed_approval_request.headers["etag"] == '"13"'
 
             # Step 6: Checkout handoff — successful dispatch and approval consumption
             checkout = await client.post(
@@ -755,7 +765,22 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
             assert replay_checkout.status_code == 201
             assert replay_checkout.json()["id"] == handoff["id"]
+            assert replay_checkout.headers["etag"] == '"14"'
             assert fake_provider.cart_create_called == 1
+            replayed_approval_resolve = await client.post(
+                f"/api/effect-approvals/{approval['id']}/resolve",
+                json={
+                    "decision": "approved",
+                    "scope_hash": approval["scope_hash"],
+                },
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:approval-resolve",
+                    "If-Match": '"12"',
+                },
+            )
+            assert replayed_approval_resolve.status_code == 200
+            assert replayed_approval_resolve.json()["status"] == "consumed"
+            assert replayed_approval_resolve.headers["etag"] == '"14"'
             consumed_with_new_key = await client.post(
                 f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
                 json={"effect_approval_id": approval["id"]},
@@ -806,6 +831,16 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
             assert prop2.status_code == 201
             prop2_id = prop2.json()["id"]
+            checkout_after_project_advanced = await client.post(
+                f"/api/purchase-proposals/{prop['id']}/checkout-handoffs",
+                json={"effect_approval_id": approval["id"]},
+                headers={
+                    "Idempotency-Key": f"{key_prefix}:checkout",
+                    "If-Match": '"13"',
+                },
+            )
+            assert checkout_after_project_advanced.status_code == 201
+            assert checkout_after_project_advanced.headers["etag"] == '"15"'
 
             confirm2 = await client.post(
                 f"/api/purchase-proposals/{prop2_id}/confirm-lines",

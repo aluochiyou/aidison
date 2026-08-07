@@ -2,7 +2,7 @@
 
 - Updated: 2026-08-08
 - Lifecycle: active development
-- Current phase: C5 durable JoinPolicy 与 scoped EffectApproval 已实现，正在完成最终 review、PostgreSQL 17/18 与前端验收。
+- Current phase: C5 durable JoinPolicy 与 scoped EffectApproval 已完成双轴 review 和验收，等待 fast-forward 合并。
 
 > 说明：下方大部分条目是 2026-08-03 V0 handoff 的历史验收快照。当前增量以 Git、ADR-0003/0004 和 `docs/engineering/development-decisions.md` 为准，版本收口时再整体重写本页。
 
@@ -15,8 +15,9 @@
 - PostgreSQL 17 与 18.4 隔离库从零 Alembic migration：passed；C4 完整 integration：两版均 passed（各 42 项）；unit：139 passed；Ruff、mypy、diff check、Alembic single head：passed。
 - Join runtime 新增 `BOUNDED_PARTIAL` 与 `FIRST_VALID`；确定性 winner、boundary/deadline、sibling cancellation、late-result quarantine、PlanTask projection 和预算 reconciliation 已进入 C5 测试矩阵。
 - Shopping 新增独立 EffectApproval 状态机、不可变服务端 scope、PostgreSQL partial unique/CAS/trigger、request/resolve API，以及 consume gate 后才调用 provider 的 checkout crash boundary。
-- Web ShoppingView 已接入 request → approve/deny → checkout 三步；本次文件格式检查、ESLint（0 error，4 个既有 Fast Refresh warning）和 Next.js production build：passed。全库仍有 20 个历史文件未满足 Prettier 2 基线，单列为既有格式债务。
-- C5 后端阶段性结果：unit 145 passed；新增 Join truth-table 后待更新最终数量；PostgreSQL 17/18 integration 各 48 passed；Ruff、mypy、Alembic single head 和两版从零 migration passed。最终 merge 前将基于完整改动再次执行，不把阶段性结果冒充最终 gate。
+- Web ShoppingView 已接入 request → approve/deny → checkout 三步，以及 PREPARED/AMBIGUOUS 的“刷新 durable snapshot 后重新授权”恢复入口；Prettier 全库基线、ESLint（0 error，4 个既有 Fast Refresh warning）和 Next.js production build：passed。
+- C5 final gate：unit 155 passed；PostgreSQL 17/18 integration 各 50 passed；两版全新隔离库从零 migration 到 `b7d3e5f91a20` 并通过 `alembic check`；Ruff、mypy、diff check、Alembic single head：passed。EffectApproval trigger 与 partial unique index 有直接 SQL 拒绝测试。
+- OpenCode Standards review：APPROVE，无 blocker/high；两个 medium 中，durable ETag 与 Web 未决 handoff 恢复入口已修正。受限 Spec review 覆盖 Join/approval 核心面且无 high/medium；其首次 worker 因违反 read-only 边界被终止，测试容器 role password 已恢复为空。
 
 ## Verified
 

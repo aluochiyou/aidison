@@ -29,6 +29,8 @@ approved  -> expired
 
 checkout 的事务顺序固定为：校验当前 scope → `approved` CAS 为 `consumed` → 写 `PREPARED` CheckoutHandoff、domain event 和 command receipt，并把 project revision 增加 1 → commit → 调用 provider。这样 provider 前 crash 可以确定恢复，receipt replay 的 ETag 与数据库 revision 也一致；provider 后结果未知时 approval 仍 consumed，不能用不同 idempotency key 重放外部 effect。同一 checkout key 重放返回原 handoff，不再调用 provider。
 
+API 在命令或幂等 replay 完成后从 PostgreSQL 读取当前 project revision 生成 ETag，不能用请求 revision 推算。PREPARED/AMBIGUOUS 不提供自动 provider retry；控制台刷新 durable snapshot 后允许申请一份新 approval，旧 handoff 永久保留为审计记录。
+
 TTL 是非 secret 产品配置，保存在 `config.yaml` 的 `shopping.effect_approval_ttl_seconds`，数据库保存绝对 `expires_at`。当前 resolve endpoint 明确是本地单用户 control plane；本版本不伪造用户身份、RBAC 或多租户授权。
 
 ## Alternatives
@@ -43,7 +45,7 @@ TTL 是非 secret 产品配置，保存在 `config.yaml` 的 `shopping.effect_ap
 - domain tests 覆盖状态时间戳、deny reason 与 consumed lifecycle；
 - application/API tests 覆盖 request、approve、deny、expiry、wrong scope、cross-project、consumed/new-key、同 key replay、provider error 与 provider-boundary crash；
 - migration 在 PostgreSQL 17/18 从零升级，且保持单一 Alembic head；
-- Web 控制台必须显式呈现 request → approve/deny → checkout 三步，不得隐藏授权动作。
+- Web 控制台必须显式呈现 request → approve/deny → checkout 三步；未决 handoff 必须说明不自动 retry，并提供刷新后重新授权的恢复动作。
 
 ## Consequences
 

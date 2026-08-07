@@ -240,6 +240,16 @@ def create_app(
             effect_approval_ttl_seconds=api.state.effect_approval_ttl_seconds,
         )
 
+    async def _set_current_project_etag(
+        response: Response,
+        store: PostgresDomainStore,
+        project_id: UUID,
+    ) -> None:
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found after shopping command")
+        response.headers["ETag"] = f'"{project.revision}"'
+
     # ── Project routes ──────────────────────────────────────────────
 
     @api.post("/api/projects", status_code=status.HTTP_201_CREATED)
@@ -895,7 +905,7 @@ def create_app(
             expected_project_revision=revision,
             idempotency_key=idempotency_key,
         )
-        response.headers["ETag"] = f'"{revision + 1}"'
+        await _set_current_project_etag(response, store, approval.project_id)
         return approval
 
     @api.post("/api/effect-approvals/{approval_id}/resolve")
@@ -908,6 +918,7 @@ def create_app(
         session: DbSession,
     ) -> Any:
         revision = _parse_revision(if_match)
+        store = PostgresDomainStore(session)
         approval = await _shopping_app(session).resolve_effect_approval(
             approval_id=approval_id,
             decision=EffectApprovalStatus(body.decision),
@@ -916,7 +927,7 @@ def create_app(
             expected_project_revision=revision,
             idempotency_key=idempotency_key,
         )
-        response.headers["ETag"] = f'"{revision + 1}"'
+        await _set_current_project_etag(response, store, approval.project_id)
         return approval
 
     @api.post(
@@ -944,7 +955,7 @@ def create_app(
             expected_project_revision=revision,
             idempotency_key=idempotency_key,
         )
-        response.headers["ETag"] = f'"{revision + 1}"'
+        await _set_current_project_etag(response, store, handoff.project_id)
         return handoff
 
     @api.get("/api/artifacts/{artifact_id}/content")

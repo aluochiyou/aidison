@@ -304,6 +304,36 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     }
   };
 
+  const recoverUnresolvedHandoff = async () => {
+    if (!proposal) return;
+    try {
+      const fresh = await getClient().getSnapshot(snapshot.project.id);
+      const freshProposal = fresh.purchase_proposals?.find(
+        (item) => item.id === proposal.id
+      );
+      if (!freshProposal || freshProposal.status !== "ready") {
+        throw new Error("PurchaseProposal 已变化，无法重新申请授权");
+      }
+      const latestApproval = fresh.effect_approvals?.find(
+        (item) => item.target_ref === proposal.id
+      );
+      setCurrentRevision(fresh.project.revision);
+      setProposal(freshProposal);
+      setApproval(latestApproval ?? null);
+      setHandoff(null);
+      setPhase("proposal-ready");
+      toast.info("旧 Handoff 保留为审计记录；请重新申请并批准一次授权");
+    } catch (e) {
+      const msg =
+        e && typeof e === "object" && "error" in e
+          ? (e as { error: { message: string } }).error.message
+          : e instanceof Error
+          ? e.message
+          : "刷新恢复状态失败";
+      toast.error(msg);
+    }
+  };
+
   // Reset shopping state and goto canonical snapshot data for phase
   const resetShopping = () => {
     // Restore phase from snapshot presence
@@ -842,19 +872,17 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                   </p>
                   <p>
                     {handoff.status === "ambiguous"
-                      ? "Provider 返回 ambiguous 状态，未提供可用的 checkout URL。请联系管理员或稍后重试。"
-                      : "Checkout URL 尚未就绪。当前状态为 " +
-                        handoff.status +
-                        "。"}
+                      ? "Provider 结果不确定，系统不会自动重试外部副作用。旧记录会保留；如需继续，请刷新后重新授权。"
+                      : "Provider 边界可能在返回前中断，系统不会用旧授权重复调用。旧记录会保留；如需继续，请刷新后重新授权。"}
                   </p>
                   <code>ID: {handoff.id}</code>
                 </div>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={resetShopping}
+                  onClick={() => void recoverUnresolvedHandoff()}
                 >
-                  返回 BOM
+                  刷新并重新授权
                 </Button>
               </>
             )}

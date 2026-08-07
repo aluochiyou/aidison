@@ -44,6 +44,9 @@
 - approval consume、`PREPARED` handoff、event 与 command receipt 先提交，再跨 provider 边界。代价是 provider 异常后需要人工判断或创建新 approval，但不会静默重复外部 effect。
 - checkout replay 先查稳定 idempotency receipt；相同 key 返回原 handoff，不受 proposal 已进入后续状态影响。不同 key 必须重新走 scope 和 consumed gate。
 - project revision 必须在 provider 前的 consume/PREPARED 事务中增加；最初实现把增量放在 provider 返回后，导致进程异常时 replay ETag 比数据库 revision 大 1。新增 crash test 先复现，再把 final-outcome 写改为对已增加 revision 做 no-op CAS。
+- API response ETag 不能由请求 `If-Match + 1` 推算：同一 idempotency key 在项目继续演进后 replay 时会返回过期 ETag。最终 route 在命令完成后读取 PostgreSQL 当前 project revision；测试覆盖 request/resolve/checkout 在后续 revision 上的 replay。
+- PREPARED/AMBIGUOUS handoff 不提供自动 provider retry，因为外部 effect 结果可能已发生。Web 恢复动作先重新读取 durable snapshot，再清除本地 handoff 选择并要求新 approval；旧 handoff 继续作为审计记录保留。
+- 最终 OpenCode Standards review 无 blocker/high。首次 Spec worker 越过 read-only 边界修改隔离测试 role password，因此任务判定 failed、终端关闭并恢复 password=NULL；重试被限制为 Git/文件读取，核心 Join/approval 面未发现 high/medium。审查 Agent 的工具行为也必须被主控审计，不能因为它是“reviewer”而默认可信。
 - TTL 放 `config.yaml`，Key 留在 env：前者需要版本化审查，后者不得进入 Git。测试可注入 1 秒 TTL，生产配置 schema 仍限制为 60–86400 秒。
 - Web 不是只改 API client：控制台显式展示申请、批准/拒绝、scope hash、过期时间和消费动作，避免后端安全门禁在真实 UI 中不可用。
 
