@@ -6,6 +6,8 @@ import type { ProjectEvent } from "@/app/types/types";
 
 const RECONNECT_DELAY = 1_500;
 const CURSOR_POLL_DELAY = 1_500;
+const EVENT_HISTORY_PAGE_SIZE = 500;
+const MAX_VISIBLE_EVENT_HISTORY = 500;
 
 function sequenceFromId(id: string): number {
   const value = Number(id.split(":").at(-1));
@@ -15,7 +17,9 @@ function sequenceFromId(id: string): number {
 function mergeEvents(current: ProjectEvent[], incoming: ProjectEvent[]): ProjectEvent[] {
   const byId = new Map(current.map((event) => [event.id, event]));
   for (const event of incoming) byId.set(event.id, event);
-  return [...byId.values()].toSorted((left, right) => left.sequence - right.sequence);
+  return [...byId.values()]
+    .toSorted((left, right) => left.sequence - right.sequence)
+    .slice(-MAX_VISIBLE_EVENT_HISTORY);
 }
 
 export function useEventStream(
@@ -58,15 +62,18 @@ export function useEventStream(
       }
       if (!id || data.length === 0) return;
       const decoded = JSON.parse(data.join("\n")) as {
+        id?: string;
+        sequence?: number;
         type?: string;
         payload?: Record<string, unknown>;
+        created_at?: string;
       };
       accept({
-        id,
-        sequence: sequenceFromId(id),
+        id: decoded.id || id,
+        sequence: decoded.sequence ?? sequenceFromId(id),
         type: decoded.type || eventType,
         payload: decoded.payload || {},
-        created_at: new Date().toISOString(),
+        created_at: decoded.created_at || "",
       });
     };
 
@@ -74,12 +81,24 @@ export function useEventStream(
       // Rebuild the visible timeline from durable history on every page load.
       // The cursor is then advanced before opening the live stream, so refreshes
       // never lose audit context and reconnects do not duplicate events.
-      const initial = await getClient().getEvents(projectId, 0);
+      let historyCursor = 0;
+      let history: ProjectEvent[] = [];
+      while (!controller.signal.aborted) {
+        const page = await getClient().getEvents(
+          projectId,
+          historyCursor,
+          EVENT_HISTORY_PAGE_SIZE,
+        );
+        if (!page.length) break;
+        history = mergeEvents(history, page);
+        historyCursor = page.at(-1)?.sequence ?? historyCursor;
+        if (page.length < EVENT_HISTORY_PAGE_SIZE) break;
+      }
       if (controller.signal.aborted) return;
-      if (initial.length) {
-        cursor = initial.at(-1)?.id || cursor;
+      if (history.length) {
+        cursor = history.at(-1)?.id || cursor;
         localStorage.setItem(storageKey, cursor);
-        setEvents((current) => mergeEvents(current, initial));
+        setEvents((current) => mergeEvents(current, history));
       }
 
       while (!controller.signal.aborted) {

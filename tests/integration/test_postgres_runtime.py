@@ -41,6 +41,116 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
+async def test_eight_child_join_is_deterministic_when_results_arrive_out_of_order() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Eight-way runtime fixture",
+                goal="Prove bounded N-way fan-out and deterministic fan-in",
+                idempotency_key=f"nway-project-{uuid4()}",
+            )
+            basis_hash = sha256(b"nway-runtime-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+                token_budget_cap=8_000,
+                tool_call_budget_cap=0,
+            )
+            root_claim = await runtime.claim_next_job(
+                worker_id="nway-controller",
+                lease_seconds=60,
+            )
+            assert root_claim is not None
+
+            deadline = datetime.now(UTC) + timedelta(minutes=5)
+            specs = tuple(
+                DelegationSpec(
+                    parent_job_id=root_job_id,
+                    parent_attempt_id=root_claim.attempt_id,
+                    parent_claim_generation=root_claim.claim_generation,
+                    graph_step_id="research.nway",
+                    profile_id=RESEARCH_WORKER_PROFILE.profile_id,
+                    profile_revision=RESEARCH_WORKER_PROFILE.revision,
+                    basis_hash=basis_hash,
+                    shard_key=f"shard-{index + 1}",
+                    idempotency_key=f"{root_claim.attempt_id}:research.nway:{index + 1}",
+                    token_budget=1_000,
+                    tool_call_budget=0,
+                    deadline=deadline,
+                )
+                for index in range(8)
+            )
+            wave = await runtime.create_delegation_wave(
+                specs=specs,
+                policy=JoinPolicy(
+                    mode=JoinMode.ALL_REQUIRED,
+                    expected_delegation_ids=tuple(item.delegation_id for item in specs),
+                    min_successes=8,
+                    deadline=deadline,
+                ),
+            )
+            assert len(wave.child_job_ids) == 8
+
+            claims = []
+            for index in range(8):
+                claim = await runtime.claim_next_job(
+                    worker_id=f"nway-worker-{index + 1}",
+                    lease_seconds=60,
+                )
+                assert claim is not None
+                claims.append(claim)
+            spec_by_child = dict(zip(wave.child_job_ids, specs, strict=True))
+            registered_hashes = []
+            for claim in reversed(claims):
+                spec = spec_by_child[claim.job_id]
+                registered = await runtime.register_result(
+                    result=DelegationResult(
+                        delegation_id=spec.delegation_id,
+                        child_job_id=claim.job_id,
+                        attempt_id=claim.attempt_id,
+                        child_claim_generation=claim.claim_generation,
+                        status=DelegationStatus.SUCCEEDED,
+                        basis_hash=basis_hash,
+                        proposal_ref=f"proposal://{spec.shard_key}",
+                    ),
+                    lease_token=claim.lease_token,
+                )
+                assert registered.disposition is ResultDisposition.ELIGIBLE
+                registered_hashes.append(registered.result_hash)
+
+            snapshot = await runtime.inspect_join(
+                join_group_id=wave.join_group_id,
+                parent_claim=root_claim,
+            )
+            assert snapshot.ready is True
+            assert snapshot.impossible is False
+            assert set(snapshot.accepted_proposal_refs) == {
+                f"proposal://shard-{index + 1}" for index in range(8)
+            }
+            receipt = await runtime.commit_join(
+                join_group_id=wave.join_group_id,
+                merged_proposal_ref="proposal://nway-merged",
+            )
+            assert receipt is not None
+            assert set(receipt.accepted_result_hashes) == set(registered_hashes)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_generation_fencing_quarantines_late_result_and_join_is_unique() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:

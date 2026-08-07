@@ -7,6 +7,8 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+MAX_DELEGATION_WAVE_SIZE = 8
+
 
 class RuntimeContract(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -178,8 +180,11 @@ class DelegationResult(RuntimeContract):
 
 class JoinPolicy(RuntimeContract):
     mode: JoinMode
-    expected_delegation_ids: tuple[UUID, ...] = Field(min_length=1, max_length=2)
-    min_successes: int = Field(ge=1, le=2)
+    expected_delegation_ids: tuple[UUID, ...] = Field(
+        min_length=1,
+        max_length=MAX_DELEGATION_WAVE_SIZE,
+    )
+    min_successes: int = Field(ge=1, le=MAX_DELEGATION_WAVE_SIZE)
     deadline: datetime
 
     @model_validator(mode="after")
@@ -231,8 +236,14 @@ class JoinSnapshot(RuntimeContract):
 
 class DelegationWave(RuntimeContract):
     join_group_id: UUID
-    delegation_ids: tuple[UUID, ...] = Field(min_length=1, max_length=2)
-    child_job_ids: tuple[UUID, ...] = Field(min_length=1, max_length=2)
+    delegation_ids: tuple[UUID, ...] = Field(
+        min_length=1,
+        max_length=MAX_DELEGATION_WAVE_SIZE,
+    )
+    child_job_ids: tuple[UUID, ...] = Field(
+        min_length=1,
+        max_length=MAX_DELEGATION_WAVE_SIZE,
+    )
 
     @model_validator(mode="after")
     def sizes_match(self) -> DelegationWave:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, cast
 from uuid import UUID
@@ -11,10 +12,11 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, 
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aidison.agents.profiles import RESEARCH_WORKER_PROFILE
 from aidison.api.schemas import (
     ApprovePatchRequest,
     ApproveRequirementsRequest,
@@ -40,6 +42,7 @@ from aidison.application.shopping import (
     OfferSearchError,
     ShoppingApplication,
 )
+from aidison.application.workspace import build_workspace_projection
 from aidison.domain.models import DecisionRequest as DomainDecisionRequest
 from aidison.domain.models import ImpactAnalysis
 from aidison.infrastructure.database import create_session_factory
@@ -50,6 +53,7 @@ from aidison.infrastructure.orm import (
     BudgetOperationRow,
     DecisionRequestRow,
     DelegationRow,
+    DomainEventRow,
     ImpactAnalysisRow,
     JobRow,
     JoinGroupRow,
@@ -61,6 +65,7 @@ from aidison.infrastructure.runtime import (
 )
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.providers.shopping import ShoppingConfigError, ShoppingProvider
+from aidison.runtime.contracts import MAX_DELEGATION_WAVE_SIZE
 
 SessionDependency = Annotated[AsyncSession, Depends()]
 
@@ -101,6 +106,24 @@ def _parse_cursor(value: str | None, project_id: UUID) -> int:
     if sequence < 0:
         raise HTTPException(status_code=422, detail="event cursor cannot be negative")
     return sequence
+
+
+def _project_event_payload(
+    project_id: UUID,
+    row: DomainEventRow,
+    *,
+    encode_datetime: bool = False,
+) -> dict[str, Any]:
+    created_at: datetime | str = row.created_at
+    if encode_datetime:
+        created_at = row.created_at.isoformat()
+    return {
+        "id": f"{project_id}:{row.project_seq}",
+        "sequence": row.project_seq,
+        "type": row.event_type,
+        "payload": row.payload,
+        "created_at": created_at,
+    }
 
 
 async def _session_dependency(request: Request) -> AsyncIterator[AsyncSession]:
@@ -326,6 +349,11 @@ def create_app(
         if not modules:
             raise DomainConflictError("research requires at least one active module")
         basis_hash = canonical_hash(project.active_requirement_revision_id, modules)
+        child_count = min(
+            len(modules),
+            RESEARCH_WORKER_PROFILE.concurrency_cap,
+            MAX_DELEGATION_WAVE_SIZE,
+        )
         job_id = await PostgresRuntime(session).create_job(
             project_id=project_id,
             kind="research_wave",
@@ -334,6 +362,8 @@ def create_app(
             profile_id="research-orchestrator",
             profile_revision=1,
             idempotency_key=f"research-run:{idempotency_key}",
+            token_budget_cap=child_count * RESEARCH_WORKER_PROFILE.token_cap,
+            tool_call_budget_cap=child_count * RESEARCH_WORKER_PROFILE.tool_call_cap,
         )
         response.headers["ETag"] = f'"{revision}"'
         return {
@@ -462,6 +492,12 @@ def create_app(
 
     @api.get("/api/projects/{project_id}/snapshot")
     async def project_snapshot(project_id: UUID, session: DbSession) -> dict[str, Any]:
+        if session.bind and session.bind.dialect.name == "postgresql":
+            # Domain facts and event cursor must describe one durable read point.
+            # PostgreSQL READ COMMITTED otherwise gives each SELECT a fresh view.
+            await session.execute(
+                text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            )
         store = PostgresDomainStore(session)
         project = await store.get_project(project_id)
         if project is None:
@@ -548,7 +584,7 @@ def create_app(
             if allocation_ids
             else []
         )
-        return {
+        snapshot: dict[str, Any] = {
             "project": project,
             "requirements": await store.list_requirement_revisions(project_id),
             "modules": await store.list_modules(
@@ -668,6 +704,23 @@ def create_app(
                 ],
             },
         }
+        event_cursor = await session.scalar(
+            select(func.max(DomainEventRow.project_seq)).where(
+                DomainEventRow.project_id == project_id
+            )
+        )
+        snapshot["workspace"] = build_workspace_projection(
+            snapshot,
+            event_cursor=event_cursor or 0,
+        )
+        return snapshot
+
+    @api.get("/api/projects/{project_id}/workspace")
+    async def project_workspace(project_id: UUID, session: DbSession) -> Any:
+        """Return the stable user-facing projection without exposing runtime internals."""
+
+        snapshot = await project_snapshot(project_id, session)
+        return snapshot["workspace"]
 
     @api.get("/api/projects/{project_id}/events")
     async def list_events(
@@ -682,16 +735,7 @@ def create_app(
         if await store.get_project(project_id) is None:
             raise DomainNotFoundError("project not found")
         rows = await store.list_events(project_id, after_sequence=after, limit=limit)
-        return [
-            {
-                "id": f"{project_id}:{row.project_seq}",
-                "sequence": row.project_seq,
-                "type": row.event_type,
-                "payload": row.payload,
-                "created_at": row.created_at,
-            }
-            for row in rows
-        ]
+        return [_project_event_payload(project_id, row) for row in rows]
 
     @api.get("/api/projects/{project_id}/events/stream")
     async def stream_events(
@@ -719,7 +763,7 @@ def create_app(
                     for row in rows:
                         cursor = row.project_seq
                         data = json.dumps(
-                            {"type": row.event_type, "payload": row.payload},
+                            _project_event_payload(project_id, row, encode_datetime=True),
                             separators=(",", ":"),
                         )
                         yield (

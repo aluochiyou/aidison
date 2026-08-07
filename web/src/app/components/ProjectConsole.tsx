@@ -32,8 +32,10 @@ import type {
   Module,
   Project,
   ProjectSnapshot,
+  ProjectWorkspaceProjectionV1,
   SolutionProposal,
   SolutionVersion,
+  WorkspaceAction,
 } from "@/app/types/types";
 
 const STAGES = [
@@ -137,39 +139,150 @@ function eventLabel(type: string): string {
   return type.replaceAll(".", " / ").replaceAll("_", " ");
 }
 
+const STATUS_LABELS: Record<string, string> = {
+  approved: "已批准",
+  blocked: "暂时受阻",
+  cancelled: "已取消",
+  complete: "已完成",
+  failed: "未完成",
+  needs_input: "需要补充",
+  pending: "等待处理",
+  queued: "等待开始",
+  ready_to_review: "等待确认",
+  recoverable_failure: "需要检查",
+  running: "处理中",
+  succeeded: "已完成",
+  up_to_date: "已同步",
+  working: "处理中",
+};
+
+function displayError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === "object" && "error" in error) {
+    const message = (error as { error?: { message?: unknown } }).error?.message;
+    if (typeof message === "string" && message) return message;
+  }
+  return fallback;
+}
+
+function eventTime(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "时间未知" : date.toLocaleString("zh-CN");
+}
+
 function statusTone(status: string): string {
-  if (["succeeded", "approved", "supported", "compatible", "joined"].includes(status)) {
+  if (
+    ["succeeded", "approved", "supported", "compatible", "joined", "up_to_date", "complete"].includes(
+      status,
+    )
+  ) {
     return "tone-good";
   }
-  if (["failed", "cancelled", "incompatible", "contradicted", "corrupt"].includes(status)) {
+  if (
+    [
+      "failed",
+      "cancelled",
+      "incompatible",
+      "contradicted",
+      "corrupt",
+      "recoverable_failure",
+      "blocked",
+    ].includes(status)
+  ) {
     return "tone-bad";
   }
-  if (["running", "queued", "pending", "needs_test", "conditional"].includes(status)) {
+  if (
+    [
+      "running",
+      "queued",
+      "pending",
+      "needs_test",
+      "conditional",
+      "working",
+      "needs_input",
+      "ready_to_review",
+    ].includes(status)
+  ) {
     return "tone-live";
   }
   return "tone-muted";
 }
 
 function StatusTag({ status }: { status: string }) {
-  return <span className={`status-tag ${statusTone(status)}`}>{status}</span>;
+  return <span className={`status-tag ${statusTone(status)}`}>{STATUS_LABELS[status] ?? status}</span>;
 }
 
 function StageRail({ project }: { project: Project }) {
   const activeIndex = STAGES.findIndex(([stage]) => stage === project.stage);
   return (
-    <div className="stage-rail" aria-label={`当前阶段：${project.stage}`}>
+    <div className="stage-rail" aria-label={`当前阶段：${project.stage}`} role="list">
       {STAGES.map(([stage, label], index) => (
         <div
           className={`stage-stop ${index < activeIndex ? "is-done" : ""} ${
             index === activeIndex ? "is-active" : ""
           }`}
           key={stage}
+          role="listitem"
         >
           <span>{index < activeIndex ? <Check className="h-3 w-3" /> : index + 1}</span>
           <small>{label}</small>
         </div>
       ))}
     </div>
+  );
+}
+
+const ATTENTION_LABELS: Record<ProjectWorkspaceProjectionV1["attention"]["state"], string> = {
+  up_to_date: "已同步",
+  working: "处理中",
+  needs_input: "需要补充",
+  ready_to_review: "等你确认",
+  recoverable_failure: "需要检查",
+  blocked: "暂时受阻",
+  complete: "已完成",
+};
+
+function ProjectPulse({ workspace }: { workspace?: ProjectWorkspaceProjectionV1 }) {
+  if (!workspace) {
+    return (
+      <section className="project-pulse is-unavailable" aria-label="项目状态">
+        <div>
+          <small>PROJECT PULSE</small>
+          <h2>正在整理项目状态</h2>
+        </div>
+        <p>当前服务尚未返回用户态工作投影；项目事实仍可在下方查看。</p>
+      </section>
+    );
+  }
+  const activeWork = workspace.work.filter((item) => ["queued", "running"].includes(item.state));
+  return (
+    <section className={`project-pulse attention-${workspace.attention.state}`} aria-label="项目状态">
+      <header>
+        <div>
+          <small>PROJECT PULSE / 项目脉冲</small>
+          <h2>{workspace.attention.title}</h2>
+        </div>
+        <StatusTag status={workspace.attention.state} />
+      </header>
+      <p>{workspace.attention.reason}</p>
+      <div className="pulse-track" aria-label="项目状态摘要">
+        <div>
+          <i />
+          <span>项目事实</span>
+          <strong>{workspace.modules.length} 个组成部分</strong>
+        </div>
+        <div>
+          <i />
+          <span>后台工作</span>
+          <strong>{activeWork.length ? `${activeWork.length} 项进行中` : "当前空闲"}</strong>
+        </div>
+        <div>
+          <i />
+          <span>人工判断</span>
+          <strong>{ATTENTION_LABELS[workspace.attention.state]}</strong>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -243,7 +356,7 @@ function RequirementsAction({
       <div className="action-title">
         <FileCheck2 className="h-5 w-5" />
         <div>
-          <small>01 / 冻结边界</small>
+          <small>确认需求</small>
           <h2>批准第一版需求和模块</h2>
         </div>
       </div>
@@ -269,10 +382,6 @@ function ResearchAction({
   onDone: () => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
-  const activeRun = snapshot.runtime.jobs.find(
-    (job) => !job.parent_job_id && ["queued", "running"].includes(job.status),
-  );
-
   const start = async () => {
     setBusy(true);
     try {
@@ -280,11 +389,7 @@ function ResearchAction({
       toast.success("有界研究已进入 durable Job 队列");
       await onDone();
     } catch (error) {
-      const message =
-        error && typeof error === "object" && "error" in error
-          ? (error as { error: { message: string } }).error.message
-          : "无法启动研究";
-      toast.error(message);
+      toast.error(displayError(error, "无法启动研究"));
     } finally {
       setBusy(false);
     }
@@ -295,25 +400,17 @@ function ResearchAction({
       <div className="action-title">
         <Search className="h-5 w-5" />
         <div>
-          <small>02 / 证据化研究</small>
-          <h2>{activeRun ? "研究正在执行" : "启动两路有界研究"}</h2>
+          <small>查找资料</small>
+          <h2>启动有界研究</h2>
         </div>
       </div>
       <p>
         PostgreSQL 持有 Job、Attempt、Delegation 与 JoinReceipt；Deep Agent 只生成 typed Proposal。
       </p>
-      {activeRun ? (
-        <div className="run-callout">
-          <Activity className="h-4 w-4" />
-          <span>Job {shortId(activeRun.id)}</span>
-          <StatusTag status={activeRun.status} />
-        </div>
-      ) : (
-        <Button disabled={busy} onClick={() => void start()}>
-          <Bot className="h-4 w-4" />
-          {busy ? "正在入队…" : "运行 Research Wave"}
-        </Button>
-      )}
+      <Button disabled={busy} onClick={() => void start()}>
+        <Bot className="h-4 w-4" />
+        {busy ? "正在准备…" : "开始查找资料"}
+      </Button>
     </div>
   );
 }
@@ -340,6 +437,8 @@ function DecisionAction({
       );
       toast.success("决策已写入 canonical state");
       await onDone();
+    } catch (error) {
+      toast.error(displayError(error, "无法确认这个选项"));
     } finally {
       setBusy(null);
     }
@@ -349,7 +448,7 @@ function DecisionAction({
       <div className="action-title">
         <GitBranch className="h-5 w-5" />
         <div>
-          <small>03 / 人工决策闸门</small>
+          <small>需要确认</small>
           <h2>{decision.question}</h2>
         </div>
       </div>
@@ -392,6 +491,8 @@ function FreezeAction({
       });
       toast.success("不可变 SolutionVersion 已冻结");
       await onDone();
+    } catch (error) {
+      toast.error(displayError(error, "无法确认方案"));
     } finally {
       setBusy(false);
     }
@@ -401,7 +502,7 @@ function FreezeAction({
       <div className="action-title">
         <ShieldCheck className="h-5 w-5" />
         <div>
-          <small>04 / 形成版本</small>
+          <small>确认方案</small>
           <h2>把已批准决策冻结为方案</h2>
         </div>
       </div>
@@ -452,6 +553,8 @@ function ObservationAction({
       setStatement("");
       toast.success("现场观察已记录，durable impact-proposer 已入队");
       await onDone();
+    } catch (error) {
+      toast.error(displayError(error, "无法记录这次观察"));
     } finally {
       setBusy(false);
     }
@@ -461,7 +564,7 @@ function ObservationAction({
       <div className="action-title">
         <FlaskConical className="h-5 w-5" />
         <div>
-          <small>05 / 真实反馈</small>
+          <small>记录变化</small>
           <h2>记录一次制造或测试观察</h2>
         </div>
       </div>
@@ -512,6 +615,8 @@ function ImpactAction({
       await getClient().approveImpact(impact.id, snapshot.project.revision, impact.basis_hash);
       toast.success("PatchSet 已批准，新 SolutionVersion 已创建");
       await onDone();
+    } catch (error) {
+      toast.error(displayError(error, "无法确认影响分析"));
     } finally {
       setBusy(false);
     }
@@ -524,7 +629,7 @@ function ImpactAction({
       <div className="action-title">
         <Wrench className="h-5 w-5" />
         <div>
-          <small>06 / 局部修订</small>
+          <small>确认影响</small>
           <h2>批准影响分析和模块补丁</h2>
         </div>
       </div>
@@ -577,63 +682,89 @@ function ImpactAction({
   );
 }
 
-function NextAction({ snapshot, onDone }: { snapshot: ProjectSnapshot; onDone: () => Promise<unknown> }) {
-  const pendingDecision = snapshot.decisions.find((item) => item.status === "pending");
-  const approvedDecision = snapshot.decisions.find((item) => item.status === "approved");
-  const proposedSolution = snapshot.solution_proposals.find((item) => item.status === "proposed");
-  const proposedImpact = snapshot.impacts.find((item) => item.status === "proposed");
-  const activeImpactJob = snapshot.runtime.jobs.find(
-    (job) => job.kind === "impact_wave" && ["queued", "running"].includes(job.status),
+function actionSourceId(action: WorkspaceAction, type: string): string | undefined {
+  return action.source_refs.find((item) => item.type === type)?.id;
+}
+
+function ActionNotice({
+  action,
+  onOpenAudit,
+}: {
+  action?: WorkspaceAction;
+  onOpenAudit?: () => void;
+}) {
+  return (
+    <div className="action-block">
+      <div className="action-title">
+        <Bot className="h-5 w-5" />
+        <div>
+          <small>NEXT / 服务端建议</small>
+          <h2>{action?.title ?? "等待项目状态同步"}</h2>
+        </div>
+      </div>
+      <p>{action?.explanation ?? "当前没有可安全执行的下一步，请刷新项目状态。"}</p>
+      {action ? (
+        ["follow_work", "inspect_failure"].includes(action.kind) && onOpenAudit ? (
+          <Button variant="outline" onClick={onOpenAudit}>
+            {action.safe_action}
+          </Button>
+        ) : (
+          <div className="run-callout">{action.safe_action}</div>
+        )
+      ) : null}
+    </div>
   );
-  if (!snapshot.project.active_requirement_revision_id) {
-    return <RequirementsAction snapshot={snapshot} onDone={onDone} />;
+}
+
+function NextAction({
+  snapshot,
+  onDone,
+  onOpenAudit,
+}: {
+  snapshot: ProjectSnapshot;
+  onDone: () => Promise<unknown>;
+  onOpenAudit: () => void;
+}) {
+  const action = snapshot.workspace?.next_actions[0];
+  if (!action) return <ActionNotice onOpenAudit={onOpenAudit} />;
+
+  switch (action.kind) {
+    case "clarify_requirements":
+      return <RequirementsAction snapshot={snapshot} onDone={onDone} />;
+    case "start_research":
+      return <ResearchAction snapshot={snapshot} onDone={onDone} />;
+    case "review_decision": {
+      const decisionId = actionSourceId(action, "decision");
+      const decision = snapshot.decisions.find((item) => item.id === decisionId);
+      return decision ? (
+        <DecisionAction snapshot={snapshot} decision={decision} onDone={onDone} />
+      ) : (
+        <ActionNotice action={action} onOpenAudit={onOpenAudit} />
+      );
+    }
+    case "review_solution": {
+      const proposalId = actionSourceId(action, "solution_proposal");
+      const proposal = snapshot.solution_proposals.find((item) => item.id === proposalId);
+      return proposal ? (
+        <FreezeAction snapshot={snapshot} proposal={proposal} onDone={onDone} />
+      ) : (
+        <ActionNotice action={action} onOpenAudit={onOpenAudit} />
+      );
+    }
+    case "review_impact": {
+      const impactId = actionSourceId(action, "impact");
+      const impact = snapshot.impacts.find((item) => item.id === impactId);
+      return impact ? (
+        <ImpactAction snapshot={snapshot} impact={impact} onDone={onDone} />
+      ) : (
+        <ActionNotice action={action} onOpenAudit={onOpenAudit} />
+      );
+    }
+    case "record_observation":
+      return <ObservationAction snapshot={snapshot} onDone={onDone} />;
+    default:
+      return <ActionNotice action={action} onOpenAudit={onOpenAudit} />;
   }
-  if (!snapshot.decisions.length) {
-    return <ResearchAction snapshot={snapshot} onDone={onDone} />;
-  }
-  if (pendingDecision) {
-    return <DecisionAction snapshot={snapshot} decision={pendingDecision} onDone={onDone} />;
-  }
-  if (approvedDecision && !snapshot.project.active_solution_version_id && proposedSolution) {
-    return <FreezeAction snapshot={snapshot} proposal={proposedSolution} onDone={onDone} />;
-  }
-  if (approvedDecision && !snapshot.project.active_solution_version_id) {
-    return (
-      <div className="action-block">
-        <div className="action-title">
-          <Bot className="h-5 w-5" />
-          <div>
-            <small>04 / 结构化方案</small>
-            <h2>等待 durable solution-proposer</h2>
-          </div>
-        </div>
-        <p>决策已经批准；服务端正在生成绑定候选、证据、BOM 和验证计划的 Proposal。</p>
-      </div>
-    );
-  }
-  if (proposedImpact) {
-    return <ImpactAction snapshot={snapshot} impact={proposedImpact} onDone={onDone} />;
-  }
-  if (activeImpactJob) {
-    return (
-      <div className="action-block">
-        <div className="action-title">
-          <Bot className="h-5 w-5" />
-          <div>
-            <small>06 / 影响提案</small>
-            <h2>等待 durable impact-proposer</h2>
-          </div>
-        </div>
-        <p>Observation 已成为不可变事实；Agent 正在既定依赖闭包内生成 typed PatchSet 提案。</p>
-        <div className="run-callout">
-          <Activity className="h-4 w-4" />
-          <span>Job {shortId(activeImpactJob.id)}</span>
-          <StatusTag status={activeImpactJob.status} />
-        </div>
-      </div>
-    );
-  }
-  return <ObservationAction snapshot={snapshot} onDone={onDone} />;
 }
 
 function SolutionVersionCard({
@@ -738,6 +869,7 @@ function SolutionVersionCard({
 }
 
 export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) {
+  const [auditOpen, setAuditOpen] = useState(false);
   const { data, error, isLoading, mutate } = useSWR(
     ["project-snapshot", initialProject.id],
     () => getClient().getSnapshot(initialProject.id),
@@ -833,11 +965,12 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
 
         {/* Center: V0 主线动作 + SolutionVersions + ViewShell with View Navigation */}
         <section className="workbench">
+          <ProjectPulse workspace={snapshot.workspace} />
           <div className="goal-strip">
             <span>GOAL</span>
             <p>{project.goal}</p>
           </div>
-          <NextAction snapshot={snapshot} onDone={refresh} />
+          <NextAction snapshot={snapshot} onDone={refresh} onOpenAudit={() => setAuditOpen(true)} />
 
           <section className="solution-board">
             <div className="panel-heading">
@@ -895,72 +1028,103 @@ export function ProjectConsole({ initialProject, onBack }: ProjectConsoleProps) 
           />
         </section>
 
-        {/* Right audit board — runtime + events always visible */}
+        {/* Right board: readable work first, runtime audit on demand */}
         <aside className="audit-board">
           <div className="panel-heading">
             <div>
-              <small>DURABLE RUNTIME</small>
-              <h2>Agent 编排</h2>
+              <small>WORK ACTIVITY</small>
+              <h2>工作动态</h2>
             </div>
             <Activity className="h-4 w-4" />
           </div>
-          {snapshot.runtime.budget_accounts.toReversed().map((budget) => (
-            <div className="runtime-stack" key={budget.id}>
-              <article>
+          <div className="work-summary-stack">
+            {snapshot.workspace?.work.toReversed().map((item) => (
+              <article key={item.run_id}>
                 <div>
-                  <strong>Run budget</strong>
-                  <StatusTag status={budget.status} />
+                  <strong>{item.user_label}</strong>
+                  <StatusTag status={item.state} />
                 </div>
-                <small>
-                  tokens {budget.token_committed.toLocaleString()} / {budget.token_cap.toLocaleString()}
-                  {" · "}tools {budget.tool_calls_committed} / {budget.tool_call_cap}
-                </small>
+                <p>
+                  {item.total_units
+                    ? `${item.completed_units} / ${item.total_units} 个子任务已结束`
+                    : "正在准备工作范围"}
+                </p>
+                {item.failed_units ? <small>{item.failed_units} 个子任务需要检查</small> : null}
               </article>
-            </div>
-          ))}
-          <div className="runtime-stack">
-            {snapshot.runtime.jobs.toReversed().map((job) => {
-              const error = snapshot.runtime.attempts.findLast(
-                (attempt) => attempt.job_id === job.id && attempt.normalized_error,
-              )?.normalized_error;
-              return (
-                <article key={job.id}>
-                  <div>
-                    <Bot className="h-4 w-4" />
-                    <strong>{job.parent_job_id ? job.profile_id : "Coordinator"}</strong>
-                    <StatusTag status={job.status} />
-                  </div>
-                  <small>
-                    gen {job.generation} · profile r{job.profile_revision} · {shortId(job.id)}
-                  </small>
-                  {error ? <code className="runtime-error">{error}</code> : null}
-                </article>
-              );
-            })}
-            {!snapshot.runtime.jobs.length ? (
-              <p className="empty-copy">研究启动后显示 root Job 和最多两个 durable child Job。</p>
+            ))}
+            {!snapshot.workspace?.work.length ? (
+              <p className="empty-copy">当前没有后台工作；需要启动或确认时会在这里说明。</p>
             ) : null}
           </div>
 
-          <div className="panel-heading timeline-heading">
-            <div>
-              <small>PROJECT CURSOR</small>
-              <h2>因果事件</h2>
-            </div>
-            <span>{events.length}</span>
-          </div>
-          <div className="event-timeline">
-            {latestEvents.map((event) => (
-              <article key={event.id}>
-                <span>{String(event.sequence).padStart(3, "0")}</span>
-                <div>
-                  <strong>{eventLabel(event.type)}</strong>
-                  <code>{event.id}</code>
+          <details
+            className="advanced-audit"
+            open={auditOpen}
+            onToggle={(event) => setAuditOpen(event.currentTarget.open)}
+          >
+            <summary>
+              <Database className="h-4 w-4" />
+              查看 Agent 与事件审计
+            </summary>
+            <div className="advanced-audit-body">
+              {snapshot.runtime.budget_accounts.toReversed().map((budget) => (
+                <div className="runtime-stack" key={budget.id}>
+                  <article>
+                    <div>
+                      <strong>Run budget</strong>
+                      <StatusTag status={budget.status} />
+                    </div>
+                    <small>
+                      tokens {budget.token_committed.toLocaleString()} /{" "}
+                      {budget.token_cap.toLocaleString()}
+                      {" · "}tools {budget.tool_calls_committed} / {budget.tool_call_cap}
+                    </small>
+                  </article>
                 </div>
-              </article>
-            ))}
-            {!latestEvents.length ? <p className="empty-copy">等待事件流连接…</p> : null}
-          </div>
+              ))}
+              <div className="runtime-stack">
+                {snapshot.runtime.jobs.toReversed().map((job) => {
+                  const error = snapshot.runtime.attempts.findLast(
+                    (attempt) => attempt.job_id === job.id && attempt.normalized_error,
+                  )?.normalized_error;
+                  return (
+                    <article key={job.id}>
+                      <div>
+                        <Bot className="h-4 w-4" />
+                        <strong>{job.parent_job_id ? job.profile_id : "Coordinator"}</strong>
+                        <StatusTag status={job.status} />
+                      </div>
+                      <small>
+                        gen {job.generation} · profile r{job.profile_revision} · {shortId(job.id)}
+                      </small>
+                      {error ? <code className="runtime-error">{error}</code> : null}
+                    </article>
+                  );
+                })}
+              </div>
+
+              <div className="panel-heading timeline-heading">
+                <div>
+                  <small>PROJECT CURSOR</small>
+                  <h2>因果事件</h2>
+                </div>
+                <span>{events.length}</span>
+              </div>
+              <div className="event-timeline">
+                {latestEvents.map((event) => (
+                  <article key={event.id}>
+                    <span>{String(event.sequence).padStart(3, "0")}</span>
+                    <div>
+                      <strong>{eventLabel(event.type)}</strong>
+                      <code>{event.id}</code>
+                      <time dateTime={event.created_at}>{eventTime(event.created_at)}</time>
+                    </div>
+                  </article>
+                ))}
+                {!latestEvents.length ? <p className="empty-copy">等待事件流连接…</p> : null}
+              </div>
+            </div>
+          </details>
         </aside>
       </div>
     </main>

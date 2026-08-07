@@ -59,11 +59,13 @@ from aidison.infrastructure.budget import (
     BudgetLedger,
     BudgetLimitExceededError,
 )
+from aidison.infrastructure.planning import PostgresPlanStore
 from aidison.infrastructure.profiles import ProfileRepository
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.providers.gateway import ProviderUnavailableError, build_chat_model
 from aidison.runtime.contracts import (
+    MAX_DELEGATION_WAVE_SIZE,
     BudgetOperationKind,
     BudgetOwnerKind,
     CommittedJoin,
@@ -77,6 +79,7 @@ from aidison.runtime.contracts import (
     ResultDisposition,
     RuntimeWorkItem,
 )
+from aidison.runtime.planning import build_research_shadow_plan
 from aidison.tools.github import (
     ControlledGitHubRead,
     GitHubBudgetBroker,
@@ -754,7 +757,7 @@ class ResearchWorker:
 
     async def run_forever(self, *, worker_id: str, concurrency: int = 3) -> None:
         if concurrency < 3:
-            raise ValueError("research worker needs three slots for parent plus two children")
+            raise ValueError("research worker needs one controller slot and two child slots")
         tasks: set[asyncio.Task[None]] = set()
         while True:
             while len(tasks) < concurrency:
@@ -995,14 +998,40 @@ class ResearchWorker:
         if not modules:
             raise RuntimeConflictError("research requires at least one module")
         async with self._factory() as session:
-            worker_binding = await ProfileRepository(session).get_binding(
+            profiles = ProfileRepository(session)
+            worker_binding = await profiles.get_binding(
                 work.claim.job_id,
                 "research-worker",
             )
-        shards = (modules[::2], modules[1::2]) if len(modules) > 1 else (modules,)
-        deadline = datetime.now(UTC) + timedelta(minutes=5)
+            worker_profile = await profiles.get_revision(
+                worker_binding.profile_id,
+                worker_binding.profile_revision,
+            )
+        plan = build_research_shadow_plan(
+            root_job_id=str(work.claim.job_id),
+            basis_hash=work.claim.basis_hash,
+            modules=modules,
+            profile_id=worker_binding.profile_id,
+            profile_revision=worker_binding.profile_revision,
+            planner_profile_id=work.claim.profile_id,
+            planner_profile_revision=work.claim.profile_revision,
+            budget_ref=f"budget://job/{work.claim.job_id}",
+            max_shards=min(
+                worker_profile.concurrency_cap,
+                MAX_DELEGATION_WAVE_SIZE,
+            ),
+        )
+        # Keep replay deterministic from the frozen claim while allowing an N-way wave to
+        # execute in bounded batches when the process has fewer child slots than shards.
+        deadline = work.claim.lease_expires_at + timedelta(
+            seconds=worker_profile.timeout_seconds * len(plan.nodes)
+        )
         specs = tuple(
             DelegationSpec(
+                delegation_id=uuid5(
+                    work.claim.attempt_id,
+                    f"research.parallel:{node.logical_key}",
+                ),
                 parent_job_id=work.claim.job_id,
                 parent_attempt_id=work.claim.attempt_id,
                 parent_claim_generation=work.claim.claim_generation,
@@ -1010,15 +1039,14 @@ class ResearchWorker:
                 profile_id=worker_binding.profile_id,
                 profile_revision=worker_binding.profile_revision,
                 basis_hash=work.claim.basis_hash,
-                shard_key=f"shard-{index + 1}",
-                idempotency_key=(f"{work.claim.attempt_id}:research.parallel:shard-{index + 1}"),
-                input_refs=tuple(f"module://{item.id}" for item in shard),
-                token_budget=4_000,
-                tool_call_budget=3,
+                shard_key=node.logical_key.removeprefix("research."),
+                idempotency_key=f"{work.claim.attempt_id}:research.parallel:{node.logical_key}",
+                input_refs=node.input_refs,
+                token_budget=worker_profile.token_cap,
+                tool_call_budget=worker_profile.tool_call_cap,
                 deadline=deadline,
             )
-            for index, shard in enumerate(shards)
-            if shard
+            for node in plan.nodes
         )
         policy = JoinPolicy(
             mode=JoinMode.ALL_REQUIRED,
@@ -1027,10 +1055,18 @@ class ResearchWorker:
             deadline=deadline,
         )
         async with self._factory() as session:
+            plan_store = PostgresPlanStore(session)
+            await plan_store.create_initial(claim=work.claim, plan=plan)
             wave = await PostgresRuntime(session).create_delegation_wave(
                 specs=specs,
                 policy=policy,
             )
+            for spec, child_job_id in zip(specs, wave.child_job_ids, strict=True):
+                await plan_store.bind_task_job(
+                    root_job_id=work.claim.job_id,
+                    logical_key=f"research.{spec.shard_key}",
+                    dispatched_job_id=child_job_id,
+                )
 
         while True:
             async with self._factory() as session:

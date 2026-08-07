@@ -129,7 +129,7 @@ RESEARCH_WORKER_PROFILE_V3 = build_profile_revision(
 )
 
 
-RESEARCH_WORKER_PROFILE = build_profile_revision(
+RESEARCH_WORKER_PROFILE_V4 = build_profile_revision(
     profile_id="research-worker-ro",
     revision=4,
     purpose=(
@@ -151,6 +151,34 @@ RESEARCH_WORKER_PROFILE = build_profile_revision(
     token_cap=4_000,
     tool_call_cap=3,
     concurrency_cap=2,
+    timeout_seconds=300,
+    retry_policy={"max_physical_attempts": 1, "hidden_provider_retries": 0},
+    evaluator_policy={"require_structured_response": True, "require_snapshot_evidence": True},
+)
+
+
+RESEARCH_WORKER_PROFILE = build_profile_revision(
+    profile_id="research-worker-ro",
+    revision=5,
+    purpose=(
+        "Research one bounded N-way DIY module shard through Web and GitHub evidence and return "
+        "evidence-bound typed decision options."
+    ),
+    prompt_template=RESEARCH_SYSTEM_PROMPT,
+    input_schema_ref="aidison://schemas/research-worker-input/v1",
+    output_schema_ref="aidison://schemas/research-proposal/v2",
+    allowed_tool_classes=("web_search", "github_read"),
+    allowed_effects=("discovery", "read"),
+    memory_read_scopes=(
+        "project.requirements",
+        "project.modules",
+        "artifact.web_snapshot",
+        "artifact.github_snapshot",
+    ),
+    model_capabilities=("structured_output", "tool_calling"),
+    token_cap=4_000,
+    tool_call_cap=3,
+    concurrency_cap=8,
     timeout_seconds=300,
     retry_policy={"max_physical_attempts": 1, "hidden_provider_retries": 0},
     evaluator_policy={"require_structured_response": True, "require_snapshot_evidence": True},
@@ -261,6 +289,7 @@ BUILTIN_AGENT_PROFILES: tuple[AgentProfileRevision, ...] = (
     RESEARCH_ORCHESTRATOR_PROFILE,
     RESEARCH_WORKER_PROFILE_V1,
     RESEARCH_WORKER_PROFILE_V3,
+    RESEARCH_WORKER_PROFILE_V4,
     RESEARCH_WORKER_PROFILE,
     SOLUTION_ORCHESTRATOR_PROFILE,
     SOLUTION_PROPOSER_PROFILE,

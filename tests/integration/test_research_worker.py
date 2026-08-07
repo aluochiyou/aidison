@@ -44,9 +44,11 @@ from aidison.infrastructure.orm import (
     JobRow,
     JoinGroupRow,
     JoinReceiptRow,
+    PlanTaskRow,
     ProjectRow,
     SolutionProposalRow,
 )
+from aidison.infrastructure.planning import PostgresPlanStore
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.contracts import JobClaim, JobStatus
@@ -399,8 +401,10 @@ def fake_impact_agent_factory(model: BaseChatModel) -> AgentRunner:
 
 
 @pytest.mark.asyncio
-async def test_worker_runs_two_child_research_into_one_canonical_decision(
+@pytest.mark.parametrize("child_count", (2, 8))
+async def test_worker_runs_bounded_nway_research_into_one_canonical_decision(
     tmp_path: Path,
+    child_count: int,
 ) -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
@@ -426,17 +430,13 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                 preferences=("Keep it repairable",),
                 available_resources=("Workshop",),
                 unknowns=("Exact interfaces",),
-                modules=(
+                modules=tuple(
                     {
-                        "key": "frame",
-                        "name": "Frame",
-                        "responsibility": "Carry the system",
-                    },
-                    {
-                        "key": "power",
-                        "name": "Power",
-                        "responsibility": "Supply safe power",
-                    },
+                        "key": f"module-{index + 1}",
+                        "name": f"Module {index + 1}",
+                        "responsibility": f"Own bounded responsibility {index + 1}",
+                    }
+                    for index in range(child_count)
                 ),
                 idempotency_key=f"worker-requirements-{uuid4()}",
             )
@@ -450,6 +450,8 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                 basis_project_revision=project.revision + 1,
                 profile_id="research-orchestrator",
                 profile_revision=1,
+                token_budget_cap=child_count * 4_000,
+                tool_call_budget_cap=child_count * 3,
             )
 
         worker = ResearchWorker(
@@ -464,7 +466,10 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
             poll_seconds=0.02,
         )
         worker_task = asyncio.create_task(
-            worker.run_forever(worker_id="integration-worker", concurrency=3)
+            worker.run_forever(
+                worker_id="integration-worker",
+                concurrency=child_count + 1,
+            )
         )
         try:
             async with asyncio.timeout(15):
@@ -488,9 +493,29 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                     .select_from(JobRow)
                     .where(JobRow.parent_job_id == root_job_id, JobRow.status == "succeeded")
                 )
-                == 2
+                == child_count
             )
-            assert await session.scalar(select(func.count()).select_from(DelegationRow)) == 2
+            assert (
+                await session.scalar(select(func.count()).select_from(DelegationRow))
+                == child_count
+            )
+            plan_tasks = list(
+                await session.scalars(
+                    select(PlanTaskRow).order_by(PlanTaskRow.logical_key)
+                )
+            )
+            assert [item.logical_key for item in plan_tasks] == [
+                f"research.shard-{index + 1}" for index in range(child_count)
+            ]
+            assert all(item.dispatched_job_id is not None for item in plan_tasks)
+            assert {item.status for item in plan_tasks} == {"succeeded"}
+            for task in plan_tasks:
+                assert task.dispatched_job_id is not None
+                await PostgresPlanStore(session).bind_task_job(
+                    root_job_id=root_job_id,
+                    logical_key=task.logical_key,
+                    dispatched_job_id=task.dispatched_job_id,
+                )
             assert await session.scalar(select(func.count()).select_from(JoinReceiptRow)) == 1
             assert (
                 await session.scalar(
@@ -506,7 +531,7 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                     .select_from(EvidenceBindingRow)
                     .where(EvidenceBindingRow.project_id == project.id)
                 )
-                == 2
+                == child_count
             )
             assert (
                 await session.scalar(
@@ -514,7 +539,7 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                     .select_from(CandidateRow)
                     .where(CandidateRow.project_id == project.id)
                 )
-                == 2
+                == child_count
             )
             assert (
                 await session.scalar(
@@ -522,7 +547,7 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                     .select_from(ArtifactRow)
                     .where(ArtifactRow.project_id == project.id)
                 )
-                == 5
+                == child_count * 2 + 1
             )
             assert (
                 await session.scalar(
@@ -530,7 +555,7 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                     .select_from(BudgetOperationRow)
                     .where(BudgetOperationRow.state == "settled")
                 )
-                == 4
+                == child_count * 2
             )
             assert set(
                 await session.scalars(
@@ -545,14 +570,14 @@ async def test_worker_runs_two_child_research_into_one_canonical_decision(
                         BudgetOperationRow.kind == "model"
                     )
                 )
-            ) == [150, 150]
+            ) == [150] * child_count
             assert (
                 await session.scalar(
                     select(func.count())
                     .select_from(BudgetAllocationRow)
                     .where(BudgetAllocationRow.status == "closed")
                 )
-                == 2
+                == child_count
             )
     finally:
         await engine.dispose()
@@ -1277,6 +1302,20 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
             assert [item.status for item in groups] == (
                 ["joined"] if committed_before_crash else ["cancelled", "joined"]
             )
+            joined_child_ids = set(
+                await session.scalars(
+                    select(DelegationRow.child_job_id).where(
+                        DelegationRow.join_group_id == groups[-1].id
+                    )
+                )
+            )
+            recovered_plan_tasks = list(
+                await session.scalars(select(PlanTaskRow))
+            )
+            assert {item.status for item in recovered_plan_tasks} == {"succeeded"}
+            assert {
+                item.dispatched_job_id for item in recovered_plan_tasks
+            } == joined_child_ids
             assert await session.scalar(select(func.count()).select_from(JoinReceiptRow)) == 1
             decision_after_reclaim = await session.scalar(
                 select(DecisionRequestRow.id).where(DecisionRequestRow.project_id == project.id)

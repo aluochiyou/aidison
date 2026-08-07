@@ -758,6 +758,142 @@ button {
   background-size: 18px 18px;
 }
 
+.project-pulse {
+  --pulse-color: var(--cyan);
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  border-left: 6px solid var(--pulse-color);
+  background:
+    linear-gradient(110deg, rgba(248, 250, 249, 0.98) 0 72%, rgba(36, 126, 148, 0.08) 72%),
+    var(--sheet);
+}
+
+.project-pulse.attention-working,
+.project-pulse.attention-ready_to_review,
+.project-pulse.attention-needs_input {
+  --pulse-color: var(--copper);
+}
+
+.project-pulse.attention-recoverable_failure,
+.project-pulse.attention-blocked {
+  --pulse-color: var(--danger);
+}
+
+.project-pulse.attention-up_to_date,
+.project-pulse.attention-complete {
+  --pulse-color: var(--safe);
+}
+
+.project-pulse > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.2rem 1.25rem 0;
+}
+
+.project-pulse small,
+.project-pulse footer > span {
+  color: var(--cyan);
+  font: 700 0.62rem "Cascadia Code", monospace;
+  letter-spacing: 0.1em;
+}
+
+.project-pulse h2 {
+  margin: 0.15rem 0 0;
+  max-width: 720px;
+  font-family: Bahnschrift, "Arial Narrow", sans-serif;
+  font-size: clamp(1.75rem, 3vw, 3rem);
+  font-stretch: condensed;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+}
+
+.project-pulse > p {
+  max-width: 760px;
+  margin: 0;
+  padding: 0.85rem 1.25rem 1.1rem;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+.pulse-track {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--line);
+}
+
+.pulse-track > div {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.16rem 0.55rem;
+  min-width: 0;
+  padding: 0.8rem 1rem;
+  border-right: 1px solid var(--line);
+}
+
+.pulse-track > div:last-child {
+  border-right: 0;
+}
+
+.pulse-track i {
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--pulse-color);
+  border-radius: 50%;
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pulse-color) 14%, transparent);
+}
+
+.pulse-track span {
+  color: var(--ink-soft);
+  font-size: 0.64rem;
+}
+
+.pulse-track strong {
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+
+.project-pulse footer {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  color: #fff;
+  background: var(--ink);
+}
+
+.project-pulse footer > span {
+  color: #8fc5d2;
+}
+
+.project-pulse footer div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: baseline;
+}
+
+.project-pulse footer small {
+  color: #c5d0d5;
+  font: 0.72rem/1.45 var(--font-family-base);
+  letter-spacing: 0;
+}
+
+.project-pulse.is-unavailable {
+  padding: 1.2rem;
+  border-color: var(--line);
+}
+
+.project-pulse.is-unavailable h2 {
+  font-size: 1.4rem;
+}
+
 .panel-heading {
   display: flex;
   justify-content: space-between;
@@ -780,11 +916,60 @@ button {
 
 .module-list,
 .runtime-stack,
+.work-summary-stack,
 .event-timeline,
 .evidence-grid {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
+}
+
+.work-summary-stack article {
+  padding: 0.9rem;
+  border: 1px solid var(--line);
+  background: rgba(248, 250, 249, 0.82);
+}
+
+.work-summary-stack article > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.work-summary-stack p,
+.work-summary-stack small {
+  margin: 0.5rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+}
+
+.advanced-audit {
+  margin-top: 1rem;
+  border-top: 1px solid var(--ink);
+}
+
+.advanced-audit > summary {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.85rem 0;
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.advanced-audit > summary:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+.advanced-audit-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding-bottom: 1rem;
 }
 
 .module-card,
@@ -1382,6 +1567,19 @@ button {
 
   .console-body {
     display: block;
+  }
+
+  .pulse-track {
+    grid-template-columns: 1fr;
+  }
+
+  .pulse-track > div {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .pulse-track > div:last-child {
+    border-bottom: 0;
   }
 
   .module-board,

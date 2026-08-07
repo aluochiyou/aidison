@@ -723,7 +723,7 @@ class JoinGroupRow(Base):
     __table_args__ = (
         CheckConstraint("parent_claim_generation >= 1", name="generation_positive"),
         CheckConstraint("basis_project_revision >= 1", name="basis_revision_positive"),
-        CheckConstraint("expected_count BETWEEN 1 AND 2", name="expected_count_v0"),
+        CheckConstraint("expected_count BETWEEN 1 AND 8", name="expected_count_v1"),
         UniqueConstraint("parent_attempt_id", "graph_step_id", name="uq_join_parent_step"),
     )
 
@@ -788,6 +788,259 @@ class AttemptResultRow(Base):
     disposition: Mapped[str] = mapped_column(String(40), nullable=False)
     quarantine_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PlanHeadRow(Base):
+    """The only mutable pointer in an otherwise append-only plan history."""
+
+    __tablename__ = "plan_heads"
+    __table_args__ = (
+        CheckConstraint("current_revision >= 1", name="current_revision_positive"),
+        ForeignKeyConstraint(
+            ["root_job_id", "current_revision"],
+            ["plan_revisions.root_job_id", "plan_revisions.revision"],
+            name="fk_plan_head_current_revision",
+            ondelete="RESTRICT",
+        ),
+    )
+
+    root_job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("jobs.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    current_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    current_plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
+class PlanRevisionRow(Base):
+    __tablename__ = "plan_revisions"
+    __table_args__ = (
+        CheckConstraint("revision >= 1", name="revision_positive"),
+        CheckConstraint("basis_project_revision >= 1", name="basis_revision_positive"),
+        ForeignKeyConstraint(
+            ["planner_profile_id", "planner_profile_revision"],
+            ["agent_profile_revisions.profile_id", "agent_profile_revisions.revision"],
+            name="fk_plan_revision_planner_profile",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["root_job_id", "parent_revision"],
+            ["plan_revisions.root_job_id", "plan_revisions.revision"],
+            name="fk_plan_revision_parent",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("root_job_id", "revision", name="uq_plan_root_revision"),
+        UniqueConstraint("root_job_id", "id", name="uq_plan_root_id"),
+        UniqueConstraint("root_job_id", "plan_hash", name="uq_plan_root_hash"),
+        Index("ix_plan_revisions_root", "root_job_id", "revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    root_job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    parent_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    basis_project_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    evidence_refs: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    planner_profile_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    planner_profile_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    plan_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PlanTaskRow(Base):
+    __tablename__ = "plan_tasks"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["profile_id", "profile_revision"],
+            ["agent_profile_revisions.profile_id", "agent_profile_revisions.revision"],
+            name="fk_plan_task_profile",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("depth >= 0 AND depth <= 4", name="depth_within_limit"),
+        CheckConstraint(
+            "status IN ('planned', 'ready', 'dispatched', 'running', 'succeeded', 'failed', "
+            "'blocked', 'cancelled', 'superseded')",
+            name="status",
+        ),
+        UniqueConstraint("plan_revision_id", "logical_key", name="uq_plan_task_logical_key"),
+        UniqueConstraint("plan_revision_id", "id", name="uq_plan_task_revision_id"),
+        UniqueConstraint("dispatched_job_id", name="uq_plan_task_dispatched_job"),
+        Index("ix_plan_tasks_frontier", "plan_revision_id", "status", "depth", "logical_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    plan_revision_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("plan_revisions.id", ondelete="RESTRICT"), nullable=False
+    )
+    logical_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    objective: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[str] = mapped_column(String(40), nullable=False)
+    role_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    profile_id: Mapped[str] = mapped_column(String(200), nullable=False)
+    profile_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    budget_ref: Mapped[str] = mapped_column(String(300), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    input_refs: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    success_criteria: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    stop_criteria: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    dispatched_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PlanTaskEdgeRow(Base):
+    __tablename__ = "plan_task_edges"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('depends_on', 'evidence_from', 'verifies', 'blocks')", name="kind"
+        ),
+        CheckConstraint("from_task_id <> to_task_id", name="not_self"),
+        ForeignKeyConstraint(
+            ["plan_revision_id", "from_task_id"],
+            ["plan_tasks.plan_revision_id", "plan_tasks.id"],
+            name="fk_plan_edge_from_same_revision",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["plan_revision_id", "to_task_id"],
+            ["plan_tasks.plan_revision_id", "plan_tasks.id"],
+            name="fk_plan_edge_to_same_revision",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("plan_revision_id", "from_task_id", "to_task_id", "kind", name="uq_edge"),
+        Index("ix_plan_edges_target", "plan_revision_id", "to_task_id", "kind"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    plan_revision_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("plan_revisions.id", ondelete="RESTRICT"), nullable=False
+    )
+    from_task_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    to_task_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class PlanGapRow(Base):
+    __tablename__ = "plan_gaps"
+    __table_args__ = (
+        CheckConstraint("status IN ('open', 'accepted', 'rejected', 'resolved')", name="status"),
+        ForeignKeyConstraint(
+            ["root_job_id", "plan_revision_id"],
+            ["plan_revisions.root_job_id", "plan_revisions.id"],
+            name="fk_plan_gap_same_root_revision",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["plan_revision_id", "source_task_id"],
+            ["plan_tasks.plan_revision_id", "plan_tasks.id"],
+            name="fk_plan_gap_source_same_revision",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("root_job_id", "plan_revision_id", "gap_hash", name="uq_plan_gap"),
+        Index("ix_plan_gaps_open", "root_job_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    root_job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    plan_revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    source_task_id: Mapped[UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+    source_result_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("attempt_results.id", ondelete="RESTRICT"), nullable=True
+    )
+    gap_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class PlanPatchRow(Base):
+    __tablename__ = "plan_patches"
+    __table_args__ = (
+        CheckConstraint("kind IN ('expand', 'revise', 'contract')", name="kind"),
+        ForeignKeyConstraint(
+            ["root_job_id", "base_revision"],
+            ["plan_revisions.root_job_id", "plan_revisions.revision"],
+            name="fk_plan_patch_base_revision",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["root_job_id", "target_revision"],
+            ["plan_revisions.root_job_id", "plan_revisions.revision"],
+            name="fk_plan_patch_target_revision",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint("root_job_id", "base_revision", "patch_hash", name="uq_plan_patch"),
+        Index("ix_plan_patches_root_base", "root_job_id", "base_revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    root_job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    base_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    patch_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    trigger: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ReplanReceiptRow(Base):
+    __tablename__ = "replan_receipts"
+    __table_args__ = (
+        CheckConstraint("parent_claim_generation >= 1", name="generation_positive"),
+        ForeignKeyConstraint(
+            ["root_job_id", "new_plan_revision_id"],
+            ["plan_revisions.root_job_id", "plan_revisions.id"],
+            name="fk_replan_new_revision_same_root",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "root_job_id",
+            "parent_claim_generation",
+            "base_revision",
+            "patch_hash",
+            name="uq_replan_cas",
+        ),
+        UniqueConstraint("new_plan_revision_id", name="uq_replan_new_revision"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    root_job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    parent_attempt_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("attempts.id", ondelete="RESTRICT"), nullable=False
+    )
+    parent_claim_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    base_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    patch_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    new_plan_revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

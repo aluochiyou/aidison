@@ -1,6 +1,7 @@
 """Durable runtime contracts."""
 
 from aidison.runtime.contracts import (
+    MAX_DELEGATION_WAVE_SIZE,
     AttemptStatus,
     CommittedJoin,
     DelegationResult,
@@ -15,6 +16,21 @@ from aidison.runtime.contracts import (
     RegisteredResult,
     ResultDisposition,
 )
+from aidison.runtime.planning import (
+    OrchestrationPlanRevision,
+    PlanPatchKind,
+    PlanPatchProposal,
+    ReplanReceipt,
+    ResearchMode,
+    TaskEdge,
+    TaskEdgeKind,
+    TaskNode,
+    TaskStatus,
+    build_fixed_research_shadow_plan,
+    build_research_shadow_plan,
+    canonical_patch_hash,
+    canonical_plan_hash,
+)
 
 __all__ = [
     "AttemptStatus",
@@ -28,6 +44,20 @@ __all__ = [
     "JoinPolicy",
     "JoinReceipt",
     "JoinStatus",
+    "MAX_DELEGATION_WAVE_SIZE",
+    "OrchestrationPlanRevision",
+    "PlanPatchKind",
+    "PlanPatchProposal",
+    "ResearchMode",
+    "ReplanReceipt",
     "RegisteredResult",
     "ResultDisposition",
+    "TaskEdge",
+    "TaskEdgeKind",
+    "TaskNode",
+    "TaskStatus",
+    "build_fixed_research_shadow_plan",
+    "build_research_shadow_plan",
+    "canonical_plan_hash",
+    "canonical_patch_hash",
 ]

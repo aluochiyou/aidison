@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "revision": 65,
-  "updatedAt": "2026-08-05T11:50:04.069Z",
+  "revision": 69,
+  "updatedAt": "2026-08-07T12:42:28.055Z",
   "modules": [
     {
       "id": "domain-runtime",
@@ -414,6 +414,46 @@
         "browser acceptance:passed",
         "idle SSE polling regression:passed"
       ]
+    },
+    {
+      "id": "aidison-advanced-vertical-slice-a",
+      "title": "用户工作台投影与动态编排协议基础",
+      "description": "已完成服务端 workspace projection、event cursor/time、普通用户控制台与 shadow plan contracts；固定 runtime 未切换。",
+      "status": "done",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "orchestration-console",
+      "acceptanceCriteria": [
+        "后端投影稳定且有来源",
+        "前端不再猜下一步",
+        "SSE使用服务器时间和游标",
+        "focused tests与Web build通过"
+      ],
+      "evidence": [
+        "research/aidison-advanced-optimization-20260807/implementation-report.md; pytest:115 passed; ruff/mypy/eslint/next-build:passed"
+      ]
+    },
+    {
+      "id": "aidison-durable-plan-nway-c1",
+      "title": "Durable Plan 与 1–8 路 Research 编排",
+      "description": "已实现 PostgreSQL PlanRevision/PlanTask、实际 child binding、1–8 路稳定分片、N-way Join 和 reclaim 重绑；隔离 PostgreSQL 实跑仍待验证。",
+      "status": "in_progress",
+      "priority": "high",
+      "progress": 85,
+      "moduleId": "orchestration-console",
+      "acceptanceCriteria": [
+        "1/2/8 child 确定性 fan-out/fan-in",
+        "父任务四个 crash window 可恢复且只绑定 joined wave",
+        "预算与 profile 一致",
+        "隔离 PostgreSQL 集成与迁移升级通过"
+      ],
+      "evidence": [
+        "research/aidison-advanced-optimization-20260807/bounded-nway-slice-spec.md",
+        "pytest:118 unit passed",
+        "ruff:passed",
+        "mypy:46 files passed",
+        "alembic head:d4a8e7c91f20"
+      ]
     }
   ],
   "phases": [],
@@ -559,6 +599,20 @@
         "task:019fc1d5-e7d9-73e0-b655-47d4e0b8bf18",
         "AGENTS.md"
       ]
+    },
+    {
+      "title": "N-way 与 reclaim 尚未在隔离 PostgreSQL 实跑",
+      "status": "open",
+      "probability": "medium",
+      "impact": "high",
+      "mitigation": "配置与运行时库不同的 TEST_DATABASE_URL，执行 8-way、2/8-way worker、四 crash window 和 migration upgrade/downgrade",
+      "moduleId": "orchestration-console",
+      "evidence": [
+        "tests/integration/test_postgres_runtime.py",
+        "tests/integration/test_research_worker.py",
+        "research/aidison-advanced-optimization-20260807/bounded-nway-slice-spec.md"
+      ],
+      "id": "risk-nway-postgres-unverified"
     }
   ],
   "interfaces": [],

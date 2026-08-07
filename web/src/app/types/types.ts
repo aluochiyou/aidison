@@ -272,6 +272,76 @@ export interface ProjectEvent {
   created_at: string;
 }
 
+export type WorkspaceAttentionState =
+  | "up_to_date"
+  | "working"
+  | "needs_input"
+  | "ready_to_review"
+  | "recoverable_failure"
+  | "blocked"
+  | "complete";
+
+export interface WorkspaceSourceRef {
+  type: string;
+  id: string;
+  label: string;
+}
+
+export interface WorkspaceAttention {
+  state: WorkspaceAttentionState;
+  title: string;
+  reason: string;
+  since: string;
+  affected_module_ids: string[];
+  source_refs: WorkspaceSourceRef[];
+}
+
+export interface WorkspaceAction {
+  id: string;
+  kind: string;
+  title: string;
+  explanation: string;
+  safe_action: string;
+  destructive: boolean;
+  source_refs: WorkspaceSourceRef[];
+}
+
+export interface WorkspaceModuleSummary {
+  id: string;
+  name: string;
+  responsibility: string;
+  domain_stage: ModuleStage;
+  work_state: string | null;
+  open_question_count: number;
+  dependency_count: number;
+}
+
+export interface WorkspaceWorkSummary {
+  run_id: string;
+  user_label: string;
+  kind: string;
+  state: string;
+  started_at: string;
+  updated_at: string;
+  total_units: number;
+  completed_units: number;
+  failed_units: number;
+  latest_error: string | null;
+  source_refs: WorkspaceSourceRef[];
+}
+
+export interface ProjectWorkspaceProjectionV1 {
+  schema_version: "project-workspace.v1";
+  generated_at: string;
+  project_revision: number;
+  event_cursor: number;
+  attention: WorkspaceAttention;
+  next_actions: WorkspaceAction[];
+  modules: WorkspaceModuleSummary[];
+  work: WorkspaceWorkSummary[];
+  warnings: string[];
+}
+
 export interface ProjectSnapshot {
   project: Project;
   requirements: RequirementRevision[];
@@ -286,6 +356,7 @@ export interface ProjectSnapshot {
   impacts: ImpactAnalysis[];
   patch_sets: PatchSet[];
   runtime: RuntimeSnapshot;
+  workspace?: ProjectWorkspaceProjectionV1;
   // V1 新增
   offer_snapshots?: OfferSnapshot[];
   purchase_proposals?: PurchaseProposal[];

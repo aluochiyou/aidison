@@ -5,7 +5,12 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from aidison.runtime.contracts import DelegationSpec, JoinMode, JoinPolicy
+from aidison.runtime.contracts import (
+    MAX_DELEGATION_WAVE_SIZE,
+    DelegationSpec,
+    JoinMode,
+    JoinPolicy,
+)
 
 
 def basis() -> str:
@@ -31,7 +36,7 @@ def test_delegation_is_proposal_only() -> None:
         )
 
 
-def test_v0_join_all_required_requires_every_child() -> None:
+def test_nway_join_all_required_requires_every_child() -> None:
     with pytest.raises(ValidationError, match="all_required"):
         JoinPolicy(
             mode=JoinMode.ALL_REQUIRED,
@@ -41,11 +46,22 @@ def test_v0_join_all_required_requires_every_child() -> None:
         )
 
 
-def test_v0_join_rejects_more_than_two_children() -> None:
+def test_nway_join_accepts_eight_children_and_rejects_nine() -> None:
+    delegation_ids = tuple(uuid4() for _ in range(MAX_DELEGATION_WAVE_SIZE))
+    policy = JoinPolicy(
+        mode=JoinMode.BOUNDED_PARTIAL,
+        expected_delegation_ids=delegation_ids,
+        min_successes=4,
+        deadline=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    assert len(policy.expected_delegation_ids) == MAX_DELEGATION_WAVE_SIZE
+
     with pytest.raises(ValidationError):
         JoinPolicy(
             mode=JoinMode.BOUNDED_PARTIAL,
-            expected_delegation_ids=(uuid4(), uuid4(), uuid4()),
+            expected_delegation_ids=tuple(
+                uuid4() for _ in range(MAX_DELEGATION_WAVE_SIZE + 1)
+            ),
             min_successes=1,
             deadline=datetime.now(UTC) + timedelta(minutes=5),
         )

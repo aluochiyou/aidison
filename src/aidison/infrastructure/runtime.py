@@ -28,6 +28,7 @@ from aidison.infrastructure.orm import (
     JobRow,
     JoinGroupRow,
     JoinReceiptRow,
+    PlanTaskRow,
     ProjectRow,
 )
 from aidison.infrastructure.profiles import (
@@ -37,6 +38,7 @@ from aidison.infrastructure.profiles import (
 )
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.contracts import (
+    MAX_DELEGATION_WAVE_SIZE,
     AttemptStatus,
     BudgetOwnerKind,
     CommittedJoin,
@@ -198,8 +200,10 @@ class PostgresRuntime:
         specs: Sequence[DelegationSpec],
         policy: JoinPolicy,
     ) -> DelegationWave:
-        if not specs or len(specs) > 2:
-            raise RuntimeConflictError("V0 delegation wave requires one or two children")
+        if not specs or len(specs) > MAX_DELEGATION_WAVE_SIZE:
+            raise RuntimeConflictError(
+                f"delegation wave requires between one and {MAX_DELEGATION_WAVE_SIZE} children"
+            )
         if set(policy.expected_delegation_ids) != {item.delegation_id for item in specs}:
             raise RuntimeConflictError("join policy does not match delegation specs")
 
@@ -253,6 +257,8 @@ class PostgresRuntime:
             for item in specs
         ):
             raise RuntimeConflictError("delegation exceeds its frozen AgentProfile")
+        if len(specs) > worker_profile.concurrency_cap:
+            raise RuntimeConflictError("delegation wave exceeds its frozen concurrency cap")
         ledger = BudgetLedger(self._session)
         try:
             account_id = await ledger.get_account_id(parent.id)
@@ -479,6 +485,14 @@ class PostgresRuntime:
                     .values(status=DelegationStatus.CANCELLED.value, completed_at=now)
                 )
             if stale_child_ids:
+                await self._session.execute(
+                    update(PlanTaskRow)
+                    .where(PlanTaskRow.dispatched_job_id.in_(stale_child_ids))
+                    .values(
+                        dispatched_job_id=None,
+                        status="ready",
+                    )
+                )
                 await self._session.execute(
                     update(AttemptRow)
                     .where(
@@ -748,6 +762,17 @@ class PostgresRuntime:
             delegation.status = result.status.value
             delegation.result_payload = _json_payload(result)
             delegation.completed_at = now
+            plan_task = await self._session.scalar(
+                select(PlanTaskRow)
+                .where(PlanTaskRow.dispatched_job_id == child.id)
+                .with_for_update()
+            )
+            if plan_task is not None:
+                plan_task.status = {
+                    JobStatus.SUCCEEDED.value: "succeeded",
+                    JobStatus.FAILED.value: "failed",
+                    JobStatus.CANCELLED.value: "cancelled",
+                }[terminal_job_status.value]
 
         await self._events.append_event(
             child.project_id,
