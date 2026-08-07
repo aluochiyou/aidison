@@ -1,6 +1,6 @@
 # Aidison 版本收口学习与面试文档计划
 
-- 状态：active，随开发维护事实素材；版本收口时生成最终文档。
+- 状态：C5 release 文档已生成；后续版本继续按同一证据 gate 维护。
 - 权威来源：Git 与测试结果、accepted specs、ADR、`development-decisions.md`。
 - 原则：最终材料解释架构和核心代码路径，但不逐文件复述实现；所有性能、稳定性和完成度表述必须有验收证据。
 
@@ -36,4 +36,4 @@
 
 ## 收口 gate
 
-只有在目标版本代码合并并完成最终 PostgreSQL、前后端和真实外部服务验收后，才把上述文档标为 complete。外部服务未稳定验证的能力必须写作 `not_checked` 或实验性能力，不能包装成生产稳定结论。
+只有在目标版本代码合并并完成对应 PostgreSQL、前后端验收后，才把上述文档标为 complete。外部服务未稳定验证的能力必须写作 `not_checked` 或实验性能力，不能包装成生产稳定结论。C5 文档已按此原则收口：本地/数据库 release gate 为 `passed`，真实淘宝、IAM/RBAC、provider billing reconciliation 与重复 live 稳定性保留为未完成项。

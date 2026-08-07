@@ -2,7 +2,7 @@
 
 - Updated: 2026-08-08
 - Lifecycle: active development
-- Current phase: C5 durable JoinPolicy 与 scoped EffectApproval 已完成双轴 review 和验收，等待 fast-forward 合并。
+- Current phase: C5 durable JoinPolicy 与 scoped EffectApproval 已合并；学习、源码导读、简历与面试文档已按当前 release evidence 收口。
 
 > 说明：下方大部分条目是 2026-08-03 V0 handoff 的历史验收快照。当前增量以 Git、ADR-0003/0004 和 `docs/engineering/development-decisions.md` 为准，版本收口时再整体重写本页。
 
@@ -18,6 +18,7 @@
 - Web ShoppingView 已接入 request → approve/deny → checkout 三步，以及 PREPARED/AMBIGUOUS 的“刷新 durable snapshot 后重新授权”恢复入口；Prettier 全库基线、ESLint（0 error，4 个既有 Fast Refresh warning）和 Next.js production build：passed。
 - C5 final gate：unit 155 passed；PostgreSQL 17/18 integration 各 50 passed；两版全新隔离库从零 migration 到 `b7d3e5f91a20` 并通过 `alembic check`；Ruff、mypy、diff check、Alembic single head：passed。EffectApproval trigger 与 partial unique index 有直接 SQL 拒绝测试。
 - OpenCode Standards review：APPROVE，无 blocker/high；两个 medium 中，durable ETag 与 Web 未决 handoff 恢复入口已修正。受限 Spec review 覆盖 Join/approval 核心面且无 high/medium；其首次 worker 因违反 read-only 边界被终止，测试容器 role password 已恢复为空。
+- `docs/learning/` 与 `docs/interview/` 已生成 12 份版本学习/面试材料；`research/aidison-release-learning-docs/report.md` 记录 `[F]/[J]/[H]/[X]` 证据，真实淘宝、IAM/RBAC、provider billing reconciliation 和重复 live 稳定性明确保留为未完成项。
 
 ## Verified
 
@@ -76,7 +77,7 @@ The prior 2366 passed, 12 failed used the wrong root project virtualenv; after a
 
 ## Active milestone
 
-开发已按用户决定暂停。当前里程碑是保存未提交实现现场、保留开发前多轮研究，并通过 `handoff/2026-08-03-aidison/` 完成交接；live gate、历史 Artifact 和 stale test profile 不再自动推进。
+C5 代码与文档已经收口，项目继续处于 active development。下一里程碑是在不绕过 EffectApproval/receipt 边界的前提下研究并接入真实淘宝 provider；历史 handoff 继续作为上下文保留，不再代表当前开发状态。
 
 ## Open work and not_checked
 

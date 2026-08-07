@@ -60,10 +60,10 @@
 |---|---|---|---|
 | DeepAgents | 深：vendor core + leaf harness API | typed agent harness、tool/subagent 约束 | 不承担上层 durability；native subagents/checkpointer/store 在 leaf 关闭 |
 | LangGraph | 中：执行模型与 Agent substrate | 单次 Agent graph/structured response | 上层 durable plan、lease、join、receipt 由 Aidison PostgreSQL 实现 |
-| LoopX | 中：架构/产品逻辑研究 | planner/worker 分工、研究任务分解 | 未复制其运行时；Aidison 增加 DB fencing、budget、receipt |
-| OpenRath | 中：工作流与研究产品逻辑 | research workflow、结果组织 | 未把其状态模型作为事实源 |
+| LoopX | 中：durable protocol donor | generation/CAS、write scope、validate→writeback→spend→ack | 未运行 daemon/tmux/file truth；Aidison 在 PostgreSQL 中重实现最小语义 |
+| OpenRath | 中：durable runtime design donor | lease/fencing、Effect Ledger、interrupt、event cursor/SSE | 未整体 Fork，也未采用 v1/v2 双 runtime 或 Session truth |
 | Globex | 浅：电商教程与交互概念 | 商品搜索/购买流程候选参考 | 教程不构成完整可运行采购后端；当前不作为 planner/executor 代码基础 |
 
 C5 Join 与 EffectApproval 主要是在 Aidison 自有 PostgreSQL runtime 和 Shopping 闭环上演进，没有复制 LoopX、OpenRath 或 Globex 的代码。参考对象是分布式系统的稳定原则：确定性 replay、事务内状态收敛、capability scope、幂等 receipt 和 provider crash boundary；具体 schema、锁顺序、状态机与验收测试均为本项目实现。
 
-版本收口时需要把本日志扩展为：`docs/learning/` 架构与算法教程、源码阅读地图、开发步骤与难点；`docs/interview/` 简历 bullet、项目介绍模板和分层问答。所有“通过”结论必须附当时的测试命令与版本。
+C5 版本已生成 `docs/learning/` 架构与算法教程、源码阅读地图、开发步骤与难点，以及 `docs/interview/` 简历 bullet、项目介绍模板和分层问答；事实证据表位于 `research/aidison-release-learning-docs/report.md`。后续每个 release 仍须更新测试数字与未完成边界，不能沿用过期 claims。
