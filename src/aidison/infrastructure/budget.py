@@ -419,8 +419,9 @@ class BudgetLedger:
         account_id: UUID,
         owner_kind: BudgetOwnerKind,
         owner_ref: UUID,
+        normalized_error: str = "lease_reclaimed_after_dispatch",
     ) -> BudgetAllocation | None:
-        """Conservatively close an old generation's allocation during parent reclaim."""
+        """Conservatively resolve reservations and close an owner's allocation."""
         account = await self._session.scalar(
             select(BudgetAccountRow).where(BudgetAccountRow.id == account_id).with_for_update()
         )
@@ -461,7 +462,7 @@ class BudgetLedger:
                 allocation.tool_calls_consumed += operation.reserved_tool_calls
                 operation.consumed_tokens = operation.reserved_tokens
                 operation.consumed_tool_calls = operation.reserved_tool_calls
-                operation.normalized_error = "lease_reclaimed_after_dispatch"
+                operation.normalized_error = normalized_error
                 operation.state = BudgetOperationState.AMBIGUOUS.value
                 operation.settled_at = now
         if allocation.token_reserved or allocation.tool_calls_reserved:

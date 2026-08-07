@@ -74,6 +74,7 @@ class BudgetOperationState(StrEnum):
 class JoinMode(StrEnum):
     ALL_REQUIRED = "all_required"
     BOUNDED_PARTIAL = "bounded_partial"
+    FIRST_VALID = "first_valid"
 
 
 class AgentProfileRevision(RuntimeContract):
@@ -196,6 +197,8 @@ class JoinPolicy(RuntimeContract):
             self.expected_delegation_ids
         ):
             raise ValueError("all_required needs every delegation")
+        if self.mode is JoinMode.FIRST_VALID and self.min_successes != 1:
+            raise ValueError("first_valid needs exactly one successful delegation")
         return self
 
 

@@ -46,6 +46,24 @@ def test_nway_join_all_required_requires_every_child() -> None:
         )
 
 
+def test_first_valid_join_requires_exactly_one_success() -> None:
+    policy = JoinPolicy(
+        mode=JoinMode.FIRST_VALID,
+        expected_delegation_ids=(uuid4(), uuid4()),
+        min_successes=1,
+        deadline=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    assert policy.min_successes == 1
+
+    with pytest.raises(ValidationError, match="first_valid"):
+        JoinPolicy(
+            mode=JoinMode.FIRST_VALID,
+            expected_delegation_ids=(uuid4(), uuid4()),
+            min_successes=2,
+            deadline=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+
 def test_nway_join_accepts_eight_children_and_rejects_nine() -> None:
     delegation_ids = tuple(uuid4() for _ in range(MAX_DELEGATION_WAVE_SIZE))
     policy = JoinPolicy(
@@ -59,9 +77,7 @@ def test_nway_join_accepts_eight_children_and_rejects_nine() -> None:
     with pytest.raises(ValidationError):
         JoinPolicy(
             mode=JoinMode.BOUNDED_PARTIAL,
-            expected_delegation_ids=tuple(
-                uuid4() for _ in range(MAX_DELEGATION_WAVE_SIZE + 1)
-            ),
+            expected_delegation_ids=tuple(uuid4() for _ in range(MAX_DELEGATION_WAVE_SIZE + 1)),
             min_successes=1,
             deadline=datetime.now(UTC) + timedelta(minutes=5),
         )

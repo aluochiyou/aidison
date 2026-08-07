@@ -99,6 +99,63 @@ def _result_id(attempt_id: UUID, result_hash: str) -> UUID:
     return UUID(bytes=sha256(f"{attempt_id}:{result_hash}".encode()).digest()[:16])
 
 
+_TERMINAL_DELEGATION_STATUSES = {
+    DelegationStatus.SUCCEEDED.value,
+    DelegationStatus.FAILED.value,
+    DelegationStatus.CANCELLED.value,
+    DelegationStatus.STALE.value,
+    DelegationStatus.AMBIGUOUS.value,
+}
+
+
+def _evaluate_open_join(
+    *,
+    policy: JoinPolicy,
+    delegations: Sequence[DelegationRow],
+    now: datetime,
+) -> tuple[list[DelegationRow], bool, bool, bool]:
+    successes = [item for item in delegations if item.status == DelegationStatus.SUCCEEDED.value]
+    all_terminal = all(item.status in _TERMINAL_DELEGATION_STATUSES for item in delegations)
+    deadline_reached = now >= policy.deadline
+    if policy.mode is JoinMode.ALL_REQUIRED:
+        selected = successes
+        ready = len(successes) == len(delegations)
+    elif policy.mode is JoinMode.BOUNDED_PARTIAL:
+        selected = successes
+        ready = len(successes) >= policy.min_successes and (all_terminal or deadline_reached)
+    else:
+        selected = sorted(
+            successes,
+            key=lambda item: (item.completed_at or datetime.max.replace(tzinfo=UTC), item.id),
+        )[:1]
+        ready = bool(selected)
+    impossible = (all_terminal or deadline_reached) and not ready
+    return selected, ready, impossible, deadline_reached
+
+
+def _join_rejections(
+    *,
+    policy: JoinPolicy,
+    delegations: Sequence[DelegationRow],
+    selected: Sequence[DelegationRow],
+) -> tuple[RejectedResult, ...]:
+    selected_ids = {item.id for item in selected}
+    return tuple(
+        RejectedResult(
+            result_ref=str(item.id),
+            reason=(
+                "first_valid_superseded"
+                if policy.mode is JoinMode.FIRST_VALID
+                and item.status == DelegationStatus.SUCCEEDED.value
+                and item.id not in selected_ids
+                else item.status
+            ),
+        )
+        for item in delegations
+        if item.id not in selected_ids
+    )
+
+
 class PostgresRuntime:
     """Small durable scheduler beside Deep Agents, not a second Agent runtime."""
 
@@ -813,6 +870,99 @@ class PostgresRuntime:
             quarantine_reason=quarantine_reason,
         )
 
+    async def _cancel_join_siblings(
+        self,
+        *,
+        parent: JobRow,
+        delegations: Sequence[DelegationRow],
+        keep_child_ids: set[UUID],
+        normalized_error: str,
+    ) -> None:
+        terminal_jobs = {
+            JobStatus.SUCCEEDED.value,
+            JobStatus.FAILED.value,
+            JobStatus.CANCELLED.value,
+        }
+        candidate_ids = sorted(
+            {item.child_job_id for item in delegations if item.child_job_id not in keep_child_ids},
+            key=str,
+        )
+        if not candidate_ids:
+            return
+        jobs = list(
+            await self._session.scalars(
+                select(JobRow)
+                .where(JobRow.id.in_(candidate_ids))
+                .order_by(JobRow.id)
+                .with_for_update()
+            )
+        )
+        cancelled_ids = [item.id for item in jobs if item.status not in terminal_jobs]
+        if not cancelled_ids:
+            return
+
+        now = datetime.now(UTC)
+        for job in jobs:
+            if job.id not in cancelled_ids:
+                continue
+            job.cancel_requested = True
+            job.status = JobStatus.CANCELLED.value
+            job.completed_at = now
+            job.lease_owner = None
+            job.lease_token = None
+            job.lease_expires_at = None
+        await self._session.execute(
+            update(AttemptRow)
+            .where(
+                AttemptRow.job_id.in_(cancelled_ids),
+                AttemptRow.status == AttemptStatus.RUNNING.value,
+            )
+            .values(
+                status=AttemptStatus.CANCELLED.value,
+                completed_at=now,
+                normalized_error=normalized_error,
+            )
+        )
+        await self._session.execute(
+            update(DelegationRow)
+            .where(
+                DelegationRow.child_job_id.in_(cancelled_ids),
+                DelegationRow.status == "pending",
+            )
+            .values(
+                status=DelegationStatus.CANCELLED.value,
+                completed_at=now,
+            )
+        )
+        await self._session.execute(
+            update(PlanTaskRow)
+            .where(
+                PlanTaskRow.dispatched_job_id.in_(cancelled_ids),
+                PlanTaskRow.status.in_(("planned", "ready", "dispatched", "running", "blocked")),
+            )
+            .values(status="cancelled")
+        )
+        try:
+            ledger = BudgetLedger(self._session)
+            account_id = await ledger.get_account_id(parent.id)
+            for child_id in cancelled_ids:
+                await ledger.reconcile_reclaimed_owner(
+                    account_id=account_id,
+                    owner_kind=BudgetOwnerKind.CHILD,
+                    owner_ref=child_id,
+                    normalized_error=normalized_error,
+                )
+        except BudgetConflictError as exc:
+            raise RuntimeConflictError("join cleanup could not reconcile child budget") from exc
+        await self._events.append_event(
+            parent.project_id,
+            "delegation.siblings_cancelled",
+            {
+                "child_job_ids": [str(item) for item in cancelled_ids],
+                "reason": normalized_error,
+            },
+        )
+
     async def inspect_join(
         self,
         *,
@@ -841,44 +991,19 @@ class PostgresRuntime:
                 .order_by(DelegationRow.shard_key, DelegationRow.id)
             )
         )
-        terminal = {
-            DelegationStatus.SUCCEEDED.value,
-            DelegationStatus.FAILED.value,
-            DelegationStatus.CANCELLED.value,
-            DelegationStatus.STALE.value,
-            DelegationStatus.AMBIGUOUS.value,
-        }
         policy = JoinPolicy.model_validate(group.policy)
-
-        def readiness() -> tuple[list[DelegationRow], bool, bool, bool]:
-            successes = [
-                item for item in delegations if item.status == DelegationStatus.SUCCEEDED.value
-            ]
-            all_terminal = all(item.status in terminal for item in delegations)
-            deadline_reached = datetime.now(UTC) >= policy.deadline
-            if group.status != JoinStatus.OPEN.value:
-                return (
-                    successes,
-                    group.status == JoinStatus.JOINED.value,
-                    group.status
-                    in {
-                        JoinStatus.CANCELLED.value,
-                        JoinStatus.EXPIRED.value,
-                        JoinStatus.FAILED.value,
-                    },
-                    deadline_reached,
-                )
-            if policy.mode is JoinMode.ALL_REQUIRED:
-                ready = len(successes) == len(delegations)
-                impossible = (all_terminal and not ready) or (deadline_reached and not ready)
-            else:
-                ready = len(successes) >= policy.min_successes and (
-                    all_terminal or deadline_reached
-                )
-                impossible = (all_terminal or deadline_reached) and not ready
-            return successes, ready, impossible, deadline_reached
-
-        successes, ready, impossible, deadline_reached = readiness()
+        selected, ready, impossible, deadline_reached = _evaluate_open_join(
+            policy=policy,
+            delegations=delegations,
+            now=datetime.now(UTC),
+        )
+        if group.status != JoinStatus.OPEN.value:
+            ready = group.status == JoinStatus.JOINED.value
+            impossible = group.status in {
+                JoinStatus.CANCELLED.value,
+                JoinStatus.EXPIRED.value,
+                JoinStatus.FAILED.value,
+            }
         if group.status == JoinStatus.OPEN.value and impossible:
             locked_group = await self._session.scalar(
                 select(JoinGroupRow).where(JoinGroupRow.id == join_group_id).with_for_update()
@@ -894,8 +1019,18 @@ class PostgresRuntime:
                     .order_by(DelegationRow.shard_key, DelegationRow.id)
                 )
             )
-            successes, ready, impossible, deadline_reached = readiness()
+            selected, ready, impossible, deadline_reached = _evaluate_open_join(
+                policy=policy,
+                delegations=delegations,
+                now=datetime.now(UTC),
+            )
             if group.status == JoinStatus.OPEN.value and impossible:
+                await self._cancel_join_siblings(
+                    parent=parent,
+                    delegations=delegations,
+                    keep_child_ids=set(),
+                    normalized_error="join_closed_sibling_cancelled",
+                )
                 group.status = (
                     JoinStatus.EXPIRED.value if deadline_reached else JoinStatus.FAILED.value
                 )
@@ -909,16 +1044,16 @@ class PostgresRuntime:
                 )
 
         accepted_refs: list[str] = []
-        for item in successes:
+        for item in selected:
             if item.result_payload is None:
                 continue
             proposal_ref = item.result_payload.get("proposal_ref")
             if isinstance(proposal_ref, str):
                 accepted_refs.append(proposal_ref)
-        rejected = tuple(
-            RejectedResult(result_ref=str(item.id), reason=item.status)
-            for item in delegations
-            if item.status != DelegationStatus.SUCCEEDED.value
+        rejected = _join_rejections(
+            policy=policy,
+            delegations=delegations,
+            selected=selected,
         )
         await self._session.commit()
         return JoinSnapshot(
@@ -1086,6 +1221,14 @@ class PostgresRuntime:
             await self._session.commit()
             return None
 
+        policy = JoinPolicy.model_validate(group.policy)
+        delegations = list(
+            await self._session.scalars(
+                select(DelegationRow)
+                .where(DelegationRow.join_group_id == join_group_id)
+                .order_by(DelegationRow.shard_key, DelegationRow.id)
+            )
+        )
         parent = await self._session.get(JobRow, group.parent_job_id)
         project = None if parent is None else await self._session.get(ProjectRow, parent.project_id)
         if (
@@ -1097,43 +1240,31 @@ class PostgresRuntime:
             or parent.basis_hash != group.basis_hash
             or project.revision != group.basis_project_revision
         ):
+            if parent is not None:
+                await self._cancel_join_siblings(
+                    parent=parent,
+                    delegations=delegations,
+                    keep_child_ids=set(),
+                    normalized_error="join_cancelled_sibling_cancelled",
+                )
             group.status = JoinStatus.CANCELLED.value
             await self._session.commit()
             return None
 
-        policy = JoinPolicy.model_validate(group.policy)
-        delegations = list(
-            await self._session.scalars(
-                select(DelegationRow)
-                .where(DelegationRow.join_group_id == join_group_id)
-                .order_by(DelegationRow.shard_key, DelegationRow.id)
-            )
-        )
         if {item.id for item in delegations} != set(policy.expected_delegation_ids):
             raise RuntimeConflictError("durable join group differs from frozen policy")
 
-        terminal = {
-            DelegationStatus.SUCCEEDED.value,
-            DelegationStatus.FAILED.value,
-            DelegationStatus.CANCELLED.value,
-            DelegationStatus.STALE.value,
-            DelegationStatus.AMBIGUOUS.value,
-        }
-        successes = [
-            item for item in delegations if item.status == DelegationStatus.SUCCEEDED.value
-        ]
-        all_terminal = all(item.status in terminal for item in delegations)
-        ready = False
-        if policy.mode is JoinMode.ALL_REQUIRED:
-            ready = len(successes) == len(delegations)
-        elif len(successes) >= policy.min_successes:
-            ready = all_terminal or datetime.now(UTC) >= policy.deadline
+        selected, ready, _, _ = _evaluate_open_join(
+            policy=policy,
+            delegations=delegations,
+            now=datetime.now(UTC),
+        )
         if not ready:
             await self._session.commit()
             return None
 
         accepted_hashes: list[str] = []
-        for delegation in successes:
+        for delegation in selected:
             accepted_hash = await self._session.scalar(
                 select(AttemptResultRow.result_hash)
                 .where(
@@ -1147,10 +1278,20 @@ class PostgresRuntime:
                 raise RuntimeConflictError("successful delegation has no eligible result")
             accepted_hashes.append(accepted_hash)
 
-        rejected = tuple(
-            RejectedResult(result_ref=str(item.id), reason=item.status)
-            for item in delegations
-            if item.status != DelegationStatus.SUCCEEDED.value
+        await self._cancel_join_siblings(
+            parent=parent,
+            delegations=delegations,
+            keep_child_ids={item.child_job_id for item in selected},
+            normalized_error=(
+                "first_valid_sibling_cancelled"
+                if policy.mode is JoinMode.FIRST_VALID
+                else "join_closed_sibling_cancelled"
+            ),
+        )
+        rejected = _join_rejections(
+            policy=policy,
+            delegations=delegations,
+            selected=selected,
         )
         receipt = JoinReceipt(
             join_group_id=join_group_id,
@@ -1236,6 +1377,25 @@ class PostgresRuntime:
         if requested.status in terminal:
             await self._session.commit()
             return False
+
+        direct_delegations = (
+            list(
+                await self._session.scalars(
+                    select(DelegationRow)
+                    .where(DelegationRow.join_group_id.in_(direct_group_ids))
+                    .order_by(DelegationRow.id)
+                )
+            )
+            if direct_group_ids
+            else []
+        )
+        if direct_delegations:
+            await self._cancel_join_siblings(
+                parent=requested,
+                delegations=direct_delegations,
+                keep_child_ids=set(),
+                normalized_error="parent_cancelled_sibling_cancelled",
+            )
 
         now = datetime.now(UTC)
         for job in jobs:
