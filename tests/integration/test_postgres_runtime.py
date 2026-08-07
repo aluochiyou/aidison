@@ -188,6 +188,7 @@ async def test_generation_fencing_quarantines_late_result_and_join_is_unique() -
                     parent_attempt_id=root_claim.attempt_id,
                     parent_claim_generation=root_claim.claim_generation,
                     graph_step_id="research.parallel",
+                    role_key="research-worker",
                     profile_id="research-worker-ro",
                     profile_revision=RESEARCH_WORKER_PROFILE.revision,
                     basis_hash=basis_hash,
@@ -213,6 +214,12 @@ async def test_generation_fencing_quarantines_late_result_and_join_is_unique() -
                     .order_by(BudgetAllocationRow.id)
                 )
             )
+            await session.execute(
+                update(DelegationRow)
+                .where(DelegationRow.join_group_id == wave.join_group_id)
+                .values(payload=DelegationRow.payload.op("-")("role_key"))
+            )
+            await session.commit()
             replayed_wave = await runtime.create_delegation_wave(specs=specs, policy=policy)
             assert replayed_wave == wave
             assert len(allocation_ids) == 2
