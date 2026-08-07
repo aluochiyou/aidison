@@ -1337,11 +1337,23 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
                     if child_count == 4:
                         break
                     await asyncio.sleep(0.02)
+            async def run_recovery_child(worker_id: str) -> None:
+                # A concurrent SKIP LOCKED poll may legitimately observe no
+                # claimable row while another transaction briefly owns it.
+                # Model the production poll loop instead of assuming that one
+                # run_once call must claim work.
+                async with asyncio.timeout(10):
+                    while not await recovery_worker.run_once(  # noqa: ASYNC110
+                        worker_id=worker_id
+                    ):
+                        await asyncio.sleep(0.02)
+
             await asyncio.gather(
-                recovery_worker.run_once(worker_id="child-after-crash-one"),
-                recovery_worker.run_once(worker_id="child-after-crash-two"),
+                run_recovery_child("child-after-crash-one"),
+                run_recovery_child("child-after-crash-two"),
             )
-            assert await recovery_task is True
+            async with asyncio.timeout(10):
+                assert await recovery_task is True
 
         async with factory() as session:
             root = await session.get(JobRow, root_job_id)

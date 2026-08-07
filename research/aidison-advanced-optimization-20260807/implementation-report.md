@@ -132,6 +132,11 @@ scheduler、不创建直接 Gap→Job 路径、不实现 durable signal 或 recu
 - `passed`：真实 PG17 `tests/integration/test_plan_store.py` -> `6 passed`
 - `passed`：真实 PG17 `tests/integration/test_research_worker.py` -> `13 passed`，包含正常
   Gap→revision 2→follow-up join→最终合并，以及 parent generation reclaim 恢复。
+- `passed`：真实 PostgreSQL 18.4 空库从零 `alembic upgrade head`，随后
+  `tests/integration/test_plan_store.py tests/integration/test_research_worker.py` -> `19 passed`。
+- `passed`：reclaim crash-window 测试改为模拟生产 polling：并发 `SKIP LOCKED` 查询短暂返回
+  无任务时重试，并为 child drain 与 parent recovery 增加 10 秒边界，避免测试无界挂起；同一套
+  `19` 项在 PostgreSQL 17 与 18.4 均通过。
 - `passed`：真实 PG17 除 API closed-loop 外全部 integration -> `30 passed`
 - `passed`：Ruff -> `All checks passed!`
 - `passed`：Mypy（application/runtime/planning 核心文件）-> `Success: no issues found`
