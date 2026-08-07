@@ -17,18 +17,16 @@ from aidison.infrastructure.database import (
 from aidison.infrastructure.orm import PlanGapRow, PlanTaskRow
 from aidison.infrastructure.planning import (
     PlanConflictError,
-    PostgresPlanStore,
     build_revision_from_patch,
 )
+from aidison.infrastructure.research_planning import PostgresResearchPlanStore
 from aidison.infrastructure.runtime import PostgresRuntime
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.research.planning import GapStatus, ResearchGap, ResearchMode
 from aidison.runtime.planning import (
-    GapStatus,
     OrchestrationPlanRevision,
     PlanPatchKind,
     PlanPatchProposal,
-    ResearchGap,
-    ResearchMode,
     TaskEdge,
     TaskEdgeKind,
     TaskNode,
@@ -99,7 +97,7 @@ async def test_plan_history_is_immutable_and_frontier_and_patch_replay_are_deter
                     ),
                 ),
             )
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             assert await store.create_initial(claim=claim, plan=initial) == initial
             assert await store.create_initial(claim=claim, plan=initial) == initial
             frontier = await store.list_ready_frontier(root_job_id=root_job_id)
@@ -213,7 +211,7 @@ async def test_gap_recording_is_deduplicated_and_open_list_is_scoped_to_current_
                 planner_profile_revision=1,
                 nodes=(_node("a"), _node("b")),
             )
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             await store.create_initial(claim=claim, plan=initial)
 
             gap = ResearchGap(
@@ -338,7 +336,7 @@ async def test_revision2_cas_and_frontier_staleness_guard() -> None:
                 planner_profile_revision=1,
                 nodes=(_node("a"),),
             )
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             await store.create_initial(claim=claim, plan=base)
 
             # Build patch
@@ -432,7 +430,7 @@ async def test_resolve_gaps_only_updates_open_rows_and_rejects_non_open_target()
             claim = await runtime.claim_next_job(worker_id="resolve-ctrl", lease_seconds=60)
             assert claim is not None
 
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             await store.create_initial(
                 claim=claim,
                 plan=OrchestrationPlanRevision(
@@ -508,7 +506,7 @@ async def test_dedup_replay_returns_persisted_priority() -> None:
             claim = await runtime.claim_next_job(worker_id="dedup-pri-ctrl", lease_seconds=60)
             assert claim is not None
 
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             await store.create_initial(
                 claim=claim,
                 plan=OrchestrationPlanRevision(

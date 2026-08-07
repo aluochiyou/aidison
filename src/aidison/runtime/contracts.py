@@ -143,6 +143,7 @@ class DelegationSpec(RuntimeContract):
     parent_claim_generation: int = Field(ge=1)
     graph_step_id: str = Field(min_length=1, max_length=200)
     task_kind: str = Field(default="research", pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    role_key: str | None = Field(default=None, min_length=1, max_length=120)
     profile_id: str = Field(min_length=1, max_length=200)
     profile_revision: int = Field(ge=1)
     basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")

@@ -1,8 +1,18 @@
 ﻿# Aidison Status
 
-- Updated: 2026-08-03
-- Lifecycle: V0 development paused; implementation handoff sealed
-- Current phase: 停止新增开发，保留当前 dirty worktree、原始研究资料和运行环境；详细交接见 `handoff/2026-08-03-aidison/`
+- Updated: 2026-08-08
+- Lifecycle: active development
+- Current phase: C4 通用 durable planner/executor 已实现并进入审查；后续为 scoped approval 与新 JoinPolicy。
+
+> 说明：下方大部分条目是 2026-08-03 V0 handoff 的历史验收快照。当前增量以 Git、ADR-0003/0004 和 `docs/engineering/development-decisions.md` 为准，版本收口时再整体重写本页。
+
+## Current development delta
+
+- PostgreSQL `LISTEN/NOTIFY` 只作低延迟 wake，Join correctness 仍由数据库重读决定；连接失败退化为有界 polling。
+- durable plan 已包含 immutable revision、ready frontier、CAS replan、task→Job binding 与 execution projection。
+- `DurablePlanExecutor` 已从 ResearchWorker 提取，通用模块不导入 research contracts。
+- Research N-way primary/gap 与真实 Solution proposal 使用同一 executor；Solution 在 Join commit 后、Domain write 前崩溃可由新 generation 恢复且不重跑模型。
+- PostgreSQL 18.4 隔离库从零 Alembic migration：passed；C4 focused integration：passed。
 
 ## Verified
 

@@ -72,6 +72,20 @@ def _json_payload(value: Any) -> dict[str, Any]:
     return cast(dict[str, Any], value.model_dump(mode="json"))
 
 
+def _delegation_role_key(spec: DelegationSpec) -> str | None:
+    return spec.role_key or {
+        "research": "research-worker",
+        "solution": "solution-worker",
+        "impact": "impact-worker",
+    }.get(spec.task_kind)
+
+
+def _normalized_delegation_spec(payload: dict[str, Any]) -> DelegationSpec:
+    spec = DelegationSpec.model_validate(payload)
+    role_key = _delegation_role_key(spec)
+    return spec if spec.role_key is not None else spec.model_copy(update={"role_key": role_key})
+
+
 def _result_hash(result: DelegationResult) -> str:
     encoded = json.dumps(
         result.model_dump(mode="json"),
@@ -235,13 +249,11 @@ class PostgresRuntime:
 
         profiles = ProfileRepository(self._session)
         try:
-            worker_role = {
-                "research": "research-worker",
-                "solution": "solution-worker",
-                "impact": "impact-worker",
-            }.get(first.task_kind)
+            worker_role = _delegation_role_key(first)
             if worker_role is None:
-                raise RuntimeConflictError(f"unsupported delegation task kind: {first.task_kind}")
+                raise RuntimeConflictError("delegation requires an explicit frozen role binding")
+            if any(_delegation_role_key(item) != worker_role for item in specs):
+                raise RuntimeConflictError("delegation wave must share one frozen role binding")
             worker_binding = await profiles.get_binding(parent.id, worker_role)
             worker_profile = await profiles.get_revision(
                 worker_binding.profile_id,
@@ -285,7 +297,8 @@ class PostgresRuntime:
             requested_by_id = {item.delegation_id: item for item in specs}
             existing_by_id = {item.id: item for item in existing_delegations}
             payloads_match = all(
-                existing_by_id[item.delegation_id].payload == _json_payload(item)
+                _normalized_delegation_spec(existing_by_id[item.delegation_id].payload)
+                == item.model_copy(update={"role_key": _delegation_role_key(item)})
                 for item in specs
                 if item.delegation_id in existing_by_id
             )

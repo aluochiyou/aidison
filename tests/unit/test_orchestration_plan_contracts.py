@@ -7,19 +7,21 @@ import pytest
 from pydantic import ValidationError
 
 from aidison.infrastructure.planning import build_revision_from_patch
-from aidison.runtime.planning import (
+from aidison.research.planning import (
     GapStatus,
+    ResearchGap,
+    ResearchMode,
+    build_fixed_research_shadow_plan,
+    build_research_shadow_plan,
+)
+from aidison.runtime.planning import (
     OrchestrationPlanRevision,
     PlanPatchKind,
     PlanPatchProposal,
-    ResearchGap,
-    ResearchMode,
     TaskEdge,
     TaskEdgeKind,
     TaskNode,
     TaskStatus,
-    build_fixed_research_shadow_plan,
-    build_research_shadow_plan,
     canonical_patch_hash,
     canonical_plan_hash,
 )
@@ -102,6 +104,12 @@ def test_nway_shadow_plan_stably_partitions_ten_modules_into_eight_shards() -> N
     assert plan.nodes[0].input_refs == ("module://module-0", "module://module-8")
     assert plan.nodes[1].input_refs == ("module://module-1", "module://module-9")
     assert all(node.input_refs for node in plan.nodes)
+
+
+def test_task_node_mode_is_open_to_non_research_workflows() -> None:
+    node = _node("solution.complete").model_copy(update={"mode": "single"})
+
+    assert TaskNode.model_validate(node.model_dump()).mode == "single"
 
 
 def test_plan_rejects_duplicate_keys_and_unknown_edges() -> None:

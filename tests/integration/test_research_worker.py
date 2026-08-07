@@ -56,17 +56,16 @@ from aidison.infrastructure.planning import (
     PostgresPlanStore,
     build_revision_from_patch,
 )
+from aidison.infrastructure.research_planning import PostgresResearchPlanStore
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
 from aidison.infrastructure.signals import PostgresSignalBus
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.research.planning import GapStatus, ResearchGap, ResearchMode
 from aidison.runtime.contracts import JobClaim, JobStatus
 from aidison.runtime.planning import (
-    GapStatus,
     OrchestrationPlanRevision,
     PlanPatchKind,
     PlanPatchProposal,
-    ResearchGap,
-    ResearchMode,
     TaskEdge,
     TaskEdgeKind,
     TaskNode,
@@ -648,8 +647,10 @@ async def test_worker_runs_bounded_nway_research_into_one_canonical_decision(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("crash_after_join", [False, True])
 async def test_solution_job_creates_server_owned_typed_proposal(
     tmp_path: Path,
+    crash_after_join: bool,
 ) -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
@@ -780,21 +781,75 @@ async def test_solution_job_creates_server_owned_typed_proposal(
             lease_seconds=10,
             poll_seconds=0.02,
         )
-        worker_task = asyncio.create_task(
-            worker.run_forever(worker_id="solution-integration-worker", concurrency=3)
-        )
-        try:
-            async with asyncio.timeout(15):
+        if crash_after_join:
+            join_committed = asyncio.Event()
+
+            async def crash_before_domain_write(**_: Any) -> Any:
+                join_committed.set()
+                await asyncio.Future()
+
+            worker._submit_solution_proposal = crash_before_domain_write  # type: ignore[method-assign]
+            parent_task = asyncio.create_task(
+                worker.run_once(worker_id="solution-parent-before-crash")
+            )
+            async with asyncio.timeout(10):
                 while True:
                     async with factory() as session:
-                        root = await session.get(JobRow, root_job_id)
-                        if root is not None and root.status in {"succeeded", "failed"}:
-                            break
-                    await asyncio.sleep(0.05)
-        finally:
-            worker_task.cancel()
+                        child_count = await session.scalar(
+                            select(func.count())
+                            .select_from(JobRow)
+                            .where(JobRow.parent_job_id == root_job_id)
+                        )
+                    if child_count == 1:
+                        break
+                    await asyncio.sleep(0.02)
+            assert await worker.run_once(worker_id="solution-child-before-crash") is True
+            async with asyncio.timeout(10):
+                await join_committed.wait()
+            parent_task.cancel()
             with suppress(asyncio.CancelledError):
-                await worker_task
+                await parent_task
+
+            async with factory() as session:
+                root = await session.get(JobRow, root_job_id)
+                assert root is not None and root.status == "running"
+                root.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                await session.commit()
+
+            recovery_model_factory = MagicMock(
+                side_effect=AssertionError("committed solution recovery must not call the model")
+            )
+            recovery_worker = ResearchWorker(
+                session_factory=factory,
+                signal_bus=PostgresSignalBus(engine),
+                artifact_root=tmp_path,
+                model_factory=recovery_model_factory,
+                search_backend_factory=FakeSearchBackend,
+                github_backend_factory=FakeGitHubBackend,
+                page_fetcher=FakePageFetcher(),
+                agent_factory=fake_agent_factory,
+                solution_agent_factory=fake_solution_agent_factory,
+                lease_seconds=10,
+                poll_seconds=0.02,
+            )
+            assert await recovery_worker.run_once(worker_id="solution-parent-after-crash") is True
+            recovery_model_factory.assert_not_called()
+        else:
+            worker_task = asyncio.create_task(
+                worker.run_forever(worker_id="solution-integration-worker", concurrency=3)
+            )
+            try:
+                async with asyncio.timeout(15):
+                    while True:
+                        async with factory() as session:
+                            root = await session.get(JobRow, root_job_id)
+                            if root is not None and root.status in {"succeeded", "failed"}:
+                                break
+                        await asyncio.sleep(0.05)
+            finally:
+                worker_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker_task
 
         async with factory() as session:
             root = await session.get(JobRow, root_job_id)
@@ -811,6 +866,20 @@ async def test_solution_job_creates_server_owned_typed_proposal(
             assert len(proposal.bom) == 2
             assert proposal.unknowns == ("Final measured tolerances",)
             assert await session.scalar(select(func.count()).select_from(JoinReceiptRow)) == 1
+            plan_head = await session.get(PlanHeadRow, root_job_id)
+            assert plan_head is not None and plan_head.current_revision == 1
+            solution_tasks = list(
+                await session.scalars(
+                    select(PlanTaskRow).where(
+                        PlanTaskRow.logical_key == "solution.complete"
+                    )
+                )
+            )
+            assert len(solution_tasks) == 1
+            assert solution_tasks[0].mode == "single"
+            assert solution_tasks[0].role_key == "solution-worker"
+            assert solution_tasks[0].dispatched_job_id is not None
+            assert solution_tasks[0].status == "succeeded"
             assert (
                 await session.scalar(
                     select(func.count())
@@ -1737,7 +1806,7 @@ async def test_gap_to_patch_frontier_dispatch_does_not_create_direct_gap_to_job(
             )
 
             # Record one gap
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             gap = ResearchGap(
                 root_job_id=root_job_id,
                 task_logical_key="a",
@@ -1851,7 +1920,7 @@ async def test_gap_dedup_replay_and_fake_result_rejection(
             claim = await runtime.claim_next_job(worker_id="gap-replay-ctrl", lease_seconds=60)
             assert claim is not None
 
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             await store.create_initial(
                 claim=claim,
                 plan=OrchestrationPlanRevision(
@@ -1953,7 +2022,7 @@ async def test_revision2_frontier_binding_is_idempotent(
             claim = await runtime.claim_next_job(worker_id="rev2-disp-ctrl", lease_seconds=60)
             assert claim is not None
 
-            store = PostgresPlanStore(session)
+            store = PostgresResearchPlanStore(session)
             base = OrchestrationPlanRevision(
                 root_job_id=str(root_job_id),
                 revision=1,
