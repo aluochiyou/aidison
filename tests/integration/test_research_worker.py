@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
 from sqlalchemy import func, select, text
 
+from aidison.agents.profiles import RESEARCH_WORKER_PROFILE
 from aidison.application.research import AgentRunner, ResearchWorker
 from aidison.application.service import ProjectApplication
 from aidison.domain.models import (
@@ -48,10 +49,24 @@ from aidison.infrastructure.orm import (
     ProjectRow,
     SolutionProposalRow,
 )
-from aidison.infrastructure.planning import PostgresPlanStore
+from aidison.infrastructure.planning import (
+    PostgresPlanStore,
+    build_revision_from_patch,
+)
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.contracts import JobClaim, JobStatus
+from aidison.runtime.planning import (
+    GapStatus,
+    OrchestrationPlanRevision,
+    PlanPatchKind,
+    PlanPatchProposal,
+    ResearchGap,
+    ResearchMode,
+    TaskEdge,
+    TaskEdgeKind,
+    TaskNode,
+)
 from aidison.tools.github import ControlledGitHubRead, GitHubMcpSession
 from aidison.tools.web_search import (
     ControlledWebSearch,
@@ -1348,5 +1363,149 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
                     status=JobStatus.SUCCEEDED,
                     result_ref=str(decision_after_reclaim),
                 )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_gap_to_patch_frontier_dispatch_does_not_create_direct_gap_to_job(
+    tmp_path: Path,
+) -> None:
+    """Gaps are planning inputs that flow through patch → revision → frontier, never direct Job."""
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Gap-to-patch fixture",
+                goal="Verify gap flows through plan patch, not directly to Job",
+                idempotency_key=f"gap2patch-project-{uuid4()}",
+            )
+            basis_hash = sha256(b"gap2patch-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+            )
+            claim = await runtime.claim_next_job(worker_id="gap2patch-ctrl", lease_seconds=60)
+            assert claim is not None
+
+            base = (
+                await PostgresPlanStore(session).create_initial(
+                    claim=claim,
+                    plan=OrchestrationPlanRevision(
+                        root_job_id=str(root_job_id),
+                        revision=1,
+                        basis_hash=basis_hash,
+                        reason="initial",
+                        planner_profile_id="research-orchestrator",
+                        planner_profile_revision=1,
+                        nodes=(
+                            TaskNode(
+                                logical_key="a",
+                                objective="Research A",
+                                mode=ResearchMode.ATOM,
+                                role_key="research-worker",
+                                profile_id=RESEARCH_WORKER_PROFILE.profile_id,
+                                profile_revision=RESEARCH_WORKER_PROFILE.revision,
+                                budget_ref="budget://root",
+                                depth=0,
+                                input_refs=("module://a",),
+                                success_criteria=("one result",),
+                                stop_criteria=("boundary",),
+                            ),
+                        ),
+                    ),
+                )
+            )
+
+            # Record one gap
+            store = PostgresPlanStore(session)
+            gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                category="missing_data",
+                description="No spec found for module A interface",
+                module_refs=("module://a",),
+            )
+            await store.record_gap(gap=gap)
+            open_gaps = await store.list_open_gaps(root_job_id=root_job_id)
+            assert len(open_gaps) == 1
+
+            # Planner produces a patch — revision 2 with a new follow-up node
+            next_rev = build_revision_from_patch(
+                base=base,
+                patch_kind=PlanPatchKind.EXPAND,
+                trigger="gap: missing interface spec for module A",
+                new_nodes=(
+                    TaskNode(
+                        logical_key="deep-a",
+                        objective="Deep research on module A interface",
+                        mode=ResearchMode.DEEP,
+                        role_key="research-worker",
+                        profile_id=RESEARCH_WORKER_PROFILE.profile_id,
+                        profile_revision=RESEARCH_WORKER_PROFILE.revision,
+                        budget_ref="budget://root",
+                        depth=1,
+                        input_refs=("module://a",),
+                        success_criteria=("one evidence-backed spec",),
+                        stop_criteria=("spec found or all sources exhausted",),
+                    ),
+                ),
+                new_edges=(
+                    TaskEdge(
+                        from_key="a",
+                        to_key="deep-a",
+                        kind=TaskEdgeKind.EVIDENCE_FROM,
+                    ),
+                ),
+            )
+            patch = PlanPatchProposal(
+                root_job_id=str(root_job_id),
+                base_revision=1,
+                base_plan_hash=base.plan_hash,
+                kind=PlanPatchKind.EXPAND,
+                trigger="gap: missing interface spec for module A",
+                payload={"gap_hash": gap.gap_hash},
+                new_plan=next_rev,
+            )
+            receipt = await store.apply_patch(claim=claim, patch=patch)
+            assert receipt.new_revision == 2
+
+            # Resolve the gap
+            await store.resolve_gaps(
+                root_job_id=root_job_id,
+                gap_hashes=(gap.gap_hash,),
+                status=GapStatus.ACCEPTED,
+            )
+            open_gaps = await store.list_open_gaps(root_job_id=root_job_id)
+            assert len(open_gaps) == 0
+
+            # Verify: frontier dispatch sees revision 2 nodes
+            current = await store.get_current(root_job_id=root_job_id)
+            assert current.revision == 2
+            assert {n.logical_key for n in current.nodes} == {"a", "deep-a"}
+
+            # Gap never created a Job directly — PlanGap rows don't carry dispatched_job_id
+            from aidison.infrastructure.orm import PlanGapRow
+            gap_rows = list(
+                await session.scalars(
+                    select(PlanGapRow).where(PlanGapRow.root_job_id == root_job_id)
+                )
+            )
+            assert len(gap_rows) == 1
+            assert gap_rows[0].status == GapStatus.ACCEPTED.value
     finally:
         await engine.dispose()

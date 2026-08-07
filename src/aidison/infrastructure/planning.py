@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import exists, select
+from sqlalchemy import update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from aidison.infrastructure.orm import (
     JobRow,
+    PlanGapRow,
     PlanHeadRow,
     PlanPatchRow,
     PlanRevisionRow,
@@ -18,9 +21,12 @@ from aidison.infrastructure.orm import (
 )
 from aidison.runtime.contracts import JobClaim, JobStatus
 from aidison.runtime.planning import (
+    GapStatus,
     OrchestrationPlanRevision,
+    PlanPatchKind,
     PlanPatchProposal,
     ReplanReceipt,
+    ResearchGap,
     ResearchMode,
     TaskEdge,
     TaskEdgeKind,
@@ -503,6 +509,156 @@ class PostgresPlanStore:
             stop_criteria=tuple(row.stop_criteria),
         )
 
+    async def record_gap(
+        self,
+        *,
+        gap: ResearchGap,
+    ) -> ResearchGap:
+        """Deduplicate and record a typed knowledge gap.
+
+        The gap identity is its canonical hash (category, description, module/evidence refs,
+        and lineage task/result). If a gap with the same hash already exists for this plan
+        revision, it is silently deduplicated — the existing row is returned unchanged.
+        """
+        head = await self._session.scalar(
+            select(PlanHeadRow).where(PlanHeadRow.root_job_id == gap.root_job_id)
+        )
+        if head is None:
+            raise PlanNotFoundError("root Job has no plan")
+
+        revision = await self._get_revision_row(gap.root_job_id, head.current_revision)
+        if gap.plan_revision != revision.revision:
+            raise PlanConflictError(
+                f"gap plan_revision {gap.plan_revision} does not match current head "
+                f"revision {revision.revision}"
+            )
+
+        existing = await self._session.scalar(
+            select(PlanGapRow).where(
+                PlanGapRow.root_job_id == gap.root_job_id,
+                PlanGapRow.plan_revision_id == revision.id,
+                PlanGapRow.gap_hash == gap.gap_hash,
+            )
+        )
+        if existing is not None:
+            return ResearchGap(
+                root_job_id=existing.root_job_id,
+                task_logical_key=gap.task_logical_key,
+                plan_revision=revision.revision,
+                source_result_id=existing.source_result_id,
+                source_result_hash=existing.payload.get("source_result_hash"),
+                gap_hash=existing.gap_hash,
+                category=gap.category,
+                description=gap.description,
+                module_refs=gap.module_refs,
+                evidence_refs=gap.evidence_refs,
+                status=GapStatus(existing.status),
+                priority=gap.priority,
+                bound=gap.bound,
+            )
+
+        task = await self._session.scalar(
+            select(PlanTaskRow).where(
+                PlanTaskRow.plan_revision_id == revision.id,
+                PlanTaskRow.logical_key == gap.task_logical_key,
+            )
+        )
+        if task is None:
+            raise PlanConflictError("gap references a task that does not belong to this revision")
+
+        self._session.add(
+            PlanGapRow(
+                id=uuid4(),
+                root_job_id=gap.root_job_id,
+                plan_revision_id=revision.id,
+                source_task_id=task.id,
+                source_result_id=gap.source_result_id,
+                gap_hash=gap.gap_hash,
+                status=GapStatus.OPEN.value,
+                payload=gap.model_dump(mode="json", exclude={"status", "priority"}),
+            )
+        )
+        await self._session.flush()
+        return gap
+
+    async def list_open_gaps(
+        self,
+        *,
+        root_job_id: UUID,
+        min_priority: int = 0,
+    ) -> tuple[ResearchGap, ...]:
+        """Return all open gaps for the current plan revision, above a priority floor."""
+        head = await self._session.get(PlanHeadRow, root_job_id)
+        if head is None:
+            raise PlanNotFoundError("root Job has no plan")
+        revision = await self._get_revision_row(root_job_id, head.current_revision)
+        task_alias = aliased(PlanTaskRow)
+        rows = list(
+            await self._session.scalars(
+                select(PlanGapRow)
+                .join(task_alias, task_alias.id == PlanGapRow.source_task_id)
+                .where(
+                    PlanGapRow.root_job_id == root_job_id,
+                    PlanGapRow.plan_revision_id == revision.id,
+                    PlanGapRow.status == GapStatus.OPEN.value,
+                )
+                .order_by(PlanGapRow.created_at)
+            )
+        )
+        gaps: list[ResearchGap] = []
+        for row in rows:
+            priority = row.payload.get("priority", 0)
+            if priority < min_priority:
+                continue
+            gaps.append(
+                ResearchGap(
+                    root_job_id=row.root_job_id,
+                    task_logical_key=row.payload["task_logical_key"],
+                    plan_revision=revision.revision,
+                    source_result_id=row.source_result_id,
+                    source_result_hash=row.payload.get("source_result_hash"),
+                    gap_hash=row.gap_hash,
+                    category=row.payload["category"],
+                    description=row.payload["description"],
+                    module_refs=tuple(row.payload.get("module_refs", ())),
+                    evidence_refs=tuple(row.payload.get("evidence_refs", ())),
+                    status=GapStatus(row.status),
+                    priority=priority,
+                    bound=row.payload.get("bound", 1),
+                )
+            )
+        return tuple(gaps)
+
+    async def resolve_gaps(
+        self,
+        *,
+        root_job_id: UUID,
+        gap_hashes: tuple[str, ...],
+        status: GapStatus,
+    ) -> int:
+        """Mark a set of gaps as accepted, rejected, or resolved. Returns updated count."""
+        if not gap_hashes:
+            return 0
+        head = await self._session.scalar(
+            select(PlanHeadRow).where(PlanHeadRow.root_job_id == root_job_id).with_for_update()
+        )
+        if head is None:
+            raise PlanNotFoundError("root Job has no plan")
+        revision = await self._get_revision_row(root_job_id, head.current_revision, lock=True)
+        result = await self._session.execute(
+            sql_update(PlanGapRow)
+            .where(
+                PlanGapRow.root_job_id == root_job_id,
+                PlanGapRow.plan_revision_id == revision.id,
+                PlanGapRow.gap_hash.in_(gap_hashes),
+            )
+            .values(status=status.value)
+        )
+        await self._session.flush()
+        from typing import Any as _Any
+        rowcount: int = cast(_Any, result).rowcount
+        return rowcount
+
     @staticmethod
     def _receipt_from_row(row: ReplanReceiptRow, *, new_revision: int) -> ReplanReceipt:
         return ReplanReceipt(
@@ -514,3 +670,66 @@ class PostgresPlanStore:
             new_revision=new_revision,
             patch_hash=row.patch_hash,
         )
+
+
+def build_revision_from_patch(
+    *,
+    base: OrchestrationPlanRevision,
+    patch_kind: PlanPatchKind,
+    trigger: str,
+    new_nodes: tuple[TaskNode, ...] = (),
+    new_edges: tuple[TaskEdge, ...] = (),
+    retired_keys: tuple[str, ...] = (),
+    reason: str = "",
+) -> OrchestrationPlanRevision:
+    """Deterministically produce the next revision from a plan patch.
+
+    This is a pure helper: it computes the canonical hash of the resulting plan so
+    the caller can build a PlanPatchProposal to pass to apply_patch().
+
+    - *new_nodes* / *new_edges* are appended; retired keys are dropped.
+    - Retired nodes that already reached dispatched/succeeded/failed remain superseded.
+    """
+
+    if patch_kind is PlanPatchKind.CONTRACT and not retired_keys:
+        raise ValueError("contract patch requires at least one retired key")
+    if patch_kind is PlanPatchKind.EXPAND and not new_nodes:
+        raise ValueError("expand patch requires at least one new node")
+
+    existing_keys = {node.logical_key for node in base.nodes}
+    retired_set = set(retired_keys)
+    for key in retired_set:
+        if key not in existing_keys:
+            raise ValueError(f"retired key {key!r} does not exist in the base plan")
+
+    new_keys = {node.logical_key for node in new_nodes}
+    if new_keys & existing_keys:
+        raise ValueError(f"new node keys collide with existing: {new_keys & existing_keys}")
+    if new_keys & retired_set:
+        raise ValueError(f"new node keys collide with retired: {new_keys & retired_set}")
+
+    retired_nodes = [
+        node
+        for node in base.nodes
+        if node.logical_key in retired_set
+        and node.status
+        in {TaskStatus.DISPATCHED, TaskStatus.RUNNING, TaskStatus.SUCCEEDED, TaskStatus.FAILED}
+    ]
+    kept = [node for node in base.nodes if node.logical_key not in retired_set]
+    superseded = tuple(
+        node.model_copy(update={"status": TaskStatus.SUPERSEDED}) for node in retired_nodes
+    )
+    fresh_nodes = kept + list(superseded) + list(new_nodes)
+    fresh_edges = base.edges + new_edges
+
+    return OrchestrationPlanRevision(
+        root_job_id=base.root_job_id,
+        revision=base.revision + 1,
+        parent_revision=base.revision,
+        basis_hash=base.basis_hash,
+        reason=reason or f"patch {patch_kind.value}: {trigger}",
+        planner_profile_id=base.planner_profile_id,
+        planner_profile_revision=base.planner_profile_revision,
+        nodes=tuple(fresh_nodes),
+        edges=fresh_edges,
+    )

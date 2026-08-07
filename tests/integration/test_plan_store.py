@@ -15,13 +15,19 @@ from aidison.infrastructure.database import (
     create_session_factory,
 )
 from aidison.infrastructure.orm import PlanTaskRow
-from aidison.infrastructure.planning import PlanConflictError, PostgresPlanStore
+from aidison.infrastructure.planning import (
+    PlanConflictError,
+    PostgresPlanStore,
+    build_revision_from_patch,
+)
 from aidison.infrastructure.runtime import PostgresRuntime
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.planning import (
+    GapStatus,
     OrchestrationPlanRevision,
     PlanPatchKind,
     PlanPatchProposal,
+    ResearchGap,
     ResearchMode,
     TaskEdge,
     TaskEdgeKind,
@@ -164,5 +170,233 @@ async def test_plan_history_is_immutable_and_frontier_and_patch_replay_are_deter
             with pytest.raises(PlanConflictError, match="head is stale"):
                 await store.apply_patch(claim=claim, patch=conflicting)
             await session.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_gap_recording_is_deduplicated_and_open_list_is_scoped_to_current_revision() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Gap dedup fixture",
+                goal="Verify gap deduplication and revision scoping",
+                idempotency_key=f"gap-project-{uuid4()}",
+            )
+            basis_hash = sha256(b"gap-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+            )
+            claim = await runtime.claim_next_job(worker_id="gap-controller", lease_seconds=60)
+            assert claim is not None
+
+            initial = OrchestrationPlanRevision(
+                root_job_id=str(root_job_id),
+                revision=1,
+                basis_hash=basis_hash,
+                reason="initial",
+                planner_profile_id="research-orchestrator",
+                planner_profile_revision=1,
+                nodes=(_node("a"), _node("b")),
+            )
+            store = PostgresPlanStore(session)
+            await store.create_initial(claim=claim, plan=initial)
+
+            gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                category="missing_data",
+                description="No spec found for physical interface",
+            )
+            recorded = await store.record_gap(gap=gap)
+            assert recorded.gap_hash == gap.gap_hash
+            assert recorded.status == GapStatus.OPEN
+
+            # Dedup
+            same = await store.record_gap(gap=gap)
+            assert same.gap_hash == gap.gap_hash
+
+            # Different category -> different hash
+            gap2 = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                category="compatibility_conflict",
+                description="Module A and B may conflict",
+            )
+            recorded2 = await store.record_gap(gap=gap2)
+            assert recorded2.gap_hash != gap.gap_hash
+
+            open_gaps = await store.list_open_gaps(root_job_id=root_job_id)
+            assert len(open_gaps) == 2
+            assert {g.gap_hash for g in open_gaps} == {gap.gap_hash, gap2.gap_hash}
+
+            # Resolve one
+            resolved = await store.resolve_gaps(
+                root_job_id=root_job_id,
+                gap_hashes=(gap.gap_hash,),
+                status=GapStatus.ACCEPTED,
+            )
+            assert resolved == 1
+
+            open_gaps = await store.list_open_gaps(root_job_id=root_job_id)
+            assert len(open_gaps) == 1
+            assert open_gaps[0].gap_hash == gap2.gap_hash
+
+            # Priority filter
+            await store.record_gap(
+                gap=ResearchGap(
+                    root_job_id=root_job_id,
+                    task_logical_key="b",
+                    plan_revision=1,
+                    category="test",
+                    description="Low priority gap",
+                    priority=5,
+                )
+            )
+            filtered = await store.list_open_gaps(root_job_id=root_job_id, min_priority=10)
+            assert len(filtered) == 0  # priority 5 falls below floor of 10
+
+            # record_gap rejects mismatch between gap.plan_revision and current head
+            with pytest.raises(PlanConflictError, match="plan_revision"):
+                await store.record_gap(
+                    gap=ResearchGap(
+                        root_job_id=root_job_id,
+                        task_logical_key="a",
+                        plan_revision=99,
+                        category="x",
+                        description="x",
+                    )
+                )
+
+            # record_gap rejects task that doesn't exist
+            with pytest.raises(PlanConflictError, match="task"):
+                await store.record_gap(
+                    gap=ResearchGap(
+                        root_job_id=root_job_id,
+                        task_logical_key="nonexistent",
+                        plan_revision=1,
+                        category="x",
+                        description="x",
+                    )
+                )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_revision2_cas_and_frontier_staleness_guard() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Revision2 CAS fixture",
+                goal="Verify revision 2+ commit, replay, and head staleness",
+                idempotency_key=f"rev2-project-{uuid4()}",
+            )
+            basis_hash = sha256(b"rev2-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+            )
+            claim = await runtime.claim_next_job(worker_id="rev2-controller", lease_seconds=60)
+            assert claim is not None
+
+            base = OrchestrationPlanRevision(
+                root_job_id=str(root_job_id),
+                revision=1,
+                basis_hash=basis_hash,
+                reason="initial",
+                planner_profile_id="research-orchestrator",
+                planner_profile_revision=1,
+                nodes=(_node("a"),),
+            )
+            store = PostgresPlanStore(session)
+            await store.create_initial(claim=claim, plan=base)
+
+            # Build patch
+            next_rev = build_revision_from_patch(
+                base=base,
+                patch_kind=PlanPatchKind.EXPAND,
+                trigger="gap detected",
+                new_nodes=(_node("b"),),
+            )
+            patch = PlanPatchProposal(
+                root_job_id=str(root_job_id),
+                base_revision=1,
+                base_plan_hash=base.plan_hash,
+                kind=PlanPatchKind.EXPAND,
+                trigger="gap detected",
+                payload={"gap_hash": "test"},
+                new_plan=next_rev,
+            )
+            receipt = await store.apply_patch(claim=claim, patch=patch)
+            assert receipt.new_revision == 2
+            assert receipt.base_revision == 1
+            current = await store.get_current(root_job_id=root_job_id)
+            assert current.revision == 2
+            assert current.parent_revision == 1
+            assert [n.logical_key for n in current.nodes] == ["a", "b"]
+
+            # Replay of same patch is idempotent
+            replay = await store.apply_patch(claim=claim, patch=patch)
+            assert replay.new_revision == receipt.new_revision
+            assert replay.patch_hash == receipt.patch_hash
+
+            # A stale patch targeting revision 1 is rejected
+            stale_next = build_revision_from_patch(
+                base=base,
+                patch_kind=PlanPatchKind.EXPAND,
+                trigger="stale attempt",
+                new_nodes=(_node("c"),),
+            )
+            stale_patch = PlanPatchProposal(
+                root_job_id=str(root_job_id),
+                base_revision=1,
+                base_plan_hash=base.plan_hash,
+                kind=PlanPatchKind.EXPAND,
+                trigger="stale attempt",
+                new_plan=stale_next,
+            )
+            with pytest.raises(PlanConflictError, match="head is stale"):
+                await store.apply_patch(claim=claim, patch=stale_patch)
+            await session.rollback()
+
+            # Frontier is after revision 2 nodes
+            await session.execute(
+                update(PlanTaskRow)
+                .where(PlanTaskRow.logical_key == "a")
+                .values(status="succeeded")
+            )
+            await session.commit()
+            refreshed = await store.refresh_frontier(root_job_id=root_job_id)
+            assert {item.logical_key for item in refreshed} == {"b"}
     finally:
         await engine.dispose()

@@ -184,6 +184,73 @@ class PlanPatchProposal(PlanningContract):
         return self
 
 
+class GapStatus(StrEnum):
+    OPEN = "open"
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    RESOLVED = "resolved"
+
+
+class GapLineage(PlanningContract):
+    """Provenance: which task node and which eligible result produced this gap."""
+
+    root_job_id: UUID
+    task_logical_key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
+    plan_revision: int = Field(ge=1)
+    source_result_id: UUID | None = None
+    source_result_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+    @model_validator(mode="after")
+    def result_hash_requires_result_id(self) -> GapLineage:
+        if self.source_result_hash is not None and self.source_result_id is None:
+            raise ValueError("source_result_hash requires source_result_id")
+        return self
+
+
+class ResearchGap(PlanningContract):
+    """A typed, bounded, deduplicated knowledge gap from an eligible research result.
+
+    Gaps are append-only planning inputs. They never create Jobs directly;
+    a planner reads them and produces a PlanPatchProposal, which may land new
+    TaskNodes in the next revision.
+    """
+
+    root_job_id: UUID
+    task_logical_key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
+    plan_revision: int = Field(ge=1)
+    source_result_id: UUID | None = None
+    source_result_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    gap_hash: str = Field(default="", pattern=r"^[a-f0-9]{64}$")
+    category: str = Field(min_length=1, max_length=120)
+    description: str = Field(min_length=1, max_length=4_000)
+    module_refs: tuple[str, ...] = Field(default=(), max_length=8)
+    evidence_refs: tuple[str, ...] = Field(default=(), max_length=16)
+    status: GapStatus = GapStatus.OPEN
+    priority: int = Field(default=0, ge=0, le=100)
+    bound: int = Field(default=1, ge=1, le=4)
+
+    @model_validator(mode="after")
+    def validate_lineage(self) -> ResearchGap:
+        if self.source_result_hash is not None and self.source_result_id is None:
+            raise ValueError("source_result_hash requires source_result_id")
+        if self.bound < 1:
+            raise ValueError("gap bound must be at least 1")
+        expected_hash = canonical_gap_hash(self)
+        if self.gap_hash and self.gap_hash != expected_hash:
+            raise ValueError("gap_hash does not match canonical gap payload")
+        object.__setattr__(self, "gap_hash", expected_hash)
+        return self
+
+
+def canonical_gap_hash(gap: ResearchGap) -> str:
+    payload = gap.model_dump(
+        mode="json",
+        exclude={"gap_hash", "status", "priority"},
+    )
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256(canonical.encode()).hexdigest()
+
+
 class ReplanReceipt(PlanningContract):
     root_job_id: UUID
     parent_attempt_id: UUID
