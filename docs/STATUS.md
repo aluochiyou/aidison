@@ -12,7 +12,7 @@
 - durable plan 已包含 immutable revision、ready frontier、CAS replan、task→Job binding 与 execution projection。
 - `DurablePlanExecutor` 已从 ResearchWorker 提取，通用模块不导入 research contracts。
 - Research N-way primary/gap 与真实 Solution proposal 使用同一 executor；Solution 在 Join commit 后、Domain write 前崩溃可由新 generation 恢复且不重跑模型。
-- PostgreSQL 17 与 18.4 隔离库从零 Alembic migration：passed；C4 完整 integration：两版均 passed（各 41 项，新增 atomic rollback 测试后需重跑最终计数）。
+- PostgreSQL 17 与 18.4 隔离库从零 Alembic migration：passed；C4 完整 integration：两版均 passed（各 42 项）；unit：139 passed；Ruff、mypy、diff check、Alembic single head：passed。
 
 ## Verified
 

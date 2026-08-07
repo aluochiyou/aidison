@@ -4,6 +4,9 @@ date: 2026-08-08
 supersedes: []
 commit_lineage:
   - 857b763: PostgreSQL signal-backed durable join baseline
+  - 5990583: generic planner/executor and research/solution adoption
+  - c5b83cc: legacy role payload replay verification
+  - 15984b4: atomic plan/wave/budget/binding transaction and review fixes
 ---
 
 # ADR-0004: 提取业务无关的 durable planner/executor，保留业务适配器
