@@ -2,7 +2,8 @@
 status: accepted
 date: 2026-08-08
 supersedes: []
-commit_lineage: []
+commit_lineage:
+  - 6b7507d: scoped approval, migration, API, checkout boundary and console UX
 ---
 
 # ADR-0006: 外部副作用前使用一次性、精确 scope 的 EffectApproval
@@ -26,7 +27,7 @@ approved  -> expired
 
 同一 `(project_id, scope_hash)` 最多存在一个 `requested` 或 `approved` gate。PostgreSQL 使用 partial unique index 防止并发重复 live gate，复合外键保证 proposal 与 project 一致，trigger 阻止 scope 字段和 JSON payload 中 scope 的更新。应用层再以 expected-status CAS 执行 resolve/consume，形成数据库与领域双层 fail-closed。
 
-checkout 的事务顺序固定为：校验当前 scope → `approved` CAS 为 `consumed` → 写 `PREPARED` CheckoutHandoff、domain event 和 command receipt → commit → 调用 provider。这样 provider 前 crash 可以确定恢复；provider 后结果未知时 approval 仍 consumed，不能用不同 idempotency key 重放外部 effect。同一 checkout key 重放返回原 handoff，不再调用 provider。
+checkout 的事务顺序固定为：校验当前 scope → `approved` CAS 为 `consumed` → 写 `PREPARED` CheckoutHandoff、domain event 和 command receipt，并把 project revision 增加 1 → commit → 调用 provider。这样 provider 前 crash 可以确定恢复，receipt replay 的 ETag 与数据库 revision 也一致；provider 后结果未知时 approval 仍 consumed，不能用不同 idempotency key 重放外部 effect。同一 checkout key 重放返回原 handoff，不再调用 provider。
 
 TTL 是非 secret 产品配置，保存在 `config.yaml` 的 `shopping.effect_approval_ttl_seconds`，数据库保存绝对 `expires_at`。当前 resolve endpoint 明确是本地单用户 control plane；本版本不伪造用户身份、RBAC 或多租户授权。
 

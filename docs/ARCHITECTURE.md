@@ -1,7 +1,7 @@
 # Aidison Architecture
 
-- Status: active development；通用 durable planner/executor、receipt-aware recovery、不可变 AgentProfile、耐久预算账本与 PostgreSQL signal wake 已落地
-- Decisions: [ADR-0001](adr/0001-single-runtime-durable-agent-delegation.md), [ADR-0002](adr/0002-seven-layer-governed-memory.md), [ADR-0003](adr/0003-postgresql-durable-state-with-notify-wake.md), [ADR-0004](adr/0004-generic-durable-plan-executor.md)
+- Status: active development；通用 durable planner/executor、三种 durable JoinPolicy、scoped EffectApproval、receipt-aware recovery、不可变 AgentProfile、耐久预算账本与 PostgreSQL signal wake 已落地
+- Decisions: [ADR-0001](adr/0001-single-runtime-durable-agent-delegation.md), [ADR-0002](adr/0002-seven-layer-governed-memory.md), [ADR-0003](adr/0003-postgresql-durable-state-with-notify-wake.md), [ADR-0004](adr/0004-generic-durable-plan-executor.md), [ADR-0005](adr/0005-deterministic-durable-join-closure.md), [ADR-0006](adr/0006-scoped-effect-approval-before-external-side-effects.md)
 - Upstream lineage: [UPSTREAM_MAP.md](../UPSTREAM_MAP.md)
 
 ## Verified runtime structure
@@ -55,6 +55,7 @@ flowchart TB
 | State | Canonical owner |
 |---|---|
 | Requirement、Evidence、Candidate、Decision、SolutionVersion、Observation、ImpactAnalysis、PatchSet | PostgreSQL Domain tables |
+| PurchaseProposal、OfferSnapshot、EffectApproval、CheckoutHandoff | PostgreSQL Domain tables；EffectApproval 是一次性、不可变 scope 的外部副作用 gate |
 | Job、Attempt、Delegation、JoinGroup、AttemptResult、JoinReceipt、lease/fencing/cancel | PostgreSQL runtime tables；唯一执行事实源 |
 | PlanHead、immutable PlanRevision、Task/Edge、PlanPatch/ReplanReceipt | PostgreSQL planning tables；Task status 是 Job 的可重建投影 |
 | AgentProfile definition/revision、active pointer、root Job binding manifest | PostgreSQL profile tables；active pointer 仅在创建新 root Job 时解析 |
@@ -76,7 +77,7 @@ V0 operational recovery uses a write-quiesced pair: `api` and `worker` are pause
 5. child Deep Agent 通过官方 `HarnessProfile` 禁用通用 subagent 与非 allowlist 工具，并只接受 `structured_response`。revision 1/3 replay 只使用 `web_search`；revision 4 额外开放 `github_search_repositories`、`github_search_code`、`github_get_file_contents`。Tavily 和 GitHub 都由 `langchain-mcp-adapters==0.3.1` 接入；`mcp` 固定在 `>=1.24,<2`。
 6. GitHub revision 4 在一次 Agent 调用期间保持一个 stdio session；官方 Server 固定为 `v1.8.0`/OCI digest，只允许三项 `readOnlyHint=true` 工具。子进程只获得 token、`GITHUB_READ_ONLY=1` 和精确 `GITHUB_TOOLS`，`GITHUB_TOOLSETS` 缺席。每次真实调用执行 reserve → dispatched → settled/released/ambiguous。
 7. MCP 只返回有界结果。Tavily 候选 URL 由 HTTPX + Trafilatura 受控获取并写入 `web_snapshot`；GitHub 文本/JSON 在 256 KiB 上限内规范化并写入 `github_snapshot`。应用层只接受当前 attempt 下 `PRESENT` 且 `(source_url, snapshot_hash)` 匹配的两类 Artifact，再形成 EvidenceBinding。
-8. `DurableJoinWaiter` 由事务内 PostgreSQL NOTIFY 唤醒；通知只降延迟，parent 始终重读 Join durable state。parent 只读取 accepted Proposal refs，确定性合并并提交唯一 JoinReceipt。
+8. `DurableJoinWaiter` 由事务内 PostgreSQL NOTIFY 唤醒；通知只降延迟，parent 始终重读 Join durable state。`ALL_REQUIRED`、`BOUNDED_PARTIAL` 与 `FIRST_VALID` 共享同一评估函数；FIRST_VALID winner 由完成时间和 UUID 确定性选择。关闭 Join 时在同一事务取消非 winner sibling、关闭 PlanTask，并回收或保守结算预算。parent 只读取 accepted Proposal refs，确定性合并并提交唯一 JoinReceipt。
 9. 以 JoinGroup 派生的幂等键调用 canonical Domain command，最后 fenced completion。
 10. late/stale result 被 quarantine；取消会关闭 open join 并传播到未终止 children。
 11. parent lease 过期后，新 generation 会原子 supersede 旧 Attempt，并取消旧 open JoinGroup 与未终止 children。未 dispatch reservation 被释放；已 dispatch 未知调用转为 `ambiguous` 并保守全额计费。
@@ -85,10 +86,18 @@ V0 operational recovery uses a write-quiesced pair: `api` and `worker` are pause
 
 Command payload 的 canonical hash 先把 Pydantic model、UUID、Enum 和 timestamp 转为语义 JSON。它不依赖 Python `repr` 或具体时区对象实现，保证 crash/JSON/数据库往返后等值 payload 仍命中同一 receipt。
 
+## Scoped shopping effect sequence
+
+1. READY PurchaseProposal 必须显式申请 `shopping.create_cart` EffectApproval；服务端根据 proposal、offer、active solution、provider 和当前 basis 计算 scope hash。
+2. 本地 control plane 对相同 scope resolve 为 approved 或 denied；TTL 到期只能 expired，terminal gate 不能 reopen。
+3. checkout 重新计算 scope，CAS `approved → consumed`，并在一个事务写 `PREPARED` CheckoutHandoff、event 与 command receipt。
+4. 数据库提交后才调用 provider。相同 idempotency key replay 返回原 handoff且不重复 provider；不同 key 不能复用 consumed approval。
+5. 当前输出仍是 provider-hosted HTTPS checkout，不保存支付凭证、不自动付款。未来淘宝 API/MCP 也必须经过同样的 effect gate，Agent 不获得任意购买工具权限。
+
 ## Remaining architecture work
 
-- 扩展 scoped approval gate，并为 JoinPolicy 增加 `BOUNDED_PARTIAL` / `FIRST_VALID` 的完整运行时、API 与恢复语义。
-- Shopping 当前仍是同步 provider/domain service；若要进入多智能体编排，需先定义商品搜索、候选比较、购买审批与 checkout handoff 的 Agent plan，而不是把现有命令服务伪装成第二接入者。
+- EffectApproval 当前 resolver 是本地单用户 control plane；生产化仍需认证主体、RBAC/双人审批策略和 actor audit，不能把当前 endpoint 描述成完整 IAM。
+- Shopping 当前仍是同步 provider/domain service；若要进入多智能体编排，需定义淘宝商品搜索、候选比较和报价快照的 Agent plan。最终 checkout effect 已有 approval gate，但淘宝真实 API/MCP 适配与服务条款验收尚未完成。
 - 稳定真实 Bailian structured output + Tavily Remote MCP + Artifact + Join + Domain 的四旋翼 live gate；一次完整业务闭环已成功，但重复运行仍受外部来源/Agent 工具行为波动影响。
 - GitHub 单次公开文件读取、fake stdio 和 Artifact/hash 内核已验证；完整 Agent 是否稳定选择 GitHub 工具仍需纳入四旋翼 live gate，而不是增加无界重试。
 - HarnessProfile 项目回归通过后仍需验证上游 Windows ripgrep 行为；在用户确认前不删除 `packages/deepagents`。

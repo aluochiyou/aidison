@@ -4,6 +4,7 @@ date: 2026-08-08
 supersedes: []
 commit_lineage:
   - e6ca346: durable JoinPolicy closure baseline
+  - 8442bb1: lock-order fix, direct impossible closure and review test gaps
 ---
 
 # ADR-0005: 用确定性 JoinPolicy 收敛并行 Agent，并在同一事务关闭 sibling
