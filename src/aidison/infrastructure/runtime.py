@@ -213,6 +213,7 @@ class PostgresRuntime:
         *,
         specs: Sequence[DelegationSpec],
         policy: JoinPolicy,
+        commit: bool = True,
     ) -> DelegationWave:
         if not specs or len(specs) > MAX_DELEGATION_WAVE_SIZE:
             raise RuntimeConflictError(
@@ -320,7 +321,8 @@ class PostgresRuntime:
                 raise RuntimeConflictError(
                     "delegation replay is missing its frozen budget allocation"
                 ) from exc
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
             return DelegationWave(
                 join_group_id=existing_group.id,
                 delegation_ids=tuple(item.delegation_id for item in specs),
@@ -403,7 +405,8 @@ class PostgresRuntime:
                 "child_count": len(child_job_ids),
             },
         )
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
         return DelegationWave(
             join_group_id=join_group_id,
             delegation_ids=tuple(item.delegation_id for item in specs),

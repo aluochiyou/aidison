@@ -136,7 +136,11 @@ class DurablePlanExecutor:
         async with self._factory() as session:
             store = PostgresPlanStore(session)
             if initial_plan is not None:
-                await store.create_initial(claim=work.claim, plan=initial_plan)
+                await store.create_initial(
+                    claim=work.claim,
+                    plan=initial_plan,
+                    commit=False,
+                )
             current = await store.get_current(root_job_id=work.claim.job_id)
             frontier = await store.list_ready_frontier(root_job_id=work.claim.job_id)
             nodes = {node.logical_key: node for node in current.nodes}
@@ -181,13 +185,16 @@ class DurablePlanExecutor:
             wave = await runtime.create_delegation_wave(
                 specs=tuple(item.spec for item in delegations),
                 policy=policy,
+                commit=False,
             )
             for item, child_job_id in zip(delegations, wave.child_job_ids, strict=True):
                 await store.bind_task_job(
                     root_job_id=work.claim.job_id,
                     logical_key=item.task_logical_key,
                     dispatched_job_id=child_job_id,
+                    commit=False,
                 )
+            await session.commit()
             return wave
 
     async def wait_for_wave(

@@ -19,6 +19,7 @@ from langchain_core.outputs import ChatGeneration, LLMResult
 from sqlalchemy import func, select, text, update
 
 from aidison.agents.profiles import RESEARCH_WORKER_PROFILE
+from aidison.application.execution import DurablePlanExecutor
 from aidison.application.research import AgentRunner, ResearchWorker
 from aidison.application.service import ProjectApplication
 from aidison.domain.models import (
@@ -1219,25 +1220,25 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
 
         pause_reached = asyncio.Event()
         release_pause = asyncio.Event()
-        original_create_wave = PostgresRuntime.create_delegation_wave
+        original_dispatch_wave = DurablePlanExecutor.dispatch_ready_wave
         original_commit_join = PostgresRuntime.commit_join
         original_complete_claim = PostgresRuntime.complete_claim
 
         if crash_point == "after_wave":
 
             async def pause_after_wave(
-                runtime: PostgresRuntime,
+                executor: DurablePlanExecutor,
                 *args: Any,
                 **kwargs: Any,
             ) -> Any:
-                wave = await original_create_wave(runtime, *args, **kwargs)
+                wave = await original_dispatch_wave(executor, *args, **kwargs)
                 pause_reached.set()
                 await release_pause.wait()
                 return wave
 
             monkeypatch.setattr(
-                PostgresRuntime,
-                "create_delegation_wave",
+                DurablePlanExecutor,
+                "dispatch_ready_wave",
                 pause_after_wave,
             )
         elif crash_point == "after_join":
@@ -1360,7 +1361,11 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
         parent_task.cancel()
         with suppress(asyncio.CancelledError):
             await parent_task
-        monkeypatch.setattr(PostgresRuntime, "create_delegation_wave", original_create_wave)
+        monkeypatch.setattr(
+            DurablePlanExecutor,
+            "dispatch_ready_wave",
+            original_dispatch_wave,
+        )
         monkeypatch.setattr(PostgresRuntime, "commit_join", original_commit_join)
         monkeypatch.setattr(PostgresRuntime, "complete_claim", original_complete_claim)
 
@@ -1662,24 +1667,28 @@ async def test_reclaimed_parent_resumes_revision2_gap_frontier(
 
         gap_wave_created = asyncio.Event()
         hold_first_gap_wave = asyncio.Event()
-        original_create_wave = PostgresRuntime.create_delegation_wave
+        original_dispatch_wave = DurablePlanExecutor.dispatch_ready_wave
         paused = False
 
         async def pause_first_gap_wave(
-            runtime: PostgresRuntime,
+            executor: DurablePlanExecutor,
             *args: Any,
             **kwargs: Any,
         ) -> Any:
             nonlocal paused
-            wave = await original_create_wave(runtime, *args, **kwargs)
-            specs = kwargs["specs"]
-            if specs[0].graph_step_id == "research.gap" and not paused:
+            wave = await original_dispatch_wave(executor, *args, **kwargs)
+            delegations = kwargs["delegations"]
+            if delegations[0].spec.graph_step_id == "research.gap" and not paused:
                 paused = True
                 gap_wave_created.set()
                 await hold_first_gap_wave.wait()
             return wave
 
-        monkeypatch.setattr(PostgresRuntime, "create_delegation_wave", pause_first_gap_wave)
+        monkeypatch.setattr(
+            DurablePlanExecutor,
+            "dispatch_ready_wave",
+            pause_first_gap_wave,
+        )
 
         def make_worker() -> ResearchWorker:
             return ResearchWorker(

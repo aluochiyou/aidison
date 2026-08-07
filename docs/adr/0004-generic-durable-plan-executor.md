@@ -18,11 +18,11 @@ Aidison 已有不可变 PlanRevision、Task frontier、CAS replan、Delegation�
 
 1. 幂等创建 initial plan，并读取当前 revision 和 ready frontier；
 2. 校验 TaskNode 与 DelegationSpec 的 root claim、role/profile、basis 和 input refs；
-3. 幂等创建 DelegationWave，并持久化 task→child Job binding；
+3. 在一个事务中幂等创建 initial plan、DelegationWave、child budget allocation 与 task→child Job binding；
 4. 通过 `DurableJoinWaiter` 等待，但每次唤醒后仍读取数据库；
 5. 查找或提交唯一 JoinReceipt，支持父进程 reclaim 后恢复。
 
-执行器不拥有 lease、generation fencing、预算、child result、业务 Proposal 合并和 canonical Domain write。前四类仍属于 `PostgresRuntime`，后两类属于 Research/Solution/Impact 业务适配逻辑。Plan task 状态只是 Job 状态的可重建投影，不能成为第二执行事实源。
+执行器不拥有 lease、generation fencing、预算策略、child result、业务 Proposal 合并和 canonical Domain write。这些仍分别属于 `PostgresRuntime`、BudgetLedger 和 Research/Solution/Impact 业务适配逻辑。Plan task 状态只是 Job 状态的可重建投影，不能成为第二执行事实源。
 
 `TaskNode.mode` 改为有界字符串，由业务定义语义；数据库列本来就是无 CHECK 的 `varchar(40)`，因此无需迁移且历史 plan hash 保持稳定。Research 的 `ResearchMode`、`ResearchGap` 和 shadow-plan builder 移入 `aidison.research.planning`；gap 持久化移入 `PostgresResearchPlanStore`。通用 runtime/application/infrastructure planning 模块不得导入 research 包。
 
@@ -43,6 +43,7 @@ Research 的 N-way primary wave 和 gap frontier、Solution 的真实 proposal w
 - import-boundary unit test：三层通用 planning/execution 模块不得导入 research；
 - Research N-way、gap revision、task binding 和四类 reclaim crash window 继续通过；
 - Solution 必须持久化 `PlanHead/PlanRevision/PlanTask`，task 绑定 child Job 并最终投影为 succeeded；
+- 任一 task binding 失败时，initial plan、wave、children、allocation 和已有 binding 必须整体 rollback；
 - Solution 在 JoinReceipt 已提交、Domain write 前崩溃时，新 generation 从 receipt 恢复且不得再次调用模型；
 - PostgreSQL 17/18、Ruff、mypy、Alembic single-head 和 diff check 作为版本 gate。
 

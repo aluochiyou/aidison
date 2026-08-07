@@ -52,6 +52,7 @@ class PostgresPlanStore:
         *,
         claim: JobClaim,
         plan: OrchestrationPlanRevision,
+        commit: bool = True,
     ) -> OrchestrationPlanRevision:
         if plan.revision != 1 or plan.parent_revision is not None:
             raise PlanConflictError("initial plan must be revision 1 without a parent")
@@ -64,7 +65,8 @@ class PostgresPlanStore:
             current = await self._get_revision(root.id, head.current_revision)
             if current.plan_hash != plan.plan_hash:
                 raise PlanConflictError("root Job already has a different initial plan")
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
             return current
 
         await self._insert_revision(plan=plan, root=root)
@@ -75,7 +77,8 @@ class PostgresPlanStore:
                 current_plan_hash=plan.plan_hash,
             )
         )
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
         return plan
 
     async def apply_patch(
@@ -83,6 +86,7 @@ class PostgresPlanStore:
         *,
         claim: JobClaim,
         patch: PlanPatchProposal,
+        commit: bool = True,
     ) -> ReplanReceipt:
         root = await self._lock_current_root(claim)
         if patch.root_job_id != str(root.id):
@@ -120,7 +124,8 @@ class PostgresPlanStore:
                 or receipt.basis_hash != claim.basis_hash
             ):
                 raise PlanConflictError("replan receipt identity does not match the current claim")
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
             return receipt
 
         if (
@@ -172,7 +177,8 @@ class PostgresPlanStore:
         )
         head.current_revision = patch.new_plan.revision
         head.current_plan_hash = patch.new_plan.plan_hash
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
         return receipt
 
     async def get_current(self, *, root_job_id: UUID) -> OrchestrationPlanRevision:
@@ -219,6 +225,7 @@ class PostgresPlanStore:
         root_job_id: UUID,
         logical_key: str,
         dispatched_job_id: UUID,
+        commit: bool = True,
     ) -> None:
         """Atomically connect a planned node to an existing durable child Job."""
         head = await self._session.scalar(
@@ -244,7 +251,8 @@ class PostgresPlanStore:
         if task is None or child is None or child.parent_job_id != root_job_id:
             raise PlanConflictError("task-to-child binding is stale or invalid")
         if task.dispatched_job_id == child.id:
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
             return
         if task.status not in {TaskStatus.PLANNED.value, TaskStatus.READY.value}:
             raise PlanConflictError("task-to-child binding is stale or invalid")
@@ -252,7 +260,8 @@ class PostgresPlanStore:
             raise PlanConflictError("task-to-child binding is stale or invalid")
         task.dispatched_job_id = child.id
         task.status = TaskStatus.DISPATCHED.value
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
 
     async def refresh_frontier(self, *, root_job_id: UUID) -> tuple[TaskNode, ...]:
         """Refresh task projections from Job state and mark impossible dependencies blocked."""

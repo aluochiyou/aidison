@@ -26,7 +26,9 @@
 - `OrchestrationPlanRevision` 是不可变意图历史；`PlanTask.status` 是可变执行投影，因此 status 不进入 `plan_hash`。
 - `PostgresPlanStore.create_initial` 和 replan 使用 claim/basis/CAS；`bind_task_job` 对“同 task、同 child”重放幂等，对不同 child fail closed。
 - `DurablePlanExecutor` 在创建 wave 前校验 node/spec 的 role、profile、basis、input refs，运行时再次根据 root Job 冻结 binding 校验 profile 和预算。两层校验分别保护计划一致性与执行授权。
-- Solution 的 delegation UUID 和 deadline 从 frozen claim 确定性派生，避免同一 attempt 在进程重启后无法匹配已创建 wave。
+- Delegation UUID 从 frozen attempt + graph step + logical key 确定性派生；deadline 在实际 dispatch 时按 profile timeout 计算，避免 heartbeat 已续租但内存 claim 的初始 expiry 过旧。
+- Initial plan、wave、child allocation 和全部 task→Job binding 在同一事务提交；任何中途 binding 失败都整体 rollback。Store/runtime 的默认独立调用仍保持原有自动 commit，executor 显式使用 `commit=False` 组合事务。
+- Gap PlanPatch 和对应 gap `ACCEPTED` 状态在同一事务提交，避免 revision 已前进但 gap 永久停留 OPEN。
 - 兼容历史 `DelegationSpec`：`role_key` 缺失时只对旧的 research/solution/impact task kind 推导；新业务必须显式给 role。
 - 恢复验收不是“重新跑一次”：测试在 JoinReceipt commit 后、Domain write 前取消 parent，令 lease 过期并产生 generation 2；新 parent 读取原 artifact/receipt，模型调用计数保持 0。
 

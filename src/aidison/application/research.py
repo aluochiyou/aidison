@@ -1084,7 +1084,7 @@ class ResearchWorker:
         )
         # Keep replay deterministic from the frozen claim while allowing an N-way wave to
         # execute in bounded batches when the process has fewer child slots than shards.
-        deadline = work.claim.lease_expires_at + timedelta(
+        deadline = datetime.now(UTC) + timedelta(
             seconds=worker_profile.timeout_seconds * len(plan.nodes)
         )
         specs = tuple(
@@ -1368,7 +1368,7 @@ class ResearchWorker:
             or decision.status is not DecisionStatus.APPROVED
         ):
             raise RuntimeConflictError("solution parent requires an approved decision")
-        deadline = work.claim.lease_expires_at + timedelta(minutes=5)
+        deadline = datetime.now(UTC) + timedelta(minutes=5)
         input_refs = (
             f"decision://{decision.id}",
             *(f"module://{item.id}" for item in modules),
@@ -1701,11 +1701,13 @@ class ResearchWorker:
             raise RuntimeConflictError("impact parent requires the active observation basis")
         deadline = datetime.now(UTC) + timedelta(minutes=5)
         spec = DelegationSpec(
+            delegation_id=uuid5(work.claim.attempt_id, "impact.propose:impact.complete"),
             parent_job_id=work.claim.job_id,
             parent_attempt_id=work.claim.attempt_id,
             parent_claim_generation=work.claim.claim_generation,
             graph_step_id="impact.propose",
             task_kind="impact",
+            role_key="impact-worker",
             profile_id=binding.profile_id,
             profile_revision=binding.profile_revision,
             basis_hash=work.claim.basis_hash,
@@ -2130,7 +2132,7 @@ class ResearchWorker:
             )
             async with self._factory() as session:
                 store = PostgresResearchPlanStore(session)
-                await store.apply_patch(claim=work.claim, patch=patch)
+                await store.apply_patch(claim=work.claim, patch=patch, commit=False)
                 await store.resolve_gaps(
                     root_job_id=work.claim.job_id,
                     gap_hashes=tuple(sorted(seen)),
@@ -2190,7 +2192,7 @@ class ResearchWorker:
         if not gap_nodes:
             return None, ()
 
-        deadline = work.claim.lease_expires_at + timedelta(
+        deadline = datetime.now(UTC) + timedelta(
             seconds=worker_profile.timeout_seconds * len(gap_nodes)
         )
         specs = tuple(
