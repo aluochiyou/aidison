@@ -19,3 +19,4 @@ runtime:
   concurrency: 3
   lease_seconds: 60
   poll_seconds: 0.5
+  durable_recheck_seconds: 30

@@ -13,6 +13,7 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
         "AIDISON_WORKER_CONCURRENCY",
         "AIDISON_WORKER_LEASE_SECONDS",
         "AIDISON_WORKER_POLL_SECONDS",
+        "AIDISON_DURABLE_RECHECK_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -22,6 +23,7 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.concurrency == 3
     assert settings.lease_seconds == 60
     assert settings.poll_seconds == 0.5
+    assert settings.durable_recheck_seconds == 30
     assert settings.worker_id
 
 

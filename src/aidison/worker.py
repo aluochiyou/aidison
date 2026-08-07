@@ -48,6 +48,12 @@ class WorkerSettings(AidisonSettings):
         ge=0.05,
         le=10,
     )
+    durable_recheck_seconds: float = Field(
+        default=30,
+        validation_alias="AIDISON_DURABLE_RECHECK_SECONDS",
+        ge=1,
+        le=300,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -84,6 +90,7 @@ async def run_worker(settings: WorkerSettings, *, once: bool = False) -> None:
             artifact_root=settings.artifact_root,
             lease_seconds=settings.lease_seconds,
             poll_seconds=settings.poll_seconds,
+            durable_recheck_seconds=settings.durable_recheck_seconds,
         )
         if once:
             await worker.run_once(worker_id=settings.worker_id)

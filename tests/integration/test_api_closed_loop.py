@@ -501,7 +501,17 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             }
             assert all(item["status"] == "queued" for item in snapshot.json()["runtime"]["jobs"])
             assert len(snapshot.json()["runtime"]["budget_accounts"]) == 3
-            assert snapshot.json()["runtime"]["budget_accounts"][0]["token_cap"] == 64_000
+            job_kind_by_id = {
+                item["id"]: item["kind"] for item in snapshot.json()["runtime"]["jobs"]
+            }
+            assert {
+                job_kind_by_id[item["root_job_id"]]: item["token_cap"]
+                for item in snapshot.json()["runtime"]["budget_accounts"]
+            } == {
+                "research_wave": 8_000,
+                "solution_wave": 16_000,
+                "impact_wave": 16_000,
+            }
 
             # ── V1 shopping closed loop ────────────────────────────────
 

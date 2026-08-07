@@ -54,6 +54,7 @@ from aidison.infrastructure.orm import (
     SolutionProposalRow,
     SolutionVersionRow,
 )
+from aidison.infrastructure.signals import publish_domain_event_signal
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -730,6 +731,12 @@ class PostgresDomainStore(DomainStore):
                 event_type=event_type,
                 payload=dict(payload),
             )
+        )
+        await publish_domain_event_signal(
+            self._session,
+            project_id=project_id,
+            project_sequence=project_sequence,
+            event_type=event_type,
         )
         return project_sequence
 
