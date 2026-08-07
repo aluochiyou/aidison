@@ -179,6 +179,7 @@ def build_research_agent(
         system_prompt=system_prompt,
         response_format=ResearchProposalPayload,
         subagents=_NO_NATIVE_SUBAGENTS,
+        enable_native_subagents=False,
         checkpointer=None,
         store=None,
         name="aidison-research-worker",

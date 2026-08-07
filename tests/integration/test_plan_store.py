@@ -5,7 +5,7 @@ from hashlib import sha256
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 
 from aidison.agents.profiles import RESEARCH_WORKER_PROFILE
 from aidison.application.service import ProjectApplication
@@ -14,7 +14,7 @@ from aidison.infrastructure.database import (
     create_engine,
     create_session_factory,
 )
-from aidison.infrastructure.orm import PlanTaskRow
+from aidison.infrastructure.orm import PlanGapRow, PlanTaskRow
 from aidison.infrastructure.planning import (
     PlanConflictError,
     PostgresPlanStore,
@@ -400,3 +400,193 @@ async def test_revision2_cas_and_frontier_staleness_guard() -> None:
             assert {item.logical_key for item in refreshed} == {"b"}
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_resolve_gaps_only_updates_open_rows_and_rejects_non_open_target() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Resolve guard fixture",
+                goal="Verify resolve_gaps only touches OPEN rows",
+                idempotency_key=f"resolve-project-{uuid4()}",
+            )
+            basis_hash = sha256(b"resolve-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+            )
+            claim = await runtime.claim_next_job(worker_id="resolve-ctrl", lease_seconds=60)
+            assert claim is not None
+
+            store = PostgresPlanStore(session)
+            await store.create_initial(
+                claim=claim,
+                plan=OrchestrationPlanRevision(
+                    root_job_id=str(root_job_id),
+                    revision=1,
+                    basis_hash=basis_hash,
+                    reason="initial",
+                    planner_profile_id="research-orchestrator",
+                    planner_profile_revision=1,
+                    nodes=(_node("a"),),
+                ),
+            )
+
+            gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                category="missing_data",
+                description="A missing spec",
+            )
+            await store.record_gap(gap=gap)
+            await store.resolve_gaps(
+                root_job_id=root_job_id,
+                gap_hashes=(gap.gap_hash,),
+                status=GapStatus.ACCEPTED,
+            )
+            # Second resolve should return 0 because the row is no longer OPEN
+            resolved2 = await store.resolve_gaps(
+                root_job_id=root_job_id,
+                gap_hashes=(gap.gap_hash,),
+                status=GapStatus.RESOLVED,
+            )
+            assert resolved2 == 0
+
+            # Passing OPEN as target must be rejected
+            with pytest.raises(ValueError, match="non-OPEN"):
+                await store.resolve_gaps(
+                    root_job_id=root_job_id,
+                    gap_hashes=(gap.gap_hash,),
+                    status=GapStatus.OPEN,
+                )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_dedup_replay_returns_persisted_priority() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Dedup priority fixture",
+                goal="Verify dedup replay returns persisted priority not caller projection",
+                idempotency_key=f"dedup-pri-{uuid4()}",
+            )
+            basis_hash = sha256(b"dedup-pri-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+            )
+            claim = await runtime.claim_next_job(worker_id="dedup-pri-ctrl", lease_seconds=60)
+            assert claim is not None
+
+            store = PostgresPlanStore(session)
+            await store.create_initial(
+                claim=claim,
+                plan=OrchestrationPlanRevision(
+                    root_job_id=str(root_job_id),
+                    revision=1,
+                    basis_hash=basis_hash,
+                    reason="initial",
+                    planner_profile_id="research-orchestrator",
+                    planner_profile_revision=1,
+                    nodes=(_node("a"),),
+                ),
+            )
+
+            gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                category="missing_data",
+                description="A missing spec",
+                priority=42,
+            )
+            first = await store.record_gap(gap=gap)
+            assert first.priority == 42
+            # Dedup replay: should return persisted canonical priority, not caller's
+            replay_gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                category="missing_data",
+                description="A missing spec",
+                priority=99,
+            )
+            replay = await store.record_gap(gap=replay_gap)
+            assert replay.priority == 42
+            # Verify the persisted row also has priority=42
+            persisted_row = await session.scalar(
+                select(PlanGapRow).where(
+                    PlanGapRow.root_job_id == root_job_id,
+                    PlanGapRow.gap_hash == gap.gap_hash,
+                )
+            )
+            assert persisted_row is not None and persisted_row.priority == 42
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_build_revision_from_patch_drops_dangling_edges_on_retire() -> None:
+    """Retiring a node drops its edges and normalises depth across surviving edge kinds."""
+    base = OrchestrationPlanRevision(
+        root_job_id="fake-job",
+        revision=1,
+        basis_hash=sha256(b"retire-edge-basis").hexdigest(),
+        reason="initial",
+        planner_profile_id="research-orchestrator",
+        planner_profile_revision=1,
+        nodes=(
+            _node("a", depth=0),
+            _node("b", depth=1),
+            _node("c", depth=2),
+        ),
+        edges=(
+            TaskEdge(from_key="a", to_key="b", kind=TaskEdgeKind.DEPENDS_ON),
+            TaskEdge(from_key="b", to_key="c", kind=TaskEdgeKind.DEPENDS_ON),
+            TaskEdge(from_key="a", to_key="c", kind=TaskEdgeKind.EVIDENCE_FROM),
+        ),
+    )
+    # Retire "b": its two edges drop while surviving a→c keeps c at depth 1.
+    next_rev = build_revision_from_patch(
+        base=base,
+        patch_kind=PlanPatchKind.CONTRACT,
+        trigger="retire b",
+        retired_keys=("b",),
+    )
+    assert {n.logical_key for n in next_rev.nodes} == {"a", "c"}
+    assert next_rev.edges == (
+        TaskEdge(from_key="a", to_key="c", kind=TaskEdgeKind.EVIDENCE_FROM),
+    )
+    remaining = {n.logical_key: n.depth for n in next_rev.nodes}
+    assert remaining["a"] == 0
+    assert remaining["c"] == 1  # surviving EVIDENCE_FROM edge still contributes graph depth

@@ -100,7 +100,7 @@ Slice C1 不等于完整 Slice C：当前 plan 仍由确定性模块分片生成
 Gap/PlanPatch 驱动的 revision 2+、frontier dispatcher、durable message/signal 与 N-way
 `BOUNDED_PARTIAL`/`FIRST_VALID` 策略。
 
-## Durable Gap / Revision 2+ Slice C2（已实现，数据库实跑待验）
+## Durable Gap / Revision 2+ Slice C2（已实现并完成真实 PostgreSQL 验收）
 
 本切片完成 Gap → PlanPatchProposal → revision 2+ → frontier dispatch 的闭环，不引入第二个
 scheduler、不创建直接 Gap→Job 路径、不实现 durable signal 或 recursive swarm。
@@ -110,7 +110,8 @@ scheduler、不创建直接 Gap→Job 路径、不实现 durable signal 或 recu
   status 与 priority 是可变投影，不进入 hash。lineage 校验 source_result_hash 必须在
   source_result_id 存在时才可设置。
 - `PostgresPlanStore.record_gap`：按 root_job_id + plan_revision_id + gap_hash 去重写入；
-  同一 transaction 内验证 revision 一致性与 task 存在性。
+  验证 revision、task、`AttemptResult` 的 `eligible` disposition、result hash 与 task-child
+  binding。dedup replay 从持久化 payload 重建，不信任调用方投影。
 - `PostgresPlanStore.list_open_gaps` / `resolve_gaps`：按当前 head revision 过滤 open gap，
   支持 priority floor 与批量 resolve（accepted/rejected/resolved）。
 - `build_revision_from_patch`：纯函数 helper，从 base plan + kind + new/retired nodes/edges
@@ -118,20 +119,29 @@ scheduler、不创建直接 Gap→Job 路径、不实现 durable signal 或 recu
   retired nodes 中已 dispatched/succeeded/failed 的标记为 SUPERSEDED。
 - `PlanPatchProposal.apply_patch` 已有 Slice B CAS 保护：base revision→head 比对、
   receipt dedup replay、job/fencing/basis 一致性验证不变。
-- 集成测试 `test_gap_to_patch_frontier_dispatch_does_not_create_direct_gap_to_job` 端到端验
-  证 gap record → list_open → build revision 2 → CAS commit → gap resolve 的完整路径，
-  并确认 PlanGap 行不携带 dispatched_job_id。
+- `ResearchWorker` 在同一数据库 transaction 内注册 eligible result 与 Gap，避免 parent
+  先观察到 join-ready 的竞态；primary `JoinReceipt` 是 reclaim anchor。revision 2 gap wave
+  使用现有 `create_delegation_wave` / `bind_task_job` / `register_result` / `commit_join`，没有
+  第二 scheduler 或直接 Gap→Job 路径。新 generation 会从 revision 2 READY frontier 重派。
+- Deep Agents 保持 bounded single-worker harness；OpenCode 独立审查结论为 `KEEP`，C2 不需
+  修改 vendored Deep Agents，也不需降级为裸 LangGraph。
 
 ### Slice C2 验证
 
 - `passed`：`uv run pytest -q tests/unit` -> `133 passed`
-- `passed`：`uv run pytest -q tests/integration/test_plan_store.py tests/integration/test_research_worker.py` -> `12 skipped`（未设置 TEST_DATABASE_URL 时正确跳过）
+- `passed`：真实 PG17 `tests/integration/test_plan_store.py` -> `6 passed`
+- `passed`：真实 PG17 `tests/integration/test_research_worker.py` -> `13 passed`，包含正常
+  Gap→revision 2→follow-up join→最终合并，以及 parent generation reclaim 恢复。
+- `passed`：真实 PG17 除 API closed-loop 外全部 integration -> `30 passed`
 - `passed`：Ruff -> `All checks passed!`
-- `passed`：Mypy（核心文件）-> `Success: no issues found`
+- `passed`：Mypy（application/runtime/planning 核心文件）-> `Success: no issues found`
 - `passed`：`git diff --check` 通过
-- `passed`：Alembic 无迁移变更 — Slice C2 复用 Slice B 已有的 `plan_gaps` 表结构
-- `skipped`：PostgreSQL 环境下真实 run（gap recording、revision 2 CAS、frontier flow），未配置隔离 `TEST_DATABASE_URL`
-- `not_checked`：真实 PostgreSQL 并发 gap dedup、8-way revision 2 fork fan-out、planner Agent 调用
+- `passed`：隔离 PostgreSQL 17 空库 `alembic upgrade head` 到 `f405db1bd29e`；修复 asyncpg
+  不允许一个 prepared statement 包含多个 function/trigger command 的迁移错误。
+- `failed`（既有非 C2 断言）：全量 integration 的 API closed-loop 测试依赖
+  `budget_accounts[0]` 的无显式排序位置，实际首项 token_cap 为 8000 而断言 64000；其余
+  integration 全部通过，未在本切片修改该无关 API 排序。
+- `not_checked`：8-way revision 2 fork fan-out、LLM planner（C2 使用确定性 bounded policy）。
 
 ## 面试表达
 

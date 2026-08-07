@@ -349,10 +349,14 @@ def upgrade() -> None:
         BEGIN
             RAISE EXCEPTION 'PlanRevision is immutable';
         END;
-        $$ LANGUAGE plpgsql;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER plan_revisions_are_immutable
         BEFORE UPDATE OR DELETE ON plan_revisions
-        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_revision_mutation();
+        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_revision_mutation()
         """
     )
     op.execute(
@@ -381,10 +385,14 @@ def upgrade() -> None:
             END IF;
             RETURN NEW;
         END;
-        $$ LANGUAGE plpgsql;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER plan_task_definitions_are_immutable
         BEFORE UPDATE OR DELETE ON plan_tasks
-        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_task_definition_mutation();
+        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_task_definition_mutation()
         """
     )
     op.execute(
@@ -394,10 +402,14 @@ def upgrade() -> None:
         BEGIN
             RAISE EXCEPTION 'PlanTaskEdge is immutable';
         END;
-        $$ LANGUAGE plpgsql;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER plan_task_edges_are_immutable
         BEFORE UPDATE OR DELETE ON plan_task_edges
-        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_edge_mutation();
+        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_edge_mutation()
         """
     )
     op.execute(
@@ -407,13 +419,21 @@ def upgrade() -> None:
         BEGIN
             RAISE EXCEPTION 'Plan receipt is immutable';
         END;
-        $$ LANGUAGE plpgsql;
+        $$ LANGUAGE plpgsql
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER plan_patches_are_immutable
         BEFORE UPDATE OR DELETE ON plan_patches
-        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_receipt_mutation();
+        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_receipt_mutation()
+        """
+    )
+    op.execute(
+        """
         CREATE TRIGGER replan_receipts_are_immutable
         BEFORE UPDATE OR DELETE ON replan_receipts
-        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_receipt_mutation();
+        FOR EACH ROW EXECUTE FUNCTION aidison_reject_plan_receipt_mutation()
         """
     )
 

@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from aidison.infrastructure.orm import (
+    AttemptResultRow,
     JobRow,
     PlanGapRow,
     PlanHeadRow,
@@ -19,7 +20,7 @@ from aidison.infrastructure.orm import (
     ProjectRow,
     ReplanReceiptRow,
 )
-from aidison.runtime.contracts import JobClaim, JobStatus
+from aidison.runtime.contracts import JobClaim, JobStatus, ResultDisposition
 from aidison.runtime.planning import (
     GapStatus,
     OrchestrationPlanRevision,
@@ -541,20 +542,16 @@ class PostgresPlanStore:
             )
         )
         if existing is not None:
-            return ResearchGap(
-                root_job_id=existing.root_job_id,
-                task_logical_key=gap.task_logical_key,
-                plan_revision=revision.revision,
-                source_result_id=existing.source_result_id,
-                source_result_hash=existing.payload.get("source_result_hash"),
-                gap_hash=existing.gap_hash,
-                category=gap.category,
-                description=gap.description,
-                module_refs=gap.module_refs,
-                evidence_refs=gap.evidence_refs,
-                status=GapStatus(existing.status),
-                priority=gap.priority,
-                bound=gap.bound,
+            return ResearchGap.model_validate(
+                {
+                    **existing.payload,
+                    "root_job_id": existing.root_job_id,
+                    "plan_revision": revision.revision,
+                    "source_result_id": existing.source_result_id,
+                    "gap_hash": existing.gap_hash,
+                    "status": existing.status,
+                    "priority": existing.priority,
+                }
             )
 
         task = await self._session.scalar(
@@ -565,6 +562,15 @@ class PostgresPlanStore:
         )
         if task is None:
             raise PlanConflictError("gap references a task that does not belong to this revision")
+        if gap.source_result_id is not None:
+            source = await self._session.get(AttemptResultRow, gap.source_result_id)
+            if (
+                source is None
+                or source.disposition != ResultDisposition.ELIGIBLE.value
+                or source.result_hash != gap.source_result_hash
+                or task.dispatched_job_id != source.job_id
+            ):
+                raise PlanConflictError("gap source is not an eligible result for this plan task")
 
         self._session.add(
             PlanGapRow(
@@ -575,6 +581,7 @@ class PostgresPlanStore:
                 source_result_id=gap.source_result_id,
                 gap_hash=gap.gap_hash,
                 status=GapStatus.OPEN.value,
+                priority=gap.priority,
                 payload=gap.model_dump(mode="json", exclude={"status", "priority"}),
             )
         )
@@ -607,7 +614,7 @@ class PostgresPlanStore:
         )
         gaps: list[ResearchGap] = []
         for row in rows:
-            priority = row.payload.get("priority", 0)
+            priority = row.priority
             if priority < min_priority:
                 continue
             gaps.append(
@@ -636,21 +643,27 @@ class PostgresPlanStore:
         gap_hashes: tuple[str, ...],
         status: GapStatus,
     ) -> int:
-        """Mark a set of gaps as accepted, rejected, or resolved. Returns updated count."""
+        """Mark a set of gaps as accepted, rejected, or resolved. Returns updated count.
+
+        Resolution targets all revisions for this root job — gaps from older revisions
+        remain open until explicitly resolved. Only OPEN rows are updated.
+        """
         if not gap_hashes:
             return 0
+        if status == GapStatus.OPEN:
+            raise ValueError("resolve_gaps must target a non-OPEN status")
         head = await self._session.scalar(
             select(PlanHeadRow).where(PlanHeadRow.root_job_id == root_job_id).with_for_update()
         )
         if head is None:
             raise PlanNotFoundError("root Job has no plan")
-        revision = await self._get_revision_row(root_job_id, head.current_revision, lock=True)
+        await self._get_revision_row(root_job_id, head.current_revision, lock=True)
         result = await self._session.execute(
             sql_update(PlanGapRow)
             .where(
                 PlanGapRow.root_job_id == root_job_id,
-                PlanGapRow.plan_revision_id == revision.id,
                 PlanGapRow.gap_hash.in_(gap_hashes),
+                PlanGapRow.status == GapStatus.OPEN.value,
             )
             .values(status=status.value)
         )
@@ -720,7 +733,45 @@ def build_revision_from_patch(
         node.model_copy(update={"status": TaskStatus.SUPERSEDED}) for node in retired_nodes
     )
     fresh_nodes = kept + list(superseded) + list(new_nodes)
-    fresh_edges = base.edges + new_edges
+    # Drop any edge that references a retired key, so no dangling edges remain.
+    edge_dropped = any(
+        edge.from_key in retired_set or edge.to_key in retired_set
+        for edge in base.edges
+    )
+    node_keys = {node.logical_key for node in fresh_nodes}
+    fresh_edges = tuple(
+        edge for edge in base.edges
+        if edge.from_key not in retired_set and edge.to_key not in retired_set
+    ) + new_edges
+
+    # Normalize node depths only when edges were removed, because the
+    # validator enforces depth == dependency depth.  Pure EXPAND keeps
+    # original depths intact.
+    if edge_dropped:
+        adjacency: dict[str, set[str]] = {key: set() for key in node_keys}
+        indegree: dict[str, int] = {key: 0 for key in node_keys}
+        for edge in fresh_edges:
+            if edge.to_key not in adjacency[edge.from_key]:
+                adjacency[edge.from_key].add(edge.to_key)
+                indegree[edge.to_key] += 1
+        graph_depth: dict[str, int] = {key: 0 for key in node_keys}
+        frontier = [key for key in node_keys if indegree[key] == 0]
+        while frontier:
+            current = frontier.pop()
+            for successor in adjacency[current]:
+                graph_depth[successor] = max(graph_depth[successor], graph_depth[current] + 1)
+                indegree[successor] -= 1
+                if indegree[successor] == 0:
+                    frontier.append(successor)
+        normalized: list[TaskNode] = []
+        for node in fresh_nodes:
+            d = graph_depth.get(node.logical_key, 0)
+            normalized.append(
+                node if node.depth == d else node.model_copy(update={"depth": d})
+            )
+        final_nodes = tuple(normalized)
+    else:
+        final_nodes = tuple(fresh_nodes)
 
     return OrchestrationPlanRevision(
         root_job_id=base.root_job_id,
@@ -730,6 +781,6 @@ def build_revision_from_patch(
         reason=reason or f"patch {patch_kind.value}: {trigger}",
         planner_profile_id=base.planner_profile_id,
         planner_profile_revision=base.planner_profile_revision,
-        nodes=tuple(fresh_nodes),
+        nodes=final_nodes,
         edges=fresh_edges,
     )

@@ -59,7 +59,11 @@ from aidison.infrastructure.budget import (
     BudgetLedger,
     BudgetLimitExceededError,
 )
-from aidison.infrastructure.planning import PostgresPlanStore
+from aidison.infrastructure.planning import (
+    PlanNotFoundError,
+    PostgresPlanStore,
+    build_revision_from_patch,
+)
 from aidison.infrastructure.profiles import ProfileRepository
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
 from aidison.infrastructure.store import PostgresDomainStore
@@ -72,14 +76,24 @@ from aidison.runtime.contracts import (
     DelegationResult,
     DelegationSpec,
     DelegationStatus,
+    DelegationWave,
     JobClaim,
     JobStatus,
     JoinMode,
     JoinPolicy,
+    JoinReceipt,
     ResultDisposition,
     RuntimeWorkItem,
 )
-from aidison.runtime.planning import build_research_shadow_plan
+from aidison.runtime.planning import (
+    GapStatus,
+    PlanPatchKind,
+    PlanPatchProposal,
+    ResearchGap,
+    ResearchMode,
+    TaskNode,
+    build_research_shadow_plan,
+)
 from aidison.tools.github import (
     ControlledGitHubRead,
     GitHubBudgetBroker,
@@ -970,6 +984,9 @@ class ResearchWorker:
             await BudgetLedger(session).close_allocation(allocation.allocation_id)
             await session.commit()
         async with self._factory() as session:
+            record_gaps = bool(proposal.bounded_gaps) and not delegation.shard_key.startswith(
+                "gap-"
+            )
             registered = await PostgresRuntime(session).register_result(
                 result=DelegationResult(
                     delegation_id=delegation.delegation_id,
@@ -984,9 +1001,21 @@ class ResearchWorker:
                     output_tokens=model_budget.output_tokens,
                 ),
                 lease_token=work.claim.lease_token,
+                commit=not record_gaps,
             )
             if registered.disposition is not ResultDisposition.ELIGIBLE:
+                if record_gaps:
+                    await session.commit()
                 return
+            if record_gaps:
+                await self._record_gaps_from_proposal(
+                    store=PostgresPlanStore(session),
+                    delegation=delegation,
+                    result_id=registered.result_id,
+                    result_hash=registered.result_hash,
+                    bounded_gaps=proposal.bounded_gaps,
+                )
+                await session.commit()
 
     async def _run_parent(self, work: RuntimeWorkItem) -> None:
         committed = await self._find_committed_join(work)
@@ -1068,6 +1097,7 @@ class ResearchWorker:
                     dispatched_job_id=child_job_id,
                 )
 
+        # ---- A: wait for primary wave ready, read proposals ----
         while True:
             async with self._factory() as session:
                 snapshot = await PostgresRuntime(session).inspect_join(
@@ -1083,46 +1113,29 @@ class ResearchWorker:
         proposals: list[ResearchProposalPayload] = []
         for ref in snapshot.accepted_proposal_refs:
             proposals.append(await self._read_proposal(work, ref))
-        merged = merge_research_proposals(proposals)
-        merged_artifact = await self._put_json(
+
+        # Commit the primary wave before replanning. Its immutable receipt is the
+        # durable recovery anchor if the parent is reclaimed during a gap wave.
+        primary = merge_research_proposals(proposals)
+        primary_artifact = await self._put_json(
             work=work,
             kind="merged_research_proposal",
-            value=merged.model_dump(mode="json"),
+            value=primary.model_dump(mode="json"),
         )
         async with self._factory() as session:
             receipt = await PostgresRuntime(session).commit_join(
                 join_group_id=wave.join_group_id,
-                merged_proposal_ref=merged_artifact.ref,
+                merged_proposal_ref=primary_artifact.ref,
             )
         if receipt is None:
             raise RuntimeConflictError("research join was not committed")
-
-        evidence, candidates, findings, decision_options = map_proposal_to_domain(
-            project_id=project.id,
+        await self._finish_research_parent(
+            work=work,
+            project=project,
             modules=modules,
-            proposal=merged,
-            idempotency_namespace=receipt.join_group_id,
-            observed_at=receipt.committed_at,
+            primary=primary,
+            receipt=receipt,
         )
-        async with self._factory() as session:
-            decision = await ProjectApplication(
-                PostgresDomainStore(session)
-            ).submit_research_proposal(
-                project_id=project.id,
-                expected_project_revision=work.claim.basis_project_revision,
-                evidence=evidence,
-                candidates=candidates,
-                findings=findings,
-                decision_question=merged.decision_question,
-                decision_options=decision_options,
-                idempotency_key=f"research-join:{wave.join_group_id}",
-            )
-        async with self._factory() as session:
-            await PostgresRuntime(session).complete_claim(
-                claim=work.claim,
-                status=JobStatus.SUCCEEDED,
-                result_ref=str(decision.id),
-            )
 
     async def _find_committed_join(self, work: RuntimeWorkItem) -> CommittedJoin | None:
         async with self._factory() as session:
@@ -1158,12 +1171,33 @@ class ResearchWorker:
         if {item.id for item in modules} != module_ids:
             raise RuntimeConflictError("committed join module inputs are missing")
 
+        await self._finish_research_parent(
+            work=work,
+            project=project,
+            modules=modules,
+            primary=proposal,
+            receipt=committed.receipt,
+        )
+
+    async def _finish_research_parent(
+        self,
+        *,
+        work: RuntimeWorkItem,
+        project: Project,
+        modules: tuple[Module, ...],
+        primary: ResearchProposalPayload,
+        receipt: JoinReceipt,
+    ) -> None:
+        gap_proposal = await self._ensure_gap_join(work=work)
+        merged = merge_research_proposals(
+            (primary,) if gap_proposal is None else (primary, gap_proposal)
+        )
         evidence, candidates, findings, decision_options = map_proposal_to_domain(
             project_id=project.id,
             modules=modules,
-            proposal=proposal,
-            idempotency_namespace=committed.receipt.join_group_id,
-            observed_at=committed.receipt.committed_at,
+            proposal=merged,
+            idempotency_namespace=receipt.join_group_id,
+            observed_at=receipt.committed_at,
         )
         async with self._factory() as session:
             decision = await ProjectApplication(
@@ -1174,9 +1208,9 @@ class ResearchWorker:
                 evidence=evidence,
                 candidates=candidates,
                 findings=findings,
-                decision_question=proposal.decision_question,
+                decision_question=merged.decision_question,
                 decision_options=decision_options,
-                idempotency_key=f"research-join:{committed.receipt.join_group_id}",
+                idempotency_key=f"research-join:{receipt.join_group_id}",
             )
         async with self._factory() as session:
             await PostgresRuntime(session).complete_claim(
@@ -1952,6 +1986,232 @@ class ResearchWorker:
         if isinstance(exc, (StructuredOutputError, ValueError)):
             return "invalid_agent_output"
         return "worker_error"
+
+    async def _record_gaps_from_proposal(
+        self,
+        *,
+        store: PostgresPlanStore,
+        delegation: DelegationSpec,
+        result_id: UUID,
+        result_hash: str,
+        bounded_gaps: tuple[str, ...],
+    ) -> None:
+        """Record bounded gaps from an eligible child result's output.
+
+        Only records gaps for the returned shard task — the child's delegation
+        carries the logical_key. The child's registered result was already
+        accepted as ELIGIBLE by the runtime, so the source_result_id/hash
+        are verified before calling.
+        """
+        task_logical_key = f"research.{delegation.shard_key}"
+        current = await store.get_current(root_job_id=delegation.parent_job_id)
+        for description in bounded_gaps[:4]:
+            gap = ResearchGap(
+                root_job_id=delegation.parent_job_id,
+                task_logical_key=task_logical_key,
+                plan_revision=current.revision,
+                source_result_id=result_id,
+                source_result_hash=result_hash,
+                category="proposal_gap",
+                description=description,
+                module_refs=tuple(delegation.input_refs),
+                priority=10,
+                bound=1,
+            )
+            await store.record_gap(gap=gap)
+
+    async def _ensure_gap_join(
+        self,
+        *,
+        work: RuntimeWorkItem,
+    ) -> ResearchProposalPayload | None:
+        """Resume or run the one bounded gap wave for a committed primary join."""
+        async with self._factory() as session:
+            committed = await PostgresRuntime(session).find_committed_join(
+                parent_claim=work.claim,
+                graph_step_id="research.gap",
+            )
+        if committed is not None:
+            return await self._read_proposal(work, committed.receipt.merged_proposal_ref)
+
+        async with self._factory() as session:
+            store = PostgresPlanStore(session)
+            try:
+                base = await store.get_current(root_job_id=work.claim.job_id)
+            except PlanNotFoundError:
+                return None
+
+        # A revision already beyond the initial plan means a prior attempt landed
+        # the patch. Reclaim resets its uncommitted child bindings to READY, so the
+        # current attempt only needs to replay the existing frontier.
+        if base.revision == 1:
+            async with self._factory() as session:
+                gaps = await PostgresPlanStore(session).list_open_gaps(
+                    root_job_id=work.claim.job_id,
+                    min_priority=1,
+                )
+            if not gaps:
+                return None
+
+            async with self._factory() as session:
+                profiles = ProfileRepository(session)
+                binding = await profiles.get_binding(work.claim.job_id, "research-worker")
+
+            seen: set[str] = set()
+            new_nodes: list[TaskNode] = []
+            for gap in gaps:
+                if gap.gap_hash in seen or len(new_nodes) >= 4:
+                    continue
+                seen.add(gap.gap_hash)
+                new_nodes.append(
+                    TaskNode(
+                        logical_key=f"research.gap-{gap.gap_hash[:8]}",
+                        objective=gap.description,
+                        mode=ResearchMode.ATOM,
+                        role_key="research-worker",
+                        profile_id=binding.profile_id,
+                        profile_revision=binding.profile_revision,
+                        budget_ref=f"budget://job/{gap.root_job_id}",
+                        depth=0,
+                        input_refs=gap.module_refs,
+                        success_criteria=("gap addressed with verifiable evidence",),
+                        stop_criteria=("gap is resolved or refuted",),
+                    )
+                )
+            if not new_nodes:
+                return None
+            next_revision = build_revision_from_patch(
+                base=base,
+                patch_kind=PlanPatchKind.EXPAND,
+                trigger=f"{len(new_nodes)} gap(s) from eligible results",
+                new_nodes=tuple(new_nodes),
+                reason=f"revision {base.revision + 1}: bounded gap expansion",
+            )
+            patch = PlanPatchProposal(
+                root_job_id=str(work.claim.job_id),
+                base_revision=base.revision,
+                base_plan_hash=base.plan_hash,
+                kind=PlanPatchKind.EXPAND,
+                trigger=f"{len(new_nodes)} gap(s) from eligible results",
+                payload={"gap_hashes": sorted(seen)},
+                new_plan=next_revision,
+            )
+            async with self._factory() as session:
+                store = PostgresPlanStore(session)
+                await store.apply_patch(claim=work.claim, patch=patch)
+                await store.resolve_gaps(
+                    root_job_id=work.claim.job_id,
+                    gap_hashes=tuple(sorted(seen)),
+                    status=GapStatus.ACCEPTED,
+                )
+                await session.commit()
+
+        gap_wave, gap_specs = await self._dispatch_frontier(work=work)
+        if gap_wave is None or not gap_specs:
+            return None
+
+        # Wait for gap wave readiness
+        while True:
+            async with self._factory() as session:
+                snapshot = await PostgresRuntime(session).inspect_join(
+                    join_group_id=gap_wave.join_group_id,
+                    parent_claim=work.claim,
+                )
+            if snapshot.impossible:
+                raise RuntimeConflictError("gap research join is impossible")
+            if snapshot.ready:
+                break
+            await asyncio.sleep(self._poll_seconds)
+
+        gap_proposals: list[ResearchProposalPayload] = []
+        for ref in snapshot.accepted_proposal_refs:
+            gap_proposals.append(await self._read_proposal(work, ref))
+        merged = merge_research_proposals(gap_proposals)
+        artifact = await self._put_json(
+            work=work,
+            kind="merged_gap_research_proposal",
+            value=merged.model_dump(mode="json"),
+        )
+        async with self._factory() as session:
+            receipt = await PostgresRuntime(session).commit_join(
+                join_group_id=gap_wave.join_group_id,
+                merged_proposal_ref=artifact.ref,
+            )
+        if receipt is None:
+            raise RuntimeConflictError("gap research join was not committed")
+        return merged
+
+    async def _dispatch_frontier(
+        self,
+        *,
+        work: RuntimeWorkItem,
+    ) -> tuple[DelegationWave | None, tuple[DelegationSpec, ...]]:
+        """Bind ready frontier gap-nodes to child Jobs.
+
+        Returns (DelegationWave | None, DelegationSpec...).
+        """
+        async with self._factory() as session:
+            profiles = ProfileRepository(session)
+            worker_binding = await profiles.get_binding(
+                work.claim.job_id,
+                "research-worker",
+            )
+            worker_profile = await profiles.get_revision(
+                worker_binding.profile_id,
+                worker_binding.profile_revision,
+            )
+            store = PostgresPlanStore(session)
+            ready = await store.list_ready_frontier(root_job_id=work.claim.job_id)
+
+        gap_nodes = [n for n in ready if n.logical_key.startswith("research.gap-")]
+        if not gap_nodes:
+            return None, ()
+
+        deadline = work.claim.lease_expires_at + timedelta(
+            seconds=worker_profile.timeout_seconds * len(gap_nodes)
+        )
+        specs = tuple(
+            DelegationSpec(
+                delegation_id=uuid5(
+                    work.claim.attempt_id,
+                    f"research.gap:{node.logical_key}",
+                ),
+                parent_job_id=work.claim.job_id,
+                parent_attempt_id=work.claim.attempt_id,
+                parent_claim_generation=work.claim.claim_generation,
+                graph_step_id="research.gap",
+                profile_id=worker_binding.profile_id,
+                profile_revision=worker_binding.profile_revision,
+                basis_hash=work.claim.basis_hash,
+                shard_key=node.logical_key.removeprefix("research."),
+                idempotency_key=f"{work.claim.attempt_id}:research.gap:{node.logical_key}",
+                input_refs=node.input_refs,
+                token_budget=worker_profile.token_cap,
+                tool_call_budget=worker_profile.tool_call_cap,
+                deadline=deadline,
+            )
+            for node in gap_nodes
+        )
+        policy = JoinPolicy(
+            mode=JoinMode.ALL_REQUIRED,
+            expected_delegation_ids=tuple(item.delegation_id for item in specs),
+            min_successes=len(specs),
+            deadline=deadline,
+        )
+        async with self._factory() as session:
+            runtime = PostgresRuntime(session)
+            plan_store = PostgresPlanStore(session)
+            wave = await runtime.create_delegation_wave(
+                specs=specs,
+                policy=policy,
+            )
+            for spec, child_job_id in zip(specs, wave.child_job_ids, strict=True):
+                await plan_store.bind_task_job(
+                    root_job_id=work.claim.job_id,
+                    logical_key=f"research.{spec.shard_key}",
+                    dispatched_job_id=child_job_id,
+                )
+        return wave, specs
 
     @staticmethod
     def _research_prompt(

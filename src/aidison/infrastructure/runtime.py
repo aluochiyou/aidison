@@ -645,6 +645,7 @@ class PostgresRuntime:
         *,
         result: DelegationResult,
         lease_token: UUID,
+        commit: bool = True,
     ) -> RegisteredResult:
         delegation = await self._session.get(DelegationRow, result.delegation_id)
         attempt = await self._session.get(AttemptRow, result.attempt_id)
@@ -677,7 +678,8 @@ class PostgresRuntime:
         result_id = _result_id(result.attempt_id, result_hash)
         existing = await self._session.get(AttemptResultRow, result_id)
         if existing is not None:
-            await self._session.commit()
+            if commit:
+                await self._session.commit()
             return RegisteredResult(
                 result_id=existing.id,
                 result_hash=existing.result_hash,
@@ -784,7 +786,10 @@ class PostgresRuntime:
                 "reason": quarantine_reason,
             },
         )
-        await self._session.commit()
+        if commit:
+            await self._session.commit()
+        else:
+            await self._session.flush()
         return RegisteredResult(
             result_id=result_id,
             result_hash=result_hash,

@@ -63,6 +63,7 @@ class ResearchProposalPayload(AgentOutput):
     findings: tuple[CompatibilityDraft, ...] = Field(max_length=16)
     decision_question: str = Field(min_length=1, max_length=4_000)
     decision_options: tuple[DecisionOptionDraft, ...] = Field(min_length=2, max_length=8)
+    bounded_gaps: tuple[str, ...] = Field(default=(), max_length=4)
 
     @model_validator(mode="after")
     def references_existing_evidence(self) -> ResearchProposalPayload:

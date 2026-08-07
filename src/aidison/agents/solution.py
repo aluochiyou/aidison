@@ -59,6 +59,7 @@ def build_solution_agent(*, model: BaseChatModel) -> Any:
         system_prompt=SOLUTION_SYSTEM_PROMPT,
         response_format=SolutionProposalPayload,
         subagents=_NO_NATIVE_SUBAGENTS,
+        enable_native_subagents=False,
         checkpointer=None,
         store=None,
         name="aidison-solution-proposer",

@@ -86,7 +86,7 @@ def test_agent_builders_use_official_harness_profile_api(
     assert profile.general_purpose_subagent.enabled is False
     assert kwargs["subagents"] == ()
     assert "excluded_tools" not in kwargs
-    assert "enable_native_subagents" not in kwargs
+    assert kwargs["enable_native_subagents"] is False
     expected_tool_names = ["web_search"] if module is research_module else []
     assert [tool.name for tool in kwargs["tools"]] == expected_tool_names
 

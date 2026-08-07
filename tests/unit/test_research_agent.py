@@ -61,7 +61,7 @@ def test_research_agent_disables_native_runtime_and_mutating_tools() -> None:
     kwargs = create.call_args.kwargs
     assert kwargs["model"] is model
     assert kwargs["response_format"] is ResearchProposalPayload
-    assert "enable_native_subagents" not in kwargs
+    assert kwargs["enable_native_subagents"] is False
     assert kwargs["subagents"] == ()
     assert kwargs["checkpointer"] is None
     assert kwargs["store"] is None
@@ -250,7 +250,7 @@ def test_solution_agent_is_proposal_only_and_has_no_tools() -> None:
     assert kwargs["model"] is model
     assert kwargs["response_format"] is SolutionProposalPayload
     assert kwargs["tools"] == []
-    assert "enable_native_subagents" not in kwargs
+    assert kwargs["enable_native_subagents"] is False
     assert kwargs["subagents"] == ()
     assert kwargs["checkpointer"] is None
     assert kwargs["store"] is None
@@ -271,7 +271,7 @@ def test_impact_agent_is_proposal_only_and_has_no_tools() -> None:
     assert kwargs["model"] is model
     assert kwargs["response_format"] is ImpactProposalPayload
     assert kwargs["tools"] == []
-    assert "enable_native_subagents" not in kwargs
+    assert kwargs["enable_native_subagents"] is False
     assert kwargs["subagents"] == ()
     assert kwargs["checkpointer"] is None
     assert kwargs["store"] is None

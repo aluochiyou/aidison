@@ -191,22 +191,6 @@ class GapStatus(StrEnum):
     RESOLVED = "resolved"
 
 
-class GapLineage(PlanningContract):
-    """Provenance: which task node and which eligible result produced this gap."""
-
-    root_job_id: UUID
-    task_logical_key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
-    plan_revision: int = Field(ge=1)
-    source_result_id: UUID | None = None
-    source_result_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
-
-    @model_validator(mode="after")
-    def result_hash_requires_result_id(self) -> GapLineage:
-        if self.source_result_hash is not None and self.source_result_id is None:
-            raise ValueError("source_result_hash requires source_result_id")
-        return self
-
-
 class ResearchGap(PlanningContract):
     """A typed, bounded, deduplicated knowledge gap from an eligible research result.
 

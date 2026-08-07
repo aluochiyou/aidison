@@ -16,7 +16,7 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, LLMResult
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 
 from aidison.agents.profiles import RESEARCH_WORKER_PROFILE
 from aidison.application.research import AgentRunner, ResearchWorker
@@ -45,11 +45,14 @@ from aidison.infrastructure.orm import (
     JobRow,
     JoinGroupRow,
     JoinReceiptRow,
+    PlanGapRow,
+    PlanHeadRow,
     PlanTaskRow,
     ProjectRow,
     SolutionProposalRow,
 )
 from aidison.infrastructure.planning import (
+    PlanConflictError,
     PostgresPlanStore,
     build_revision_from_patch,
 )
@@ -66,6 +69,7 @@ from aidison.runtime.planning import (
     TaskEdge,
     TaskEdgeKind,
     TaskNode,
+    TaskStatus,
 )
 from aidison.tools.github import ControlledGitHubRead, GitHubMcpSession
 from aidison.tools.web_search import (
@@ -73,6 +77,23 @@ from aidison.tools.web_search import (
     RawSearchHit,
     SearchContext,
 )
+
+
+# Helper factory shared across new store-only test cases.
+def _node(key: str, *, depth: int = 0) -> TaskNode:
+    return TaskNode(
+        logical_key=key,
+        objective=f"Research {key}",
+        mode=ResearchMode.ATOM,
+        role_key="research-worker",
+        profile_id=RESEARCH_WORKER_PROFILE.profile_id,
+        profile_revision=RESEARCH_WORKER_PROFILE.revision,
+        budget_ref="budget://root",
+        depth=depth,
+        input_refs=(f"module://{key}",),
+        success_criteria=("one evidence-backed result",),
+        stop_criteria=("the assigned evidence boundary is reached",),
+    )
 
 pytestmark = pytest.mark.integration
 
@@ -196,6 +217,20 @@ class FakeResearchAgent:
         }
 
 
+class FakeGapResearchAgent(FakeResearchAgent):
+    async def ainvoke(
+        self,
+        input: dict[str, Any],
+        *,
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        state = await super().ainvoke(input, config=config)
+        state["structured_response"]["bounded_gaps"] = (
+            "Confirm the module interface against a second authoritative source",
+        )
+        return state
+
+
 def fake_agent_factory(
     model: BaseChatModel,
     search: ControlledWebSearch,
@@ -206,6 +241,18 @@ def fake_agent_factory(
     del model, github
     assert system_prompt
     return FakeResearchAgent(search, context)
+
+
+def fake_gap_agent_factory(
+    model: BaseChatModel,
+    search: ControlledWebSearch,
+    context: SearchContext,
+    github: ControlledGitHubRead | None,
+    system_prompt: str,
+) -> AgentRunner:
+    del model, github
+    assert system_prompt
+    return FakeGapResearchAgent(search, context)
 
 
 class FakeGitHubBackend:
@@ -1368,6 +1415,245 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
 
 
 @pytest.mark.asyncio
+async def test_worker_executes_gap_revision_and_merges_followup_result(
+    tmp_path: Path,
+) -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs, artifacts CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Gap worker fixture",
+                goal="Run one bounded dynamic research follow-up",
+                idempotency_key=f"gap-worker-{uuid4()}",
+            )
+            requirement, modules = await app.approve_requirements(
+                project_id=project.id,
+                expected_project_revision=project.revision,
+                goal=project.goal,
+                hard_constraints=("Use evidence",),
+                preferences=("Keep it bounded",),
+                available_resources=("Workshop",),
+                unknowns=("Interface confirmation",),
+                modules=(
+                    {
+                        "key": "frame",
+                        "name": "Frame",
+                        "responsibility": "Carry the system",
+                    },
+                ),
+                idempotency_key=f"gap-worker-requirements-{uuid4()}",
+            )
+            basis_hash = sha256(f"{requirement.id}:{modules[0].id}".encode()).hexdigest()
+            root_job_id = await PostgresRuntime(session).create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision + 1,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+                token_budget_cap=8_000,
+                tool_call_budget_cap=6,
+            )
+
+        worker = ResearchWorker(
+            session_factory=factory,
+            artifact_root=tmp_path,
+            model_factory=lambda: MagicMock(spec=BaseChatModel),
+            search_backend_factory=FakeSearchBackend,
+            github_backend_factory=FakeGitHubBackend,
+            page_fetcher=FakePageFetcher(),
+            agent_factory=fake_gap_agent_factory,
+            lease_seconds=10,
+            poll_seconds=0.02,
+        )
+        worker_task = asyncio.create_task(
+            worker.run_forever(worker_id="gap-integration-worker", concurrency=3)
+        )
+        try:
+            async with asyncio.timeout(15):
+                while True:
+                    async with factory() as session:
+                        root = await session.get(JobRow, root_job_id)
+                        if root is not None and root.status in {"succeeded", "failed"}:
+                            break
+                    await asyncio.sleep(0.05)
+        finally:
+            worker_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await worker_task
+
+        async with factory() as session:
+            root = await session.get(JobRow, root_job_id)
+            assert root is not None and root.status == "succeeded"
+            head = await session.get(PlanHeadRow, root_job_id)
+            assert head is not None and head.current_revision == 2
+            gaps = list(await session.scalars(select(PlanGapRow)))
+            assert len(gaps) == 1 and gaps[0].status == GapStatus.ACCEPTED.value
+            gap_task = await session.scalar(
+                select(PlanTaskRow).where(PlanTaskRow.logical_key.like("research.gap-%"))
+            )
+            assert gap_task is not None and gap_task.status == TaskStatus.SUCCEEDED.value
+            assert await session.scalar(select(func.count()).select_from(JoinReceiptRow)) == 2
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(AttemptResultRow)
+                    .where(AttemptResultRow.disposition == "eligible")
+                )
+                == 2
+            )
+            assert (
+                await session.scalar(
+                    select(func.count())
+                    .select_from(JobRow)
+                    .where(JobRow.parent_job_id == root_job_id, JobRow.status == "succeeded")
+                )
+                == 2
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_reclaimed_parent_resumes_revision2_gap_frontier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs, artifacts CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Gap reclaim fixture",
+                goal="Resume a durable revision two frontier",
+                idempotency_key=f"gap-reclaim-{uuid4()}",
+            )
+            requirement, modules = await app.approve_requirements(
+                project_id=project.id,
+                expected_project_revision=project.revision,
+                goal=project.goal,
+                hard_constraints=("Use evidence",),
+                preferences=("Recover safely",),
+                available_resources=("Workshop",),
+                unknowns=("Interface confirmation",),
+                modules=(
+                    {
+                        "key": "frame",
+                        "name": "Frame",
+                        "responsibility": "Carry the system",
+                    },
+                ),
+                idempotency_key=f"gap-reclaim-requirements-{uuid4()}",
+            )
+            basis_hash = sha256(f"{requirement.id}:{modules[0].id}".encode()).hexdigest()
+            root_job_id = await PostgresRuntime(session).create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision + 1,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+                token_budget_cap=12_000,
+                tool_call_budget_cap=9,
+            )
+
+        gap_wave_created = asyncio.Event()
+        hold_first_gap_wave = asyncio.Event()
+        original_create_wave = PostgresRuntime.create_delegation_wave
+        paused = False
+
+        async def pause_first_gap_wave(
+            runtime: PostgresRuntime,
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            nonlocal paused
+            wave = await original_create_wave(runtime, *args, **kwargs)
+            specs = kwargs["specs"]
+            if specs[0].graph_step_id == "research.gap" and not paused:
+                paused = True
+                gap_wave_created.set()
+                await hold_first_gap_wave.wait()
+            return wave
+
+        monkeypatch.setattr(PostgresRuntime, "create_delegation_wave", pause_first_gap_wave)
+
+        def make_worker() -> ResearchWorker:
+            return ResearchWorker(
+                session_factory=factory,
+                artifact_root=tmp_path,
+                model_factory=lambda: MagicMock(spec=BaseChatModel),
+                search_backend_factory=FakeSearchBackend,
+                github_backend_factory=FakeGitHubBackend,
+                page_fetcher=FakePageFetcher(),
+                agent_factory=fake_gap_agent_factory,
+                lease_seconds=1,
+                poll_seconds=0.02,
+            )
+
+        first = asyncio.create_task(
+            make_worker().run_forever(worker_id="gap-reclaim-first", concurrency=3)
+        )
+        async with asyncio.timeout(10):
+            await gap_wave_created.wait()
+        first.cancel()
+        with suppress(asyncio.CancelledError):
+            await first
+        await asyncio.sleep(1.2)
+
+        second = asyncio.create_task(
+            make_worker().run_forever(worker_id="gap-reclaim-second", concurrency=3)
+        )
+        try:
+            async with asyncio.timeout(15):
+                while True:
+                    async with factory() as session:
+                        root = await session.get(JobRow, root_job_id)
+                        if root is not None and root.status in {"succeeded", "failed"}:
+                            break
+                    await asyncio.sleep(0.05)
+        finally:
+            second.cancel()
+            with suppress(asyncio.CancelledError):
+                await second
+
+        async with factory() as session:
+            root = await session.get(JobRow, root_job_id)
+            assert root is not None and root.status == "succeeded"
+            assert root.current_generation >= 2
+            head = await session.get(PlanHeadRow, root_job_id)
+            assert head is not None and head.current_revision == 2
+            gap_task = await session.scalar(
+                select(PlanTaskRow).where(PlanTaskRow.logical_key.like("research.gap-%"))
+            )
+            assert gap_task is not None and gap_task.status == TaskStatus.SUCCEEDED.value
+            groups = list(
+                await session.scalars(
+                    select(JoinGroupRow).where(JoinGroupRow.parent_job_id == root_job_id)
+                )
+            )
+            assert sum(group.status == "joined" for group in groups) == 2
+            assert sum(group.status == "cancelled" for group in groups) >= 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_gap_to_patch_frontier_dispatch_does_not_create_direct_gap_to_job(
     tmp_path: Path,
 ) -> None:
@@ -1507,5 +1793,246 @@ async def test_gap_to_patch_frontier_dispatch_does_not_create_direct_gap_to_job(
             )
             assert len(gap_rows) == 1
             assert gap_rows[0].status == GapStatus.ACCEPTED.value
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_gap_dedup_replay_and_fake_result_rejection(
+    tmp_path: Path,
+) -> None:
+    """Gaps with source result persist through replay; dedup returns canonical priority."""
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Gap idempotent replay fixture",
+                goal="Verify gap recording survives replay with persisted priority",
+                idempotency_key=f"gap-replay-project-{uuid4()}",
+            )
+            basis_hash = sha256(b"gap-replay-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+            )
+            claim = await runtime.claim_next_job(worker_id="gap-replay-ctrl", lease_seconds=60)
+            assert claim is not None
+
+            store = PostgresPlanStore(session)
+            await store.create_initial(
+                claim=claim,
+                plan=OrchestrationPlanRevision(
+                    root_job_id=str(root_job_id),
+                    revision=1,
+                    basis_hash=basis_hash,
+                    reason="initial",
+                    planner_profile_id="research-orchestrator",
+                    planner_profile_revision=1,
+                    nodes=(_node("a", depth=0),),
+                ),
+            )
+
+            gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                source_result_id=None,
+                source_result_hash=None,
+                category="compatibility_conflict",
+                description="Module A conflicts with Module B",
+                priority=15,
+            )
+            recorded = await store.record_gap(gap=gap)
+            assert recorded.gap_hash == gap.gap_hash
+            assert recorded.priority == 15
+
+            with pytest.raises(PlanConflictError, match="eligible result"):
+                await store.record_gap(
+                    gap=ResearchGap(
+                        root_job_id=root_job_id,
+                        task_logical_key="a",
+                        plan_revision=1,
+                        source_result_id=uuid4(),
+                        source_result_hash=sha256(b"not-registered").hexdigest(),
+                        category="missing_source",
+                        description="This source result was never registered",
+                    )
+                )
+
+            # Dedup replay returns persisted priority, not the caller's
+            replay_gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                source_result_id=None,
+                source_result_hash=None,
+                category="compatibility_conflict",
+                description="Module A conflicts with Module B",
+                priority=99,
+            )
+            replay = await store.record_gap(gap=replay_gap)
+            assert replay.priority == 15
+
+            # Row count stays at 1
+            gap_rows = list(
+                await session.scalars(
+                    select(PlanGapRow).where(PlanGapRow.root_job_id == root_job_id)
+                )
+            )
+            assert len(gap_rows) == 1
+            assert gap_rows[0].priority == 15
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_revision2_frontier_binding_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    """A revision-two frontier can be bound and replayed idempotently."""
+    del tmp_path
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Rev2 dispatch fixture",
+                goal="Verify rev2 frontier → dispatch → bind → reclaim",
+                idempotency_key=f"rev2-dispatch-{uuid4()}",
+            )
+            basis_hash = sha256(b"rev2-dispatch-basis").hexdigest()
+            runtime = PostgresRuntime(session)
+            root_job_id = await runtime.create_job(
+                project_id=project.id,
+                kind="research_wave",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id="research-orchestrator",
+                profile_revision=1,
+            )
+            claim = await runtime.claim_next_job(worker_id="rev2-disp-ctrl", lease_seconds=60)
+            assert claim is not None
+
+            store = PostgresPlanStore(session)
+            base = OrchestrationPlanRevision(
+                root_job_id=str(root_job_id),
+                revision=1,
+                basis_hash=basis_hash,
+                reason="initial",
+                planner_profile_id="research-orchestrator",
+                planner_profile_revision=1,
+                nodes=(_node("a"),),
+            )
+            await store.create_initial(claim=claim, plan=base)
+
+            # Record a gap
+            gap = ResearchGap(
+                root_job_id=root_job_id,
+                task_logical_key="a",
+                plan_revision=1,
+                category="missing_data",
+                description="No API spec for module A",
+                module_refs=("module://a",),
+            )
+            await store.record_gap(gap=gap)
+
+            # Planner produces patch → revision 2
+            next_rev = build_revision_from_patch(
+                base=base,
+                patch_kind=PlanPatchKind.EXPAND,
+                trigger="gap detected",
+                new_nodes=(
+                    TaskNode(
+                        logical_key="deep-a",
+                        objective="Deep research on module A",
+                        mode=ResearchMode.DEEP,
+                        role_key="research-worker",
+                        profile_id=RESEARCH_WORKER_PROFILE.profile_id,
+                        profile_revision=RESEARCH_WORKER_PROFILE.revision,
+                        budget_ref="budget://root",
+                        depth=0,
+                        input_refs=("module://a",),
+                        success_criteria=("API spec found or confirmed absent",),
+                        stop_criteria=("one authoritative source",),
+                    ),
+                ),
+            )
+            patch = PlanPatchProposal(
+                root_job_id=str(root_job_id),
+                base_revision=1,
+                base_plan_hash=base.plan_hash,
+                kind=PlanPatchKind.EXPAND,
+                trigger="gap detected",
+                payload={"gap_hash": gap.gap_hash},
+                new_plan=next_rev,
+            )
+            await store.apply_patch(claim=claim, patch=patch)
+            await store.resolve_gaps(
+                root_job_id=root_job_id,
+                gap_hashes=(gap.gap_hash,),
+                status=GapStatus.ACCEPTED,
+            )
+            # Mark node "a" succeeded so frontier exposes "deep-a"
+            await session.execute(
+                update(PlanTaskRow)
+                .where(PlanTaskRow.logical_key == "a")
+                .values(status="succeeded")
+            )
+            await session.commit()
+
+            refreshed = await store.refresh_frontier(root_job_id=root_job_id)
+            assert {item.logical_key for item in refreshed} == {"deep-a"}
+
+            # Frontier dispatch: bind new child job
+            child_id = await runtime.create_job(
+                project_id=project.id,
+                kind="delegated_research",
+                basis_hash=basis_hash,
+                basis_project_revision=project.revision,
+                profile_id=RESEARCH_WORKER_PROFILE.profile_id,
+                profile_revision=RESEARCH_WORKER_PROFILE.revision,
+                parent_job_id=root_job_id,
+            )
+            await store.bind_task_job(
+                root_job_id=root_job_id,
+                logical_key="deep-a",
+                dispatched_job_id=child_id,
+            )
+            # Verify binding
+            task_row = await session.scalar(
+                select(PlanTaskRow).where(
+                    PlanTaskRow.logical_key == "deep-a",
+                    PlanTaskRow.dispatched_job_id == child_id,
+                )
+            )
+            assert task_row is not None
+            assert task_row.status == TaskStatus.DISPATCHED.value
+
+            # Idempotent rebind
+            await store.bind_task_job(
+                root_job_id=root_job_id,
+                logical_key="deep-a",
+                dispatched_job_id=child_id,
+            )
     finally:
         await engine.dispose()

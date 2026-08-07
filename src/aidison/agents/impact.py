@@ -60,6 +60,7 @@ def build_impact_agent(*, model: BaseChatModel) -> Any:
         system_prompt=IMPACT_SYSTEM_PROMPT,
         response_format=ImpactProposalPayload,
         subagents=_NO_NATIVE_SUBAGENTS,
+        enable_native_subagents=False,
         checkpointer=None,
         store=None,
         name="aidison-impact-proposer",
