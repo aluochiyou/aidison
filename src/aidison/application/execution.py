@@ -19,12 +19,16 @@ class DurableJoinWaiter:
         session_factory: async_sessionmaker[AsyncSession],
         signal_bus: PostgresSignalBus,
         durable_recheck_seconds: float = 30,
+        signal_failure_recheck_seconds: float = 0.5,
     ) -> None:
         if durable_recheck_seconds <= 0:
             raise ValueError("durable_recheck_seconds must be positive")
+        if signal_failure_recheck_seconds <= 0:
+            raise ValueError("signal_failure_recheck_seconds must be positive")
         self._factory = session_factory
         self._signal_bus = signal_bus
         self._durable_recheck_seconds = durable_recheck_seconds
+        self._signal_failure_recheck_seconds = signal_failure_recheck_seconds
 
     async def wait(
         self,
@@ -53,7 +57,7 @@ class DurableJoinWaiter:
                 )
                 if snapshot.ready or snapshot.impossible:
                     return snapshot
-                await asyncio.sleep(self._durable_recheck_seconds)
+                await asyncio.sleep(self._signal_failure_recheck_seconds)
 
     async def _inspect(
         self,

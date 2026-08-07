@@ -16,9 +16,9 @@ Research、Solution、Impact 和 Gap parent 原先每 0.5 秒调用一次 `inspe
 
 `domain_events`、`jobs`、`join_groups`、`delegations` 和 receipts 继续构成 durable truth。每次 `append_event()` 在同一 PostgreSQL 事务中调用 `pg_notify`，payload 只含 `project_id`、`project_sequence` 和 `event_type`。PostgreSQL 只会在事务 commit 后投递通知；rollback 不产生可见通知。
 
-Parent 使用业务无关的 `DurableJoinWaiter`：先建立项目级订阅，再读取 `inspect_join()`；收到通知或 30 秒保险超时后均重新读取数据库。通知不会携带 JoinPolicy，也不能授权提交。若 LISTEN 不可用，Waiter 退化为有界数据库重检。
+Parent 使用业务无关的 `DurableJoinWaiter`：先建立项目级订阅，再读取 `inspect_join()`；收到通知或 30 秒保险超时后均重新读取数据库。通知不会携带 JoinPolicy，也不能授权提交。若 LISTEN 建连失败或连接中途终止，Waiter 退化为原 0.5 秒 cadence 的有界数据库重检并继续尝试恢复订阅，避免故障路径把 Join 延迟放大到 30 秒。
 
-Listener 在订阅期间独占一个已 checkout 的连接；退出前必须 `remove_listener`。若清理失败，连接先 `invalidate`，绝不把仍带 callback 的物理连接归还普通连接池。
+Listener 在订阅期间独占一个已 checkout 的连接；退出前必须移除 notification/termination listener 并清除诊断用 `application_name`。若清理失败，连接先 `invalidate`，绝不把仍带 callback 的物理连接归还普通连接池。Worker 显式接收 `PostgresSignalBus`，不通过 SQLAlchemy session factory 的私有字段反查 Engine。
 
 ## Alternatives
 
@@ -31,7 +31,7 @@ Listener 在订阅期间独占一个已 checkout 的连接；退出前必须 `re
 
 - `research/c3-signal-review/c3-signal-adversarial-review.md`
 - PG17/PG18 实测：commit 后通知、rollback 无通知、订阅前通知不可重放。
-- `tests/integration/test_postgres_signals.py` 覆盖项目过滤、连接池 listener 清理、通知前置恢复和长 backstop 前即时唤醒。
+- `tests/integration/test_postgres_signals.py` 覆盖项目过滤、连接池 listener 清理、通知前置恢复、长 backstop 前即时唤醒、建连失败降级、中途断连恢复及普通 Join inspection 不放大写锁。
 
 ## Counterevidence
 

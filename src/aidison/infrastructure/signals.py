@@ -23,6 +23,14 @@ class DriverConnection(Protocol):
 
     async def remove_listener(self, channel: str, callback: Any) -> None: ...
 
+    def add_termination_listener(self, callback: Any) -> None: ...
+
+    def remove_termination_listener(self, callback: Any) -> None: ...
+
+    async def execute(self, query: str, *args: Any) -> str: ...
+
+    def get_server_pid(self) -> int: ...
+
 
 @dataclass(frozen=True, slots=True)
 class DatabaseSignal:
@@ -36,9 +44,11 @@ class DatabaseSignal:
 class PostgresSignalSubscription:
     """One checked-out PostgreSQL connection listening for one project's hints."""
 
-    def __init__(self, *, project_id: UUID) -> None:
+    def __init__(self, *, project_id: UUID, backend_pid: int) -> None:
         self._project_id = project_id
         self._queue: asyncio.Queue[DatabaseSignal] = asyncio.Queue(maxsize=1)
+        self._terminated = asyncio.Event()
+        self.backend_pid = backend_pid
 
     def receive(
         self,
@@ -60,13 +70,36 @@ class PostgresSignalSubscription:
             return
         self._queue.put_nowait(signal)
 
+    def connection_lost(self, _connection: Any) -> None:
+        self._terminated.set()
+
     async def wait(self, *, timeout_seconds: float) -> DatabaseSignal | None:
         if timeout_seconds < 0:
             raise ValueError("timeout_seconds must be non-negative")
+        if self._terminated.is_set():
+            raise SignalUnavailableError("PostgreSQL signal connection terminated")
+        notification = asyncio.create_task(self._queue.get())
+        terminated = asyncio.create_task(self._terminated.wait())
         try:
-            return await asyncio.wait_for(self._queue.get(), timeout=timeout_seconds)
-        except TimeoutError:
-            return None
+            done, _ = await asyncio.wait(
+                {notification, terminated},
+                timeout=timeout_seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                return None
+            if terminated in done:
+                raise SignalUnavailableError("PostgreSQL signal connection terminated")
+            return notification.result()
+        finally:
+            for task in (notification, terminated):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(notification, terminated, return_exceptions=True)
+
+
+def signal_listener_name(project_id: UUID) -> str:
+    return f"aidison-signal:{project_id}"
 
 
 class PostgresSignalBus:
@@ -77,13 +110,22 @@ class PostgresSignalBus:
 
     @asynccontextmanager
     async def subscribe(self, *, project_id: UUID) -> AsyncIterator[PostgresSignalSubscription]:
-        subscription = PostgresSignalSubscription(project_id=project_id)
         connection = None
         driver = None
+        subscription = None
         try:
             connection = await self._engine.connect()
             raw_proxy = await connection.get_raw_connection()
             driver = cast(DriverConnection, raw_proxy.driver_connection)
+            await driver.execute(
+                "SELECT set_config('application_name', $1, false)",
+                signal_listener_name(project_id),
+            )
+            subscription = PostgresSignalSubscription(
+                project_id=project_id,
+                backend_pid=driver.get_server_pid(),
+            )
+            driver.add_termination_listener(subscription.connection_lost)
             await driver.add_listener(RUNTIME_SIGNAL_CHANNEL, subscription.receive)
         except Exception as exc:
             if connection is not None:
@@ -95,9 +137,17 @@ class PostgresSignalBus:
         try:
             yield subscription
         finally:
+            cleanup_failed = False
             try:
                 await driver.remove_listener(RUNTIME_SIGNAL_CHANNEL, subscription.receive)
             except Exception:
+                cleanup_failed = True
+            try:
+                driver.remove_termination_listener(subscription.connection_lost)
+                await driver.execute("SELECT set_config('application_name', '', false)")
+            except Exception:
+                cleanup_failed = True
+            if cleanup_failed:
                 # Never return a physical connection with a live listener to the pool.
                 with suppress(Exception):
                     await connection.invalidate()
@@ -123,12 +173,3 @@ async def publish_domain_event_signal(
         separators=(",", ":"),
     )
     await session.execute(select(func.pg_notify(RUNTIME_SIGNAL_CHANNEL, payload)))
-
-
-def engine_from_session_factory(factory: Any) -> AsyncEngine:
-    """Resolve the engine frozen into SQLAlchemy's async_sessionmaker."""
-
-    engine = factory.kw.get("bind")
-    if not isinstance(engine, AsyncEngine):
-        raise TypeError("session factory must be bound to an AsyncEngine")
-    return engine

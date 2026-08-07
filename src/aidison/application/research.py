@@ -67,7 +67,7 @@ from aidison.infrastructure.planning import (
 )
 from aidison.infrastructure.profiles import ProfileRepository
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
-from aidison.infrastructure.signals import PostgresSignalBus, engine_from_session_factory
+from aidison.infrastructure.signals import PostgresSignalBus
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.providers.gateway import ProviderUnavailableError, build_chat_model
 from aidison.runtime.contracts import (
@@ -84,6 +84,7 @@ from aidison.runtime.contracts import (
     JoinMode,
     JoinPolicy,
     JoinReceipt,
+    JoinSnapshot,
     ResultDisposition,
     RuntimeWorkItem,
 )
@@ -741,6 +742,7 @@ class ResearchWorker:
         self,
         *,
         session_factory: async_sessionmaker[AsyncSession],
+        signal_bus: PostgresSignalBus,
         artifact_root: Path,
         model_factory: Callable[[], BaseChatModel] = build_chat_model,
         search_backend_factory: Callable[[], SearchBackend] = TavilyMcpSearchBackend,
@@ -766,8 +768,9 @@ class ResearchWorker:
         self._poll_seconds = poll_seconds
         self._join_waiter = DurableJoinWaiter(
             session_factory=session_factory,
-            signal_bus=PostgresSignalBus(engine_from_session_factory(session_factory)),
+            signal_bus=signal_bus,
             durable_recheck_seconds=durable_recheck_seconds,
+            signal_failure_recheck_seconds=poll_seconds,
         )
 
     async def run_once(self, *, worker_id: str) -> bool:
@@ -804,6 +807,22 @@ class ResearchWorker:
                 worker_id=worker_id,
                 lease_seconds=self._lease_seconds,
             )
+
+    async def _wait_for_wave(
+        self,
+        *,
+        work: RuntimeWorkItem,
+        join_group_id: UUID,
+        impossible_message: str,
+    ) -> JoinSnapshot:
+        snapshot = await self._join_waiter.wait(
+            project_id=work.project_id,
+            join_group_id=join_group_id,
+            parent_claim=work.claim,
+        )
+        if snapshot.impossible:
+            raise RuntimeConflictError(impossible_message)
+        return snapshot
 
     async def _execute_with_heartbeat(self, work: RuntimeWorkItem) -> None:
         stop = asyncio.Event()
@@ -1106,13 +1125,11 @@ class ResearchWorker:
                 )
 
         # ---- A: wait for primary wave ready, read proposals ----
-        snapshot = await self._join_waiter.wait(
-            project_id=work.project_id,
+        snapshot = await self._wait_for_wave(
+            work=work,
             join_group_id=wave.join_group_id,
-            parent_claim=work.claim,
+            impossible_message="research join is impossible",
         )
-        if snapshot.impossible:
-            raise RuntimeConflictError("research join is impossible")
 
         proposals: list[ResearchProposalPayload] = []
         for ref in snapshot.accepted_proposal_refs:
@@ -1386,13 +1403,11 @@ class ResearchWorker:
                 specs=(spec,),
                 policy=policy,
             )
-        snapshot = await self._join_waiter.wait(
-            project_id=work.project_id,
+        snapshot = await self._wait_for_wave(
+            work=work,
             join_group_id=wave.join_group_id,
-            parent_claim=work.claim,
+            impossible_message="solution proposal join is impossible",
         )
-        if snapshot.impossible:
-            raise RuntimeConflictError("solution proposal join is impossible")
         if len(snapshot.accepted_proposal_refs) != 1:
             raise RuntimeConflictError("solution proposal join must accept exactly one result")
         artifact_ref = snapshot.accepted_proposal_refs[0]
@@ -1693,13 +1708,11 @@ class ResearchWorker:
                 specs=(spec,),
                 policy=policy,
             )
-        snapshot = await self._join_waiter.wait(
-            project_id=work.project_id,
+        snapshot = await self._wait_for_wave(
+            work=work,
             join_group_id=wave.join_group_id,
-            parent_claim=work.claim,
+            impossible_message="impact proposal join is impossible",
         )
-        if snapshot.impossible:
-            raise RuntimeConflictError("impact proposal join is impossible")
         if len(snapshot.accepted_proposal_refs) != 1:
             raise RuntimeConflictError("impact proposal join must accept exactly one result")
         artifact_ref = snapshot.accepted_proposal_refs[0]
@@ -2107,13 +2120,11 @@ class ResearchWorker:
             return None
 
         # Wait for gap wave readiness
-        snapshot = await self._join_waiter.wait(
-            project_id=work.project_id,
+        snapshot = await self._wait_for_wave(
+            work=work,
             join_group_id=gap_wave.join_group_id,
-            parent_claim=work.claim,
+            impossible_message="gap research join is impossible",
         )
-        if snapshot.impossible:
-            raise RuntimeConflictError("gap research join is impossible")
 
         gap_proposals: list[ResearchProposalPayload] = []
         for ref in snapshot.accepted_proposal_refs:

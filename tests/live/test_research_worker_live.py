@@ -26,6 +26,7 @@ from aidison.infrastructure.orm import (
     JobRow,
 )
 from aidison.infrastructure.runtime import PostgresRuntime
+from aidison.infrastructure.signals import PostgresSignalBus
 from aidison.infrastructure.store import PostgresDomainStore
 
 pytestmark = [pytest.mark.live, pytest.mark.integration]
@@ -106,6 +107,7 @@ async def test_bailian_tavily_github_research_worker_creates_evidence_bound_deci
 
         worker = ResearchWorker(
             session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=tmp_path,
             lease_seconds=60,
             poll_seconds=0.05,

@@ -13,6 +13,7 @@ from sqlalchemy import text
 from aidison.application.research import ResearchWorker
 from aidison.config import AidisonSettings
 from aidison.infrastructure.database import create_engine, create_session_factory
+from aidison.infrastructure.signals import PostgresSignalBus
 
 
 class WorkerSettings(AidisonSettings):
@@ -87,6 +88,7 @@ async def run_worker(settings: WorkerSettings, *, once: bool = False) -> None:
     try:
         worker = ResearchWorker(
             session_factory=create_session_factory(engine),
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=settings.artifact_root,
             lease_seconds=settings.lease_seconds,
             poll_seconds=settings.poll_seconds,

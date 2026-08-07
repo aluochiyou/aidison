@@ -57,6 +57,7 @@ from aidison.infrastructure.planning import (
     build_revision_from_patch,
 )
 from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
+from aidison.infrastructure.signals import PostgresSignalBus
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.contracts import JobClaim, JobStatus
 from aidison.runtime.planning import (
@@ -518,6 +519,7 @@ async def test_worker_runs_bounded_nway_research_into_one_canonical_decision(
 
         worker = ResearchWorker(
             session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=tmp_path,
             model_factory=lambda: MagicMock(spec=BaseChatModel),
             search_backend_factory=FakeSearchBackend,
@@ -767,6 +769,7 @@ async def test_solution_job_creates_server_owned_typed_proposal(
 
         worker = ResearchWorker(
             session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=tmp_path,
             model_factory=lambda: MagicMock(spec=BaseChatModel),
             search_backend_factory=FakeSearchBackend,
@@ -1020,6 +1023,7 @@ async def test_impact_job_creates_server_owned_typed_analysis(
 
         worker = ResearchWorker(
             session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=tmp_path,
             model_factory=lambda: MagicMock(spec=BaseChatModel),
             search_backend_factory=FakeSearchBackend,
@@ -1211,6 +1215,7 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
 
         worker = ResearchWorker(
             session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=tmp_path,
             model_factory=lambda: MagicMock(spec=BaseChatModel),
             search_backend_factory=FakeSearchBackend,
@@ -1310,6 +1315,7 @@ async def test_reclaimed_parent_recovers_each_research_crash_window(
             recovery_model_factory = build_recovery_model
         recovery_worker = ResearchWorker(
             session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=tmp_path,
             model_factory=recovery_model_factory,
             search_backend_factory=FakeSearchBackend,
@@ -1477,6 +1483,7 @@ async def test_worker_executes_gap_revision_and_merges_followup_result(
 
         worker = ResearchWorker(
             session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
             artifact_root=tmp_path,
             model_factory=lambda: MagicMock(spec=BaseChatModel),
             search_backend_factory=FakeSearchBackend,
@@ -1608,6 +1615,7 @@ async def test_reclaimed_parent_resumes_revision2_gap_frontier(
         def make_worker() -> ResearchWorker:
             return ResearchWorker(
                 session_factory=factory,
+                signal_bus=PostgresSignalBus(engine),
                 artifact_root=tmp_path,
                 model_factory=lambda: MagicMock(spec=BaseChatModel),
                 search_backend_factory=FakeSearchBackend,

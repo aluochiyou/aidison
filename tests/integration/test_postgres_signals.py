@@ -8,7 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from aidison.agents.profiles import RESEARCH_WORKER_PROFILE
@@ -19,8 +19,9 @@ from aidison.infrastructure.database import (
     create_engine,
     create_session_factory,
 )
+from aidison.infrastructure.orm import JoinGroupRow
 from aidison.infrastructure.runtime import PostgresRuntime
-from aidison.infrastructure.signals import PostgresSignalBus
+from aidison.infrastructure.signals import PostgresSignalBus, signal_listener_name
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.contracts import (
     DelegationResult,
@@ -359,4 +360,96 @@ async def test_join_waiter_falls_back_to_durable_recheck_when_listen_is_unavaila
         assert snapshot.ready is True
     finally:
         await unavailable_signal_engine.dispose()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_open_join_inspection_does_not_wait_for_writer_row_lock() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        _, parent_claim, wave, _, _ = await _create_single_child_join(factory)
+        async with factory() as locker:
+            locked = await locker.scalar(
+                select(JoinGroupRow)
+                .where(JoinGroupRow.id == wave.join_group_id)
+                .with_for_update()
+            )
+            assert locked is not None
+
+            async with factory() as reader:
+                snapshot = await asyncio.wait_for(
+                    PostgresRuntime(reader).inspect_join(
+                        join_group_id=wave.join_group_id,
+                        parent_claim=parent_claim,
+                    ),
+                    timeout=0.2,
+                )
+
+            assert snapshot.ready is False
+            assert snapshot.impossible is False
+            await locker.rollback()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_join_waiter_recovers_when_listener_connection_dies_mid_join() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        project, parent_claim, wave, child_claim, spec = await _create_single_child_join(factory)
+        waiter = DurableJoinWaiter(
+            session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
+            durable_recheck_seconds=10,
+            signal_failure_recheck_seconds=0.05,
+        )
+        waiting = asyncio.create_task(
+            waiter.wait(
+                project_id=project.id,
+                join_group_id=wave.join_group_id,
+                parent_claim=parent_claim,
+            )
+        )
+
+        listener_pid = None
+        for _ in range(50):
+            async with factory() as session:
+                listener_pid = await session.scalar(
+                    text(
+                        "SELECT pid FROM pg_stat_activity "
+                        "WHERE application_name = :application_name "
+                        "ORDER BY backend_start DESC LIMIT 1"
+                    ),
+                    {"application_name": signal_listener_name(project.id)},
+                )
+                await session.commit()
+            if listener_pid is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert listener_pid is not None
+
+        async with factory() as session:
+            terminated = await session.scalar(
+                text("SELECT pg_terminate_backend(:pid)"),
+                {"pid": listener_pid},
+            )
+            await session.commit()
+        assert terminated is True
+
+        await _register_success(factory, claim=child_claim, spec=spec)
+        snapshot = await asyncio.wait_for(waiting, timeout=1)
+
+        assert snapshot.ready is True
+        assert snapshot.accepted_proposal_refs == ("artifact://signal-result",)
+    finally:
         await engine.dispose()

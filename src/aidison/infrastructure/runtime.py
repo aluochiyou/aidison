@@ -803,11 +803,12 @@ class PostgresRuntime:
         join_group_id: UUID,
         parent_claim: JobClaim,
     ) -> JoinSnapshot:
-        group = await self._session.scalar(
-            select(JoinGroupRow).where(JoinGroupRow.id == join_group_id).with_for_update()
+        loaded_group = await self._session.scalar(
+            select(JoinGroupRow).where(JoinGroupRow.id == join_group_id)
         )
-        if group is None:
+        if loaded_group is None:
             raise RuntimeNotFoundError("join group not found")
+        group: JoinGroupRow = loaded_group
         parent = await self._session.get(JobRow, group.parent_job_id)
         if (
             parent is None
@@ -824,10 +825,6 @@ class PostgresRuntime:
                 .order_by(DelegationRow.shard_key, DelegationRow.id)
             )
         )
-        policy = JoinPolicy.model_validate(group.policy)
-        successes = [
-            item for item in delegations if item.status == DelegationStatus.SUCCEEDED.value
-        ]
         terminal = {
             DelegationStatus.SUCCEEDED.value,
             DelegationStatus.FAILED.value,
@@ -835,11 +832,26 @@ class PostgresRuntime:
             DelegationStatus.STALE.value,
             DelegationStatus.AMBIGUOUS.value,
         }
-        all_terminal = all(item.status in terminal for item in delegations)
-        deadline_reached = datetime.now(UTC) >= policy.deadline
-        ready = False
-        impossible = False
-        if group.status == JoinStatus.OPEN.value:
+        policy = JoinPolicy.model_validate(group.policy)
+
+        def readiness() -> tuple[list[DelegationRow], bool, bool, bool]:
+            successes = [
+                item for item in delegations if item.status == DelegationStatus.SUCCEEDED.value
+            ]
+            all_terminal = all(item.status in terminal for item in delegations)
+            deadline_reached = datetime.now(UTC) >= policy.deadline
+            if group.status != JoinStatus.OPEN.value:
+                return (
+                    successes,
+                    group.status == JoinStatus.JOINED.value,
+                    group.status
+                    in {
+                        JoinStatus.CANCELLED.value,
+                        JoinStatus.EXPIRED.value,
+                        JoinStatus.FAILED.value,
+                    },
+                    deadline_reached,
+                )
             if policy.mode is JoinMode.ALL_REQUIRED:
                 ready = len(successes) == len(delegations)
                 impossible = (all_terminal and not ready) or (deadline_reached and not ready)
@@ -848,7 +860,26 @@ class PostgresRuntime:
                     all_terminal or deadline_reached
                 )
                 impossible = (all_terminal or deadline_reached) and not ready
-            if impossible:
+            return successes, ready, impossible, deadline_reached
+
+        successes, ready, impossible, deadline_reached = readiness()
+        if group.status == JoinStatus.OPEN.value and impossible:
+            locked_group = await self._session.scalar(
+                select(JoinGroupRow).where(JoinGroupRow.id == join_group_id).with_for_update()
+            )
+            if locked_group is None:
+                raise RuntimeNotFoundError("join group not found")
+            group = locked_group
+            policy = JoinPolicy.model_validate(group.policy)
+            delegations = list(
+                await self._session.scalars(
+                    select(DelegationRow)
+                    .where(DelegationRow.join_group_id == join_group_id)
+                    .order_by(DelegationRow.shard_key, DelegationRow.id)
+                )
+            )
+            successes, ready, impossible, deadline_reached = readiness()
+            if group.status == JoinStatus.OPEN.value and impossible:
                 group.status = (
                     JoinStatus.EXPIRED.value if deadline_reached else JoinStatus.FAILED.value
                 )
@@ -860,13 +891,6 @@ class PostgresRuntime:
                         "reason": group.status,
                     },
                 )
-        else:
-            ready = group.status == JoinStatus.JOINED.value
-            impossible = group.status in {
-                JoinStatus.CANCELLED.value,
-                JoinStatus.EXPIRED.value,
-                JoinStatus.FAILED.value,
-            }
 
         accepted_refs: list[str] = []
         for item in successes:
