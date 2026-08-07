@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from aidison.api.app import create_app
 from aidison.application.service import ProjectApplication
@@ -644,6 +645,45 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert approval["effect_kind"] == "shopping.create_cart"
             assert approval["target_ref"] == prop["id"]
             assert approval_request.headers["etag"] == '"12"'
+
+            # Database constraints remain authoritative even when a writer
+            # bypasses the application store/CAS layer.
+            async with factory() as session:
+                with pytest.raises(DBAPIError, match="scope is immutable"):
+                    await session.execute(
+                        text(
+                            "UPDATE effect_approvals SET scope_hash = :scope_hash "
+                            "WHERE id = CAST(:approval_id AS uuid)"
+                        ),
+                        {"scope_hash": "e" * 64, "approval_id": approval["id"]},
+                    )
+                    await session.commit()
+                await session.rollback()
+
+            async with factory() as session:
+                duplicate_id = str(uuid4())
+                with pytest.raises(IntegrityError):
+                    await session.execute(
+                        text(
+                            """
+                            INSERT INTO effect_approvals (
+                                id, project_id, effect_kind, target_ref, basis_hash,
+                                scope_hash, constraints, status, payload, requested_at,
+                                expires_at, resolved_at, consumed_at
+                            )
+                            SELECT
+                                CAST(:duplicate_id AS uuid), project_id, effect_kind,
+                                target_ref, basis_hash, scope_hash, constraints, status,
+                                payload || jsonb_build_object('id', :duplicate_id),
+                                requested_at, expires_at, resolved_at, consumed_at
+                            FROM effect_approvals
+                            WHERE id = CAST(:approval_id AS uuid)
+                            """
+                        ),
+                        {"duplicate_id": duplicate_id, "approval_id": approval["id"]},
+                    )
+                    await session.commit()
+                await session.rollback()
 
             duplicate_live_approval = await client.post(
                 f"/api/purchase-proposals/{prop['id']}/effect-approvals",
