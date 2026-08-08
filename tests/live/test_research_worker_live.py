@@ -33,12 +33,12 @@ pytestmark = [pytest.mark.live, pytest.mark.integration]
 
 
 @pytest.mark.asyncio
-async def test_bailian_tavily_github_research_worker_creates_evidence_bound_decision(
+async def test_deepseek_tavily_github_research_worker_creates_evidence_bound_decision(
     tmp_path: Path,
 ) -> None:
     """Exercise the bounded real-provider research path against the disposable test DB."""
-    if not os.getenv("DASHSCOPE_API_KEY"):
-        pytest.skip("DASHSCOPE_API_KEY is not configured")
+    if not (os.getenv("DEEPSEEK_API_KEY") or os.getenv("DASHSCOPE_API_KEY")):
+        pytest.skip("DEEPSEEK_API_KEY is not configured")
     if not os.getenv("TAVILY_API_KEY"):
         pytest.skip("TAVILY_API_KEY is not configured")
     if not os.getenv("GITHUB_API_KEY"):

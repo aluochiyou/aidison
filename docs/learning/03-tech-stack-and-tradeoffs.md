@@ -56,7 +56,7 @@ Tavily 和 GitHub 使用 MCP 是为了标准化工具发现/调用，而不是�
 
 ## 配置原则
 
-- secret（`DASHSCOPE_API_KEY`、`TAVILY_API_KEY`、`GITHUB_API_KEY`）放环境变量；
+- secret（`DEEPSEEK_API_KEY`、`TAVILY_API_KEY`、`GITHUB_API_KEY`）放环境变量；
 - 可版本化产品策略（模型路由、approval TTL、预算）放 `config.yaml`；
 - schema 和 runtime protocol 由 Git + Alembic 管理；
 - UI 不直接读取 secret、数据库或隐藏 prompt。

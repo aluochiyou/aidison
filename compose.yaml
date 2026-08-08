@@ -3,7 +3,7 @@ name: aidison
 x-backend-environment: &backend-environment
   DATABASE_URL: postgresql+asyncpg://aidison:${POSTGRES_PASSWORD:-aidison_dev}@postgres:5432/aidison
   AIDISON_ARTIFACT_ROOT: /data/artifacts
-  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-${DASHSCOPE_API_KEY:-}}
   TAVILY_API_KEY: ${TAVILY_API_KEY:-}
 
 x-backend-service: &backend-service
