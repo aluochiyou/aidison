@@ -1141,6 +1141,20 @@ async def test_impact_job_creates_server_owned_typed_analysis(
             )
             assert impact.profile_id == "impact-proposer-ro"
             assert await session.scalar(select(func.count()).select_from(JoinReceiptRow)) == 1
+            plan_head = await session.get(PlanHeadRow, root_job_id)
+            assert plan_head is not None and plan_head.current_revision == 1
+            impact_tasks = list(
+                await session.scalars(
+                    select(PlanTaskRow).where(
+                        PlanTaskRow.logical_key == "impact.complete"
+                    )
+                )
+            )
+            assert len(impact_tasks) == 1
+            assert impact_tasks[0].mode == "single"
+            assert impact_tasks[0].role_key == "impact-worker"
+            assert impact_tasks[0].dispatched_job_id is not None
+            assert impact_tasks[0].status == "succeeded"
             assert (
                 await session.scalar(
                     select(func.count())
@@ -1154,6 +1168,313 @@ async def test_impact_job_creates_server_owned_typed_analysis(
                     BudgetOperationRow.kind == "model"
                 )
             ) == 180
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "crash_after_join",
+    [False, True],
+)
+@pytest.mark.asyncio
+async def test_impact_parent_recovers_from_committed_join(
+    tmp_path: Path,
+    crash_after_join: bool,
+) -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE jobs, artifacts CASCADE"))
+            await session.commit()
+            app = ProjectApplication(PostgresDomainStore(session))
+            project = await app.create_project(
+                name="Impact recovery fixture",
+                goal="Revise only the affected DIY modules",
+                idempotency_key=f"impact-recovery-project-{uuid4()}",
+            )
+            _, modules = await app.approve_requirements(
+                project_id=project.id,
+                expected_project_revision=1,
+                goal=project.goal,
+                hard_constraints=("Preserve unaffected work",),
+                preferences=("Repairable",),
+                available_resources=("Workshop",),
+                unknowns=("Measured fit",),
+                modules=(
+                    {"key": "frame", "name": "Frame", "responsibility": "Carry the system"},
+                    {
+                        "key": "power",
+                        "name": "Power",
+                        "responsibility": "Supply safe power",
+                        "dependency_keys": ("frame",),
+                    },
+                ),
+                idempotency_key=f"impact-recovery-requirements-{uuid4()}",
+            )
+            evidence = EvidenceBinding(
+                project_id=project.id,
+                module_id=modules[0].id,
+                claim="Both frame candidates expose documented mounting patterns.",
+                source_url="https://example.com/frame",
+                snapshot_hash=sha256(b"frame-impact-recovery").hexdigest(),
+                span_text="Two documented mounting patterns are available.",
+                status="supported",
+                observed_at=datetime.now(UTC),
+            )
+            frame_base = Candidate(
+                project_id=project.id,
+                module_id=modules[0].id,
+                name="frame base",
+                description="The initially accepted frame",
+                evidence_binding_ids=(evidence.id,),
+            )
+            frame_alternate = Candidate(
+                project_id=project.id,
+                module_id=modules[0].id,
+                name="frame alternate",
+                description="An alternate documented frame",
+                evidence_binding_ids=(evidence.id,),
+                risks=("Bench fit remains required",),
+            )
+            power = Candidate(
+                project_id=project.id,
+                module_id=modules[1].id,
+                name="power base",
+                description="The accepted power module",
+            )
+            finding = CompatibilityFinding(
+                project_id=project.id,
+                module_ids=tuple(item.id for item in modules),
+                rule_id="recovery.interface",
+                status="compatible",
+                summary="The documented interfaces are compatible.",
+                evidence_binding_ids=(evidence.id,),
+            )
+            decision = await app.submit_research_proposal(
+                project_id=project.id,
+                expected_project_revision=2,
+                evidence=(evidence,),
+                candidates=(frame_base, frame_alternate, power),
+                findings=(finding,),
+                decision_question="Use the initial route?",
+                decision_options=(
+                    DecisionOption(
+                        option_id="approve",
+                        label="Use initial route",
+                        summary="Select the base frame and power candidates.",
+                        candidate_ids=(frame_base.id, power.id),
+                        evidence_binding_ids=(evidence.id,),
+                    ),
+                    DecisionOption(
+                        option_id="alternate",
+                        label="Use alternate frame",
+                        summary="Select the alternate frame with the same power candidate.",
+                        candidate_ids=(frame_alternate.id, power.id),
+                        evidence_binding_ids=(evidence.id,),
+                    ),
+                ),
+                idempotency_key=f"impact-recovery-research-{uuid4()}",
+            )
+            decision = await app.resolve_decision(
+                decision_id=decision.id,
+                expected_project_revision=3,
+                selected_option_id="approve",
+                basis_hash=decision.basis_hash,
+                idempotency_key=f"impact-recovery-decision-{uuid4()}",
+            )
+            proposal = await app.submit_solution_proposal(
+                project_id=project.id,
+                expected_project_revision=4,
+                decision_id=decision.id,
+                module_selections=(
+                    ModuleSelection(
+                        module_id=modules[0].id,
+                        candidate_id=frame_base.id,
+                        candidate_name=frame_base.name,
+                        rationale="Use the initial documented frame.",
+                        evidence_binding_ids=(evidence.id,),
+                    ),
+                    ModuleSelection(
+                        module_id=modules[1].id,
+                        candidate_id=power.id,
+                        candidate_name=power.name,
+                        rationale="Use the accepted power module.",
+                    ),
+                ),
+                evidence_binding_ids=(evidence.id,),
+                compatibility_finding_ids=(finding.id,),
+                bom=(
+                    BomItem(
+                        line_id="frame-base",
+                        module_id=modules[0].id,
+                        candidate_id=frame_base.id,
+                        name=frame_base.name,
+                        quantity=1,
+                        unit="piece",
+                        evidence_binding_ids=(evidence.id,),
+                    ),
+                ),
+                implementation_steps=(
+                    SolutionPlanStep(
+                        step_id="assemble-base",
+                        title="Assemble base solution",
+                        instruction="Assemble both accepted modules.",
+                        module_ids=tuple(item.id for item in modules),
+                    ),
+                ),
+                verification_steps=(
+                    SolutionPlanStep(
+                        step_id="verify-base",
+                        title="Bench verify base solution",
+                        instruction="Verify the documented interfaces.",
+                        module_ids=tuple(item.id for item in modules),
+                    ),
+                ),
+                risks=(),
+                unknowns=(),
+                consequences=("The build remains repairable.",),
+                artifact_ref="artifact://impact-recovery-solution",
+                profile_id="solution-proposer-ro",
+                profile_revision=1,
+                idempotency_key=f"impact-recovery-solution-proposal-{uuid4()}",
+            )
+            await app.freeze_solution(
+                project_id=project.id,
+                expected_project_revision=5,
+                solution_proposal_id=proposal.id,
+                basis_hash=proposal.basis_hash,
+                idempotency_key=f"impact-recovery-solution-{uuid4()}",
+            )
+            observation = await app.submit_observation(
+                project_id=project.id,
+                expected_project_revision=6,
+                statement="The initial frame flexes under the measured load.",
+                affected_module_ids=(modules[0].id,),
+                idempotency_key=f"impact-recovery-observation-{uuid4()}",
+            )
+            root_job_id = await PostgresRuntime(session).create_job(
+                project_id=project.id,
+                kind="impact_wave",
+                basis_hash=sha256(observation.model_dump_json().encode()).hexdigest(),
+                basis_project_revision=7,
+                profile_id="impact-orchestrator",
+                profile_revision=1,
+                idempotency_key=f"impact-recovery-run:{observation.id}",
+                request_payload={"observation_id": str(observation.id)},
+                token_budget_cap=16_000,
+                tool_call_budget_cap=0,
+            )
+
+        worker = ResearchWorker(
+            session_factory=factory,
+            signal_bus=PostgresSignalBus(engine),
+            artifact_root=tmp_path,
+            model_factory=lambda: MagicMock(spec=BaseChatModel),
+            search_backend_factory=FakeSearchBackend,
+            github_backend_factory=FakeGitHubBackend,
+            page_fetcher=FakePageFetcher(),
+            agent_factory=fake_agent_factory,
+            solution_agent_factory=fake_solution_agent_factory,
+            impact_agent_factory=fake_impact_agent_factory,
+            lease_seconds=10,
+            poll_seconds=0.02,
+        )
+        if crash_after_join:
+            join_committed = asyncio.Event()
+
+            async def crash_before_domain_write(**_: Any) -> Any:
+                join_committed.set()
+                await asyncio.Future()
+
+            worker._submit_impact_analysis = crash_before_domain_write  # type: ignore[method-assign]
+            parent_task = asyncio.create_task(
+                worker.run_once(worker_id="impact-parent-before-crash")
+            )
+            async with asyncio.timeout(10):
+                while True:
+                    async with factory() as session:
+                        child_count = await session.scalar(
+                            select(func.count())
+                            .select_from(JobRow)
+                            .where(JobRow.parent_job_id == root_job_id)
+                        )
+                    if child_count == 1:
+                        break
+                    await asyncio.sleep(0.02)
+            assert await worker.run_once(worker_id="impact-child-before-crash") is True
+            async with asyncio.timeout(10):
+                await join_committed.wait()
+            parent_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await parent_task
+
+            async with factory() as session:
+                root = await session.get(JobRow, root_job_id)
+                assert root is not None and root.status == "running"
+                root.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                await session.commit()
+
+            recovery_model_factory = MagicMock(
+                side_effect=AssertionError("committed impact recovery must not call the model")
+            )
+            recovery_worker = ResearchWorker(
+                session_factory=factory,
+                signal_bus=PostgresSignalBus(engine),
+                artifact_root=tmp_path,
+                model_factory=recovery_model_factory,
+                search_backend_factory=FakeSearchBackend,
+                github_backend_factory=FakeGitHubBackend,
+                page_fetcher=FakePageFetcher(),
+                agent_factory=fake_agent_factory,
+                solution_agent_factory=fake_solution_agent_factory,
+                impact_agent_factory=fake_impact_agent_factory,
+                lease_seconds=10,
+                poll_seconds=0.02,
+            )
+            assert await recovery_worker.run_once(worker_id="impact-parent-after-crash") is True
+            recovery_model_factory.assert_not_called()
+        else:
+            worker_task = asyncio.create_task(
+                worker.run_forever(worker_id="impact-recovery-worker", concurrency=3)
+            )
+            try:
+                async with asyncio.timeout(15):
+                    while True:
+                        async with factory() as session:
+                            root = await session.get(JobRow, root_job_id)
+                            if root is not None and root.status in {"succeeded", "failed"}:
+                                break
+                        await asyncio.sleep(0.05)
+            finally:
+                worker_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await worker_task
+
+        async with factory() as session:
+            root = await session.get(JobRow, root_job_id)
+            assert root is not None and root.status == "succeeded"
+            impact_row = await session.scalar(
+                select(ImpactAnalysisRow).where(ImpactAnalysisRow.project_id == project.id)
+            )
+            assert impact_row is not None and impact_row.status == "proposed"
+            assert await session.scalar(select(func.count()).select_from(JoinReceiptRow)) == 1
+            plan_head = await session.get(PlanHeadRow, root_job_id)
+            assert plan_head is not None and plan_head.current_revision == 1
+            impact_tasks = list(
+                await session.scalars(
+                    select(PlanTaskRow).where(
+                        PlanTaskRow.logical_key == "impact.complete"
+                    )
+                )
+            )
+            assert len(impact_tasks) == 1
+            assert impact_tasks[0].status == "succeeded"
+            assert impact_tasks[0].dispatched_job_id is not None
     finally:
         await engine.dispose()
 

@@ -1660,12 +1660,10 @@ class ResearchWorker:
             )
 
     async def _run_impact_parent(self, work: RuntimeWorkItem) -> None:
-        observation_id = self._observation_id(work)
-        async with self._factory() as session:
-            committed = await PostgresRuntime(session).find_committed_join(
-                parent_claim=work.claim,
-                graph_step_id="impact.propose",
-            )
+        committed = await self._plan_executor.find_committed_join(
+            work=work,
+            graph_step_id="impact.propose",
+        )
         if committed is not None:
             proposal = await self._read_impact_proposal(
                 work,
@@ -1686,6 +1684,7 @@ class ResearchWorker:
             return
 
         project, _, modules = await self._load_project_context(work)
+        observation_id = self._observation_id(work)
         async with self._factory() as session:
             store = PostgresDomainStore(session)
             observation = await store.get_observation(observation_id)
@@ -1700,6 +1699,33 @@ class ResearchWorker:
         ):
             raise RuntimeConflictError("impact parent requires the active observation basis")
         deadline = datetime.now(UTC) + timedelta(minutes=5)
+        input_refs = (
+            f"observation://{observation.id}",
+            *(f"module://{item.id}" for item in modules),
+        )
+        plan = OrchestrationPlanRevision(
+            root_job_id=str(work.claim.job_id),
+            revision=1,
+            basis_hash=work.claim.basis_hash,
+            reason="single-node durable impact proposal plan",
+            planner_profile_id=work.claim.profile_id,
+            planner_profile_revision=work.claim.profile_revision,
+            nodes=(
+                TaskNode(
+                    logical_key="impact.complete",
+                    objective="基于不可变观测生成有类型、可审查的影响分析",
+                    mode="single",
+                    role_key="impact-worker",
+                    profile_id=binding.profile_id,
+                    profile_revision=binding.profile_revision,
+                    budget_ref=f"budget://job/{work.claim.job_id}",
+                    depth=0,
+                    input_refs=input_refs,
+                    success_criteria=("返回覆盖受影响模块且通过服务端校验的影响分析",),
+                    stop_criteria=("完成当前冻结观测范围内的单次影响提案",),
+                ),
+            ),
+        )
         spec = DelegationSpec(
             delegation_id=uuid5(work.claim.attempt_id, "impact.propose:impact.complete"),
             parent_job_id=work.claim.job_id,
@@ -1713,10 +1739,7 @@ class ResearchWorker:
             basis_hash=work.claim.basis_hash,
             shard_key="complete-impact",
             idempotency_key=f"{work.claim.attempt_id}:impact.propose:complete-impact",
-            input_refs=(
-                f"observation://{observation.id}",
-                *(f"module://{item.id}" for item in modules),
-            ),
+            input_refs=input_refs,
             allowed_effects=("read",),
             token_budget=8_000,
             tool_call_budget=0,
@@ -1728,11 +1751,14 @@ class ResearchWorker:
             min_successes=1,
             deadline=deadline,
         )
-        async with self._factory() as session:
-            wave = await PostgresRuntime(session).create_delegation_wave(
-                specs=(spec,),
-                policy=policy,
-            )
+        wave = await self._plan_executor.dispatch_ready_wave(
+            work=work,
+            delegations=(
+                PlannedDelegation(task_logical_key="impact.complete", spec=spec),
+            ),
+            policy=policy,
+            initial_plan=plan,
+        )
         snapshot = await self._wait_for_wave(
             work=work,
             join_group_id=wave.join_group_id,
@@ -1742,13 +1768,10 @@ class ResearchWorker:
             raise RuntimeConflictError("impact proposal join must accept exactly one result")
         artifact_ref = snapshot.accepted_proposal_refs[0]
         proposal = await self._read_impact_proposal(work, artifact_ref)
-        async with self._factory() as session:
-            receipt = await PostgresRuntime(session).commit_join(
-                join_group_id=wave.join_group_id,
-                merged_proposal_ref=artifact_ref,
-            )
-        if receipt is None:
-            raise RuntimeConflictError("impact proposal join was not committed")
+        receipt = await self._plan_executor.commit_join(
+            join_group_id=wave.join_group_id,
+            merged_proposal_ref=artifact_ref,
+        )
         result = await self._submit_impact_analysis(
             work=work,
             proposal=proposal,
