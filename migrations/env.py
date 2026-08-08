@@ -14,7 +14,14 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", DatabaseSettings().database_url)
+# Alembic stores options in ConfigParser, where ``%`` starts interpolation.
+# Passwords must remain URL-encoded (for example ``@`` as ``%40``), so escape
+# percent signs only at this configuration boundary instead of corrupting the
+# database URL in .env.
+config.set_main_option(
+    "sqlalchemy.url",
+    DatabaseSettings().database_url.replace("%", "%%"),
+)
 target_metadata = Base.metadata
 
 

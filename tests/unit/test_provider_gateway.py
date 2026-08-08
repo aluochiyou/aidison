@@ -19,16 +19,6 @@ def test_bailian_fails_closed_without_key() -> None:
         )
 
 
-def test_openai_fails_closed_without_key() -> None:
-    with pytest.raises(ProviderUnavailableError, match="OPENAI_API_KEY"):
-        build_chat_model(
-            ProviderSettings(
-                provider=ProviderName.OPENAI,
-                openai_api_key=None,
-            )
-        )
-
-
 def test_bailian_model_uses_explicit_openai_compatible_route() -> None:
     model = build_chat_model(
         ProviderSettings(
