@@ -23,3 +23,8 @@ runtime:
 
 shopping:
   effect_approval_ttl_seconds: 900
+
+taobao:
+  adzone_id: ""
+  search_timeout_seconds: 5.0
+  max_search_results: 20

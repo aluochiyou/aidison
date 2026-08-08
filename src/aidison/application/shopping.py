@@ -28,6 +28,7 @@ from aidison.domain.models import (
     CheckoutHandoffStatus,
     EffectApproval,
     EffectApprovalStatus,
+    HandoffKind,
     OfferSnapshot,
     Project,
     PurchaseProposal,
@@ -45,6 +46,12 @@ from aidison.providers.shopping import (
 
 _VALID_REGIONS = frozenset({"CN", "US", "GB", "DE", "FR", "JP", "KR", "AU", "CA", "SG"})
 _CREATE_CART_EFFECT = "shopping.create_cart"
+
+# Effect kind depends on handoff kind
+_EFFECT_KIND_FOR_HANDOFF = {
+    HandoffKind.CART_REDIRECT: "shopping.create_cart",
+    HandoffKind.PRODUCT_REDIRECT: "shopping.create_redirect",
+}
 
 
 class ShoppingSettings(AidisonSettings):
@@ -74,6 +81,7 @@ class _CheckoutEffectScope:
     proposal: PurchaseProposal
     offer: OfferSnapshot
     solution: SolutionVersion
+    handoff_kind: HandoffKind
     basis_hash: str
     scope_hash: str
     constraints: dict[str, object]
@@ -530,7 +538,7 @@ class ShoppingApplication:
 
         approval = EffectApproval(
             project_id=scope.project.id,
-            effect_kind=_CREATE_CART_EFFECT,
+            effect_kind=_EFFECT_KIND_FOR_HANDOFF[scope.handoff_kind],
             target_ref=scope.proposal.id,
             basis_hash=scope.basis_hash,
             scope_hash=scope.scope_hash,
@@ -683,9 +691,10 @@ class ShoppingApplication:
         approval = await self._store.get_effect_approval(effect_approval_id)
         if approval is None:
             raise DomainNotFoundError("effect approval not found")
+        expected_effect_kind = _EFFECT_KIND_FOR_HANDOFF[scope.handoff_kind]
         if (
             approval.project_id != scope.project.id
-            or approval.effect_kind != _CREATE_CART_EFFECT
+            or approval.effect_kind != expected_effect_kind
             or approval.target_ref != scope.proposal.id
             or approval.basis_hash != scope.basis_hash
             or approval.scope_hash != scope.scope_hash
@@ -709,6 +718,7 @@ class ShoppingApplication:
             proposal_id=scope.proposal.id,
             basis_hash=scope.basis_hash,
             provider=self._provider.name,
+            handoff_kind=scope.handoff_kind,
             status=CheckoutHandoffStatus.PREPARED,
         )
         project_after_consumption = scope.project.model_copy(
@@ -737,31 +747,80 @@ class ShoppingApplication:
         await self._store.save_command_receipt(idempotency_key, payload_hash, str(handoff.id))
         await self._store.commit()
 
-        # ── Attempt cart creation ─────────────────────────────────────
+        # ── Attempt handoff ─────────────────────────────────────
         # On replay/crash the PREPARED stored above is returned directly
-        # and provider create_cart is never called twice.
+        # and provider is never called twice.
         now = datetime.now(UTC)
         proposal_updated = False
         try:
-            cart_inputs = [
-                CartLineInput(
-                    merchandise_id=scope.offer.merchandise_id or scope.offer.provider_offer_id,
+            if scope.handoff_kind is HandoffKind.CART_REDIRECT:
+                cart_inputs = [
+                    CartLineInput(
+                        merchandise_id=scope.offer.merchandise_id or scope.offer.provider_offer_id,
+                        quantity=scope.proposal.quantity,
+                    )
+                ]
+                result = await self._provider.create_handoff(
+                    kind=HandoffKind.CART_REDIRECT,
+                    lines=cart_inputs,
+                    region=scope.proposal.region,
+                )
+                cart = result.cart
+                if cart is None:
+                    raise CartCreationError("provider CART_REDIRECT produced no cart")
+                if not cart.checkout_url.startswith("https://"):
+                    raise CartCreationError("provider returned a non-HTTPS checkout URL")
+
+                handoff = handoff.model_copy(
+                    update={
+                        "status": CheckoutHandoffStatus.DISPATCHED,
+                        "provider_cart_id": cart.provider_cart_id,
+                        "checkout_url": cart.checkout_url,
+                        "dispatched_at": now,
+                    }
+                )
+            elif scope.handoff_kind is HandoffKind.PRODUCT_REDIRECT:
+                # Build a ShoppingOffer from the stored OfferSnapshot for the redirect
+                offer_input = ShoppingOffer(
+                    provider=self._provider.name,
+                    provider_offer_id=scope.offer.provider_offer_id,
+                    merchandise_id=scope.offer.merchandise_id,
+                    seller=scope.offer.seller,
+                    title=scope.offer.title,
+                    condition=scope.offer.condition,
+                    availability=OfferAvailability(scope.offer.availability),
+                    unit_price=scope.offer.unit_price,
+                    currency=scope.offer.currency,
+                    shipping_estimate=scope.offer.shipping_estimate,
+                    tax_estimate=scope.offer.tax_estimate,
+                    region=scope.offer.region,
+                    quantity_available=scope.offer.quantity_available,
+                    product_url=scope.offer.product_url,
+                    observed_at=scope.offer.observed_at,
+                    expires_at=scope.offer.expires_at,
+                )
+                result = await self._provider.create_handoff(
+                    kind=HandoffKind.PRODUCT_REDIRECT,
+                    offer=offer_input,
+                    region=scope.proposal.region,
                     quantity=scope.proposal.quantity,
                 )
-            ]
-            cart = await self._provider.create_cart(lines=cart_inputs, region=scope.proposal.region)
+                redirect = result.redirect
+                if redirect is None:
+                    raise CartCreationError("provider PRODUCT_REDIRECT produced no redirect")
 
-            if not cart.checkout_url.startswith("https://"):
-                raise CartCreationError("provider returned a non-HTTPS checkout URL")
+                handoff = handoff.model_copy(
+                    update={
+                        "status": CheckoutHandoffStatus.DISPATCHED,
+                        "checkout_url": redirect.product_url,
+                        "dispatched_at": now,
+                    }
+                )
+            else:
+                raise DomainConflictError(
+                    f"unsupported handoff kind: {scope.handoff_kind.value}"
+                )
 
-            handoff = handoff.model_copy(
-                update={
-                    "status": CheckoutHandoffStatus.DISPATCHED,
-                    "provider_cart_id": cart.provider_cart_id,
-                    "checkout_url": cart.checkout_url,
-                    "dispatched_at": now,
-                }
-            )
             proposal = scope.proposal.model_copy(
                 update={
                     "status": PurchaseProposalStatus.HANDED_OFF,
@@ -881,8 +940,26 @@ class ShoppingApplication:
         if offer.expires_at is not None and offer.expires_at < datetime.now(UTC):
             raise DomainConflictError("offer snapshot has expired")
 
+        # Determine handoff kind from provider capabilities.
+        # A provider that supports only CART_REDIRECT uses that; one that
+        # supports only PRODUCT_REDIRECT uses that.  Ambiguous or missing
+        # capabilities default to CART_REDIRECT for backward compat.
+        caps = self._provider.capabilities
+        if HandoffKind.CART_REDIRECT in caps.handoff_kinds:
+            handoff_kind = HandoffKind.CART_REDIRECT
+        elif HandoffKind.PRODUCT_REDIRECT in caps.handoff_kinds:
+            handoff_kind = HandoffKind.PRODUCT_REDIRECT
+        else:
+            raise DomainConflictError(
+                f"provider {self._provider.name} supports no recognised handoff kind"
+            )
+
+        effect_kind = _EFFECT_KIND_FOR_HANDOFF[handoff_kind]
+
         constraints: dict[str, object] = {
             "provider": self._provider.name,
+            "handoff_kind": handoff_kind.value,
+            "effect_kind": effect_kind,
             "solution_version_id": str(solution.id),
             "solution_basis_hash": solution.basis_hash,
             "offer_snapshot_id": str(offer.id),
@@ -900,11 +977,13 @@ class ShoppingApplication:
             offer.snapshot_hash,
             solution.basis_hash,
             self._provider.name,
+            handoff_kind.value,
         )
         scope_hash = canonical_hash(
-            _CREATE_CART_EFFECT,
+            effect_kind,
             project.id,
             proposal.id,
+            handoff_kind.value,
             basis_hash,
             constraints,
         )
@@ -913,6 +992,7 @@ class ShoppingApplication:
             proposal=proposal,
             offer=offer,
             solution=solution,
+            handoff_kind=handoff_kind,
             basis_hash=basis_hash,
             scope_hash=scope_hash,
             constraints=constraints,

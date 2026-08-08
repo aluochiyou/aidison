@@ -428,6 +428,13 @@ class CheckoutHandoffStatus(StrEnum):
     AMBIGUOUS = "ambiguous"
 
 
+class HandoffKind(StrEnum):
+    """What kind of external handoff the provider supports."""
+
+    CART_REDIRECT = "cart_redirect"
+    PRODUCT_REDIRECT = "product_redirect"
+
+
 class EffectApprovalStatus(StrEnum):
     REQUESTED = "requested"
     APPROVED = "approved"
@@ -437,7 +444,10 @@ class EffectApprovalStatus(StrEnum):
 
 
 class EffectApproval(FrozenModel):
-    """One expiring authorization for one server-derived external effect scope."""
+    """One expiring authorization for one server-derived external effect scope.
+
+    The scope is bound by provider, handoff_kind, proposal, and basis.
+    """
 
     id: UUID = Field(default_factory=uuid4)
     project_id: UUID
@@ -533,13 +543,14 @@ class PurchaseProposal(FrozenModel):
 
 
 class CheckoutHandoff(FrozenModel):
-    """A checkout handoff bridging the proposal to a provider-hosted cart."""
+    """A checkout handoff bridging the proposal to a provider-hosted cart or product page."""
 
     id: UUID = Field(default_factory=uuid4)
     project_id: UUID
     proposal_id: UUID
     basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     provider: str = Field(min_length=1, max_length=100)
+    handoff_kind: HandoffKind = HandoffKind.CART_REDIRECT
     provider_cart_id: str | None = Field(default=None, max_length=500)
     checkout_url: str | None = Field(default=None, max_length=4_000)
     status: CheckoutHandoffStatus = CheckoutHandoffStatus.PREPARED
@@ -550,12 +561,14 @@ class CheckoutHandoff(FrozenModel):
     @model_validator(mode="after")
     def dispatched_has_cart_and_url(self) -> CheckoutHandoff:
         if self.status in {CheckoutHandoffStatus.DISPATCHED, CheckoutHandoffStatus.SUCCEEDED}:
-            if not self.provider_cart_id or not self.checkout_url:
-                raise ValueError(
-                    "dispatched/succeeded handoff requires provider_cart_id and checkout_url"
-                )
+            if not self.checkout_url:
+                raise ValueError("dispatched/succeeded handoff requires checkout_url")
             if not self.checkout_url.startswith("https://"):
                 raise ValueError("checkout URL must use HTTPS")
+            if self.handoff_kind is HandoffKind.CART_REDIRECT and not self.provider_cart_id:
+                raise ValueError(
+                    "dispatched/succeeded cart_redirect handoff requires provider_cart_id"
+                )
         return self
 
     @model_validator(mode="after")

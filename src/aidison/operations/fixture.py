@@ -11,12 +11,17 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from aidison.domain.models import HandoffKind
 from aidison.providers.shopping import (
     CartLineInput,
     CreatedCart,
+    HandoffResult,
     OfferAvailability,
+    ProductRedirect,
+    ProviderCapabilities,
     ShoppingOffer,
     ShoppingProvider,
+    ShoppingProviderError,
 )
 
 # ── Scenario constants (non-drone desktop environmental monitor) ──────
@@ -57,16 +62,20 @@ SCENARIO_QUANTITY = 1
 class FakeShoppingProvider(ShoppingProvider):
     """Deterministic provider that returns scenario constants.
 
-    Can be configured to fail search or cart creation for testing
-    failure branches.
+    Can be configured to fail search or handoff for testing
+    failure branches.  Supports both CART_REDIRECT and PRODUCT_REDIRECT.
     """
 
     def __init__(self) -> None:
         self.search_called = 0
         self.cart_create_called = 0
+        self.handoff_create_called = 0
         self._search_failure: Exception | None = None
-        self._cart_failure: Exception | None = None
+        self._handoff_failure: Exception | None = None
         self._search_offers: list[ShoppingOffer] = [SCENARIO_OFFER]
+        self._handoff_kinds: frozenset[HandoffKind] = frozenset(
+            {HandoffKind.CART_REDIRECT, HandoffKind.PRODUCT_REDIRECT}
+        )
 
     @property
     def name(self) -> str:
@@ -76,11 +85,18 @@ class FakeShoppingProvider(ShoppingProvider):
     def available(self) -> bool:
         return True
 
+    @property
+    def capabilities(self) -> ProviderCapabilities:
+        return ProviderCapabilities(search=True, handoff_kinds=self._handoff_kinds)
+
     def set_search_failure(self, exc: Exception) -> None:
         self._search_failure = exc
 
-    def set_cart_failure(self, exc: Exception) -> None:
-        self._cart_failure = exc
+    def set_handoff_failure(self, exc: Exception) -> None:
+        self._handoff_failure = exc
+
+    def set_handoff_kinds(self, kinds: frozenset[HandoffKind]) -> None:
+        self._handoff_kinds = kinds
 
     def set_search_offers(self, offers: list[ShoppingOffer]) -> None:
         self._search_offers = list(offers)
@@ -98,6 +114,34 @@ class FakeShoppingProvider(ShoppingProvider):
             raise self._search_failure
         return tuple(self._search_offers[:max_results])
 
+    async def create_handoff(
+        self,
+        *,
+        kind: HandoffKind,
+        lines: Sequence[CartLineInput] | None = None,
+        offer: ShoppingOffer | None = None,
+        region: str = "CN",
+        quantity: int = 1,
+        timeout_seconds: float = 5.0,
+    ) -> HandoffResult:
+        self.handoff_create_called += 1
+        if self._handoff_failure is not None:
+            raise self._handoff_failure
+        if kind is HandoffKind.CART_REDIRECT:
+            return HandoffResult(kind=HandoffKind.CART_REDIRECT, cart=SCENARIO_CART)
+        if kind is HandoffKind.PRODUCT_REDIRECT:
+            redirect = ProductRedirect(
+                product_url=(
+                    offer.product_url
+                    if offer
+                    else "https://item.taobao.com/item.htm?id=99999999"
+                ),
+                provider_offer_id=offer.provider_offer_id if offer else "tb-99999",
+                raw_provider_payload={"disclaimer": "fake redirect"},
+            )
+            return HandoffResult(kind=HandoffKind.PRODUCT_REDIRECT, redirect=redirect)
+        raise ShoppingProviderError(f"fake provider does not support handoff kind {kind.value}")
+
     async def create_cart(
         self,
         lines: Sequence[CartLineInput],
@@ -106,8 +150,8 @@ class FakeShoppingProvider(ShoppingProvider):
         timeout_seconds: float = 5.0,
     ) -> CreatedCart:
         self.cart_create_called += 1
-        if self._cart_failure is not None:
-            raise self._cart_failure
+        if self._handoff_failure is not None:
+            raise self._handoff_failure
         return SCENARIO_CART
 
 def build_fixture_app(
