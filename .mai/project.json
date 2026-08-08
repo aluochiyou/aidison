@@ -1,7 +1,7 @@
 {
   "version": 1,
-  "revision": 69,
-  "updatedAt": "2026-08-07T12:42:28.055Z",
+  "revision": 84,
+  "updatedAt": "2026-08-08T06:53:13.170Z",
   "modules": [
     {
       "id": "domain-runtime",
@@ -454,6 +454,86 @@
         "mypy:46 files passed",
         "alembic head:d4a8e7c91f20"
       ]
+    },
+    {
+      "id": "dynamic-orchestration-c2",
+      "title": "Gap 驱动动态扩图 C2",
+      "description": "已实现 Worker Gap、CAS PlanPatch revision 2+、ready frontier dispatch、跨 generation 重领恢复；PostgreSQL 保持唯一运行事实源。PG17 与 PG18.4 均完成真实验收。",
+      "status": "done",
+      "priority": "high",
+      "progress": 100,
+      "moduleId": "orchestration-runtime",
+      "acceptanceCriteria": [
+        "Gap 可持久化并去重",
+        "PlanPatch 受 generation+basis+head CAS 约束",
+        "revision 2+ 可重放",
+        "frontier 仅派发 ready 且预算允许的 durable child",
+        "Deep Agents 不绕过 runtime"
+      ],
+      "evidence": [
+        "commit 566051e",
+        "commit e0f4a7f",
+        "commit f8a511b",
+        "research/aidison-advanced-optimization-20260807/implementation-report.md",
+        "133 unit passed; PG17 19 integration passed; PG18.4 19 integration passed; fresh Alembic migrations passed"
+      ]
+    },
+    {
+      "title": "通用 durable planner/executor",
+      "description": "PostgreSQL 权威的业务无关 plan/frontier/wave/binding/join/receipt/recovery，Research 与 Solution 已接入。",
+      "status": "done",
+      "priority": "critical",
+      "progress": 100,
+      "moduleId": "orchestration",
+      "acceptanceCriteria": [
+        "通用模块不依赖 research",
+        "Research N-way/gap 与 Solution 共用 executor",
+        "Solution Join 后崩溃不重跑模型",
+        "PG17/18 fresh DB 验收"
+      ],
+      "evidence": [
+        "commit 4b0b1d5; docs/adr/0004-generic-durable-plan-executor.md; research/c4-generic-executor-review/c4-review-resolution.md; 139 unit; PG17/18 42 integration each"
+      ],
+      "id": "generic-planner-executor"
+    },
+    {
+      "title": "项目学习、简历与面试文档集",
+      "description": "持续收集架构、算法、技术选型、参考源码、开发过程与工程难点，版本收口生成完整教程和面试材料。",
+      "status": "in_progress",
+      "priority": "high",
+      "progress": 20,
+      "moduleId": "documentation",
+      "acceptanceCriteria": [
+        "架构教程",
+        "算法与核心逻辑",
+        "技术栈选型",
+        "源码阅读地图",
+        "版本演进",
+        "简历 bullet",
+        "分层面试问答"
+      ],
+      "evidence": [
+        "docs/engineering/development-decisions.md; ADR-0001..0004"
+      ],
+      "id": "project-learning-docset"
+    },
+    {
+      "id": "scoped-approval-join-policies",
+      "title": "Scoped approval 与扩展 JoinPolicy",
+      "description": "实现有界审批门和 BOUNDED_PARTIAL/FIRST_VALID 的 durable、replay、API 语义。",
+      "status": "in_progress",
+      "priority": "critical",
+      "progress": 5,
+      "moduleId": "orchestration",
+      "acceptanceCriteria": [
+        "审批只阻塞明确 effect scope",
+        "decision durable/replay safe",
+        "两种 JoinPolicy 有终止与恢复测试",
+        "PG17/18 通过"
+      ],
+      "evidence": [
+        "docs/ARCHITECTURE.md Remaining architecture work"
+      ]
     }
   ],
   "phases": [],
@@ -498,6 +578,16 @@
         "AGENTS.md",
         "codex-team-workflow SKILL.md"
       ]
+    },
+    {
+      "title": "按任务边界复用 Agent 与 worktree",
+      "status": "accepted",
+      "description": "持久 Agent 按任务边界和明确文件所有权组织，不绑定固定模块分类；无需独立并行写入、依赖隔离或长期上下文的任务优先复用当前 worktree 或临时 subagent。持久 Agent 可在授权边界内继续使用原生 subagent 并行处理不重叠子任务。",
+      "rationale": "约束并发写入和集成风险，而不是预设业务模块或把 subagent 限定为只读审查。",
+      "evidence": [
+        "AGENTS.md"
+      ],
+      "id": "multi-agent-worktree-policy"
     }
   ],
   "risks": [
@@ -613,6 +703,36 @@
         "research/aidison-advanced-optimization-20260807/bounded-nway-slice-spec.md"
       ],
       "id": "risk-nway-postgres-unverified"
+    },
+    {
+      "title": "C2 PostgreSQL integration gate unavailable",
+      "status": "closed",
+      "probability": "low",
+      "impact": "high",
+      "mitigation": "Closed: isolated PostgreSQL 17 on 127.0.0.1:55432 completed fresh migrations, C2 integration tests, and downgrade/upgrade roundtrip.",
+      "owner": "coordinator",
+      "moduleId": "orchestration-runtime",
+      "evidence": [
+        "aidison-test-postgres 127.0.0.1:55432",
+        "19 C2 integration tests passed",
+        "Alembic f405db1bd29e"
+      ],
+      "id": "risk-c2-postgres-gate"
+    },
+    {
+      "title": "Asyncpg durable plan migration blocker",
+      "status": "closed",
+      "probability": "low",
+      "impact": "critical",
+      "mitigation": "Split multi-command op.execute blocks in migration 6b2c9f0d3e41 and rerun Alembic from a fresh PostgreSQL database before integration acceptance.",
+      "owner": "c2-writer+coordinator",
+      "moduleId": "orchestration-runtime",
+      "evidence": [
+        "PG17 127.0.0.1:55432 fresh upgrade head passed",
+        "alembic current f405db1bd29e"
+      ],
+      "id": "risk-plan-migration-asyncpg",
+      "description": "Closed: split PostgreSQL function/trigger statements into separate Alembic op.execute calls; fresh PG17 database upgraded from zero to f405db1bd29e."
     }
   ],
   "interfaces": [],

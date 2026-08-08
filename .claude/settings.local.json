@@ -3,7 +3,9 @@
     "allow": [
       "Bash(npx skills *)",
       "Read(//home/aluo/**)",
-      "Read(//home/aluo/.ccswitch/**)"
+      "Read(//home/aluo/.ccswitch/**)",
+      "Bash(orca-ide orchestration *)",
+      "Bash(git *)"
     ]
   }
 }
