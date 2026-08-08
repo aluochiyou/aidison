@@ -1173,13 +1173,13 @@ async def test_impact_job_creates_server_owned_typed_analysis(
 
 
 @pytest.mark.parametrize(
-    "crash_after_join",
-    [False, True],
+    "crash_point",
+    [None, "before_join", "after_join"],
 )
 @pytest.mark.asyncio
 async def test_impact_parent_recovers_from_committed_join(
     tmp_path: Path,
-    crash_after_join: bool,
+    crash_point: str | None,
 ) -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
@@ -1384,7 +1384,7 @@ async def test_impact_parent_recovers_from_committed_join(
             lease_seconds=10,
             poll_seconds=0.02,
         )
-        if crash_after_join:
+        if crash_point == "after_join":
             join_committed = asyncio.Event()
 
             async def crash_before_domain_write(**_: Any) -> Any:
@@ -1419,9 +1419,31 @@ async def test_impact_parent_recovers_from_committed_join(
                 root.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
                 await session.commit()
 
-            recovery_model_factory = MagicMock(
-                side_effect=AssertionError("committed impact recovery must not call the model")
+        elif crash_point == "before_join":
+            dispatch_started = asyncio.Event()
+
+            async def crash_before_wave(**_: Any) -> Any:
+                dispatch_started.set()
+                await asyncio.Future()
+
+            worker._plan_executor.dispatch_ready_wave = crash_before_wave  # type: ignore[method-assign]
+            parent_task = asyncio.create_task(
+                worker.run_once(worker_id="impact-parent-before-wave-crash")
             )
+            async with asyncio.timeout(10):
+                await dispatch_started.wait()
+            parent_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await parent_task
+
+            async with factory() as session:
+                root = await session.get(JobRow, root_job_id)
+                assert root is not None and root.status == "running"
+                root.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+                await session.commit()
+
+        if crash_point in {"before_join", "after_join"}:
+            recovery_model_factory = MagicMock()
             recovery_worker = ResearchWorker(
                 session_factory=factory,
                 signal_bus=PostgresSignalBus(engine),
@@ -1436,8 +1458,27 @@ async def test_impact_parent_recovers_from_committed_join(
                 lease_seconds=10,
                 poll_seconds=0.02,
             )
-            assert await recovery_worker.run_once(worker_id="impact-parent-after-crash") is True
-            recovery_model_factory.assert_not_called()
+            recovery_task = asyncio.create_task(
+                recovery_worker.run_forever(
+                    worker_id="impact-parent-after-crash",
+                    concurrency=3,
+                )
+            )
+            try:
+                async with asyncio.timeout(15):
+                    while True:
+                        async with factory() as session:
+                            root = await session.get(JobRow, root_job_id)
+                            if root is not None and root.status in {"succeeded", "failed"}:
+                                break
+                        await asyncio.sleep(0.05)
+            finally:
+                recovery_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await recovery_task
+            assert root is not None and root.status == "succeeded"
+            if crash_point == "after_join":
+                recovery_model_factory.assert_not_called()
         else:
             worker_task = asyncio.create_task(
                 worker.run_forever(worker_id="impact-recovery-worker", concurrency=3)
