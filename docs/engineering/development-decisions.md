@@ -12,7 +12,7 @@
 | V0 | PostgreSQL 同时承载 Domain 与 durable runtime | 一个事务边界内处理 basis、lease、fencing、receipt 和 canonical write；减少双写 | Redis/Celery/第二 Agent runtime | `ADR-0001`、runtime 集成测试 | 分布式任务幂等、fencing、恢复 |
 | C2 | 不可变 AgentProfile + root binding + durable budget ledger | replay 必须重用冻结配置；预算必须覆盖物理 model/tool 调用 | 从 env 动态读取活动 profile、仅统计最终 token | `ADR-0002`、profile/budget tests | 配置版本化、成本治理 |
 | C3 | PostgreSQL authority + LISTEN/NOTIFY wake | 通知降延迟，数据库仍可在丢通知后恢复 | 把 NOTIFY 当队列、正常路径 0.5 秒 busy poll | `ADR-0003`、`test_postgres_signals.py` | 消息与事实分离、连接池清理 |
-| C4 | 通用 `DurablePlanExecutor` + 业务 adapter | 消除 research/solution 重复的派发、绑定、等待、receipt/recovery，同时保留业务类型边界 | 通用 Gap、第二 scheduler、任意 DAG 引擎 | `ADR-0004`、generic boundary、research/solution integration | 多智能体编排、端到端恢复、抽象边界 |
+| C4 | 通用 `DurablePlanExecutor` + 业务 adapter | 消除 research/solution/impact 重复的派发、绑定、等待、receipt/recovery，同时保留业务类型边界 | 通用 Gap、第二 scheduler、任意 DAG 引擎 | `ADR-0004`、generic boundary、research/solution/impact integration | 多智能体编排、端到端恢复、抽象边界 |
 | C5A | 三种确定性 JoinPolicy + transactional sibling cleanup | 让并行 Agent 的全量、边界部分成功和首个有效结果共享可恢复收敛语义 | 业务 Worker 自行数结果、非确定 winner、只关 Join 不回收 sibling | `ADR-0005`、join policy integration | 并行收敛、锁顺序、预算回收 |
 | C5B | 一次性 scoped EffectApproval | 外部副作用必须绑定服务端冻结 scope，并在 provider 前 durable consume | 复用 DecisionRequest、布尔 approval、provider 后才消费 | `ADR-0006`、shopping API closed loop | capability security、幂等副作用、crash window |
 
@@ -33,6 +33,7 @@
 - Gap PlanPatch 和对应 gap `ACCEPTED` 状态在同一事务提交，避免 revision 已前进但 gap 永久停留 OPEN。
 - 兼容历史 `DelegationSpec`：`role_key` 缺失时只对旧的 research/solution/impact task kind 推导；新业务必须显式给 role。
 - 恢复验收不是“重新跑一次”：测试在 JoinReceipt commit 后、Domain write 前取消 parent，令 lease 过期并产生 generation 2；新 parent 读取原 artifact/receipt，模型调用计数保持 0。
+- Impact 迁移后同样通过 `DurablePlanExecutor` 创建单节点 plan；测试覆盖 JoinReceipt 前 parent reclaim 与 JoinReceipt 后 Domain write 前 crash 两个窗口，证明 PlanTask/child binding/receipt 不会重复。
 
 ## C5 工程细节
 

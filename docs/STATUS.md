@@ -11,7 +11,7 @@
 - PostgreSQL `LISTEN/NOTIFY` 只作低延迟 wake，Join correctness 仍由数据库重读决定；连接失败退化为有界 polling。
 - durable plan 已包含 immutable revision、ready frontier、CAS replan、task→Job binding 与 execution projection。
 - `DurablePlanExecutor` 已从 ResearchWorker 提取，通用模块不导入 research contracts。
-- Research N-way primary/gap 与真实 Solution proposal 使用同一 executor；Solution 在 Join commit 后、Domain write 前崩溃可由新 generation 恢复且不重跑模型。
+- Research N-way primary/gap、真实 Solution proposal 与 Impact proposal 使用同一 executor；Solution/Impact 在 Join commit 后、Domain write 前崩溃可由新 generation 恢复且不重跑模型，Impact 另覆盖 Join commit 前 parent reclaim。
 - PostgreSQL 17 与 18.4 隔离库从零 Alembic migration：passed；C4 完整 integration：两版均 passed（各 42 项）；unit：139 passed；Ruff、mypy、diff check、Alembic single head：passed。
 - Join runtime 新增 `BOUNDED_PARTIAL` 与 `FIRST_VALID`；确定性 winner、boundary/deadline、sibling cancellation、late-result quarantine、PlanTask projection 和预算 reconciliation 已进入 C5 测试矩阵。
 - Shopping 新增独立 EffectApproval 状态机、不可变服务端 scope、PostgreSQL partial unique/CAS/trigger、request/resolve API，以及 consume gate 后才调用 provider 的 checkout crash boundary。

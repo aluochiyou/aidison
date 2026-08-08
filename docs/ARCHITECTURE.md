@@ -82,7 +82,7 @@ V0 operational recovery uses a write-quiesced pair: `api` and `worker` are pause
 10. late/stale result 被 quarantine；取消会关闭 open join 并传播到未终止 children。
 11. parent lease 过期后，新 generation 会原子 supersede 旧 Attempt，并取消旧 open JoinGroup 与未终止 children。未 dispatch reservation 被释放；已 dispatch 未知调用转为 `ambiguous` 并保守全额计费。
 12. 若旧 generation 已提交 JoinReceipt，新 parent 在严格加载当前 project basis 前查找唯一 committed join，复用原 merged Proposal Artifact，并以 `join_group_id`、`committed_at` 和确定性 UUID 重建相同 Domain payload。
-13. canonical command 先检查稳定 idempotency receipt，因此 Domain 已提交但 parent 未完成时可返回原结果；当前 generation 最后完成 root，旧 generation 被 fencing 拒绝。Research N-way/gap 与 Solution proposal 已复用同一个 `DurablePlanExecutor`。
+13. canonical command 先检查稳定 idempotency receipt，因此 Domain 已提交但 parent 未完成时可返回原结果；当前 generation 最后完成 root，旧 generation 被 fencing 拒绝。Research N-way/gap、Solution proposal 与 Impact proposal 已复用同一个 `DurablePlanExecutor`。
 
 Command payload 的 canonical hash 先把 Pydantic model、UUID、Enum 和 timestamp 转为语义 JSON。它不依赖 Python `repr` 或具体时区对象实现，保证 crash/JSON/数据库往返后等值 payload 仍命中同一 receipt。
 

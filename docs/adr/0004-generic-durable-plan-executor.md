@@ -7,6 +7,8 @@ commit_lineage:
   - 5990583: generic planner/executor and research/solution adoption
   - c5b83cc: legacy role payload replay verification
   - 15984b4: atomic plan/wave/budget/binding transaction and review fixes
+  - 4056068: Impact workflow adoption of the generic executor
+  - e45762d: Impact pre-join and post-join reclaim regression coverage
 ---
 
 # ADR-0004: 提取业务无关的 durable planner/executor，保留业务适配器
@@ -31,7 +33,7 @@ Aidison 已有不可变 PlanRevision、Task frontier、CAS replan、Delegation�
 
 `DelegationSpec` 新增可选 `role_key`。新 wave 显式冻结 role；历史 payload 缺少该字段时，仅对已有 research/solution/impact task_kind 做兼容解析。`PostgresRuntime` 仍验证 root Job 创建时冻结的 AgentProfile binding，不信任调用者临时指定的 profile。
 
-Research 的 N-way primary wave 和 gap frontier、Solution 的真实 proposal wave 接入同一执行器。Solution 是第二接入者，因为它已经具备真实 Agent、child Job、typed Proposal、JoinReceipt 和 Domain command；不是为证明抽象而新造的演示流程。
+Research 的 N-way primary wave 和 gap frontier、Solution 的真实 proposal wave、Impact 的 typed impact proposal wave 接入同一执行器。Solution 和 Impact 都是业务真实接入者：它们具备真实 Agent、child Job、typed Proposal、JoinReceipt 和 Domain command；不是为证明抽象而新造的演示流程。
 
 ## Alternatives
 
@@ -45,9 +47,9 @@ Research 的 N-way primary wave 和 gap frontier、Solution 的真实 proposal w
 
 - import-boundary unit test：三层通用 planning/execution 模块不得导入 research；
 - Research N-way、gap revision、task binding 和四类 reclaim crash window 继续通过；
-- Solution 必须持久化 `PlanHead/PlanRevision/PlanTask`，task 绑定 child Job 并最终投影为 succeeded；
+- Solution 和 Impact 必须持久化 `PlanHead/PlanRevision/PlanTask`，task 绑定 child Job 并最终投影为 succeeded；
 - 任一 task binding 失败时，initial plan、wave、children、allocation 和已有 binding 必须整体 rollback；
-- Solution 在 JoinReceipt 已提交、Domain write 前崩溃时，新 generation 从 receipt 恢复且不得再次调用模型；
+- Solution/Impact 在 JoinReceipt 已提交、Domain write 前崩溃时，新 generation 从 receipt 恢复且不得再次调用模型；Impact 还覆盖 JoinReceipt 提交前 parent reclaim；
 - PostgreSQL 17/18、Ruff、mypy、Alembic single-head 和 diff check 作为版本 gate。
 
 ## Consequences
