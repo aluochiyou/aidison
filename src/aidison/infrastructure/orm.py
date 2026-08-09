@@ -938,6 +938,74 @@ class PlanTaskEdgeRow(Base):
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
 
 
+class PlanTaskClaimRow(Base):
+    """Durable, append-only claim ledger for generic ready-set task dispatch.
+
+    At most one row per task is active ('claimed' or 'dispatched') at a time;
+    the partial unique index is the final barrier against competing schedulers.
+    """
+
+    __tablename__ = "plan_task_claims"
+    __table_args__ = (
+        CheckConstraint("claim_generation >= 1", name="generation_positive"),
+        CheckConstraint(
+            "status IN ('claimed', 'dispatched', 'succeeded', 'failed', 'cancelled', "
+            "'superseded')",
+            name="status",
+        ),
+        ForeignKeyConstraint(
+            ["root_job_id", "plan_revision_id"],
+            ["plan_revisions.root_job_id", "plan_revisions.id"],
+            name="fk_claim_same_root_revision",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["plan_revision_id", "task_id"],
+            ["plan_tasks.plan_revision_id", "plan_tasks.id"],
+            name="fk_claim_same_revision_task",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "root_job_id",
+            "plan_revision_id",
+            "task_id",
+            "claim_generation",
+            name="uq_claim_task_generation",
+        ),
+        Index(
+            "uq_plan_task_claim_active",
+            "plan_revision_id",
+            "task_id",
+            unique=True,
+            postgresql_where=text("status IN ('claimed', 'dispatched')"),
+        ),
+        Index("ix_plan_task_claims_lease", "status", "lease_expires_at"),
+        Index("ix_plan_task_claims_root", "root_job_id", "plan_revision_id", "logical_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    root_job_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=False
+    )
+    plan_revision_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    plan_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    task_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    logical_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    claim_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    lease_owner: Mapped[str] = mapped_column(String(200), nullable=False)
+    lease_token: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    lease_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    child_job_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("jobs.id", ondelete="RESTRICT"), nullable=True
+    )
+    intent: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class PlanGapRow(Base):
     __tablename__ = "plan_gaps"
     __table_args__ = (

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from typing import Any
@@ -200,3 +201,87 @@ def canonical_patch_hash(patch: PlanPatchProposal) -> str:
         separators=(",", ":"),
     )
     return sha256(payload.encode()).hexdigest()
+
+
+# ── V3 ready-set scheduler contracts ─────────────────────────────────────────
+
+
+class TaskClaimStatus(StrEnum):
+    CLAIMED = "claimed"
+    DISPATCHED = "dispatched"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    SUPERSEDED = "superseded"
+
+
+class SchedulerSkipReason(StrEnum):
+    NOT_READY = "not_ready"
+    CONCURRENCY = "concurrency"
+    BUDGET = "budget"
+    CAPABILITY = "capability"
+    ALREADY_DISPATCHED = "already_dispatched"
+    ALREADY_CLAIMED = "already_claimed"
+    TERMINAL = "terminal"
+
+
+class TaskDispatchIntent(PlanningContract):
+    """The auditable, deterministic conversion from a frozen TaskNode to an execution spec.
+
+    It is derived only from the frozen claim and the frozen plan task, so a replay
+    of the same claim reproduces the same child Job identity.
+    """
+
+    root_job_id: UUID
+    plan_revision: int = Field(ge=1)
+    task_logical_key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
+    claim_generation: int = Field(ge=1)
+    graph_step_id: str = Field(min_length=1, max_length=200)
+    task_kind: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
+    role_key: str = Field(min_length=1, max_length=120)
+    profile_id: str = Field(min_length=1, max_length=200)
+    profile_revision: int = Field(ge=1)
+    basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    shard_key: str = Field(min_length=1, max_length=200)
+    input_refs: tuple[str, ...] = Field(default=(), max_length=32)
+    token_budget: int = Field(gt=0)
+    tool_call_budget: int = Field(ge=0)
+    deadline: datetime
+
+
+class PlanTaskClaim(PlanningContract):
+    """One durable, append-only claim of a plan task for ready-set dispatch."""
+
+    claim_id: UUID
+    root_job_id: UUID
+    plan_revision: int = Field(ge=1)
+    task_logical_key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
+    claim_generation: int = Field(ge=1)
+    lease_owner: str = Field(min_length=1, max_length=200)
+    lease_token: UUID
+    lease_expires_at: datetime
+    status: TaskClaimStatus
+    child_job_id: UUID | None = None
+    intent: TaskDispatchIntent
+    created_at: datetime
+    completed_at: datetime | None = None
+
+
+class SchedulerSkip(PlanningContract):
+    task_logical_key: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
+    reason: SchedulerSkipReason
+    detail: str = ""
+
+
+class SchedulerTickResult(PlanningContract):
+    """One idempotent scan of a claimed root's ready set."""
+
+    root_job_id: UUID
+    plan_revision: int = Field(default=0, ge=0)
+    dispatched: tuple[PlanTaskClaim, ...] = ()
+    skipped: tuple[SchedulerSkip, ...] = ()
+    active_count: int = Field(default=0, ge=0)
+    ready_remaining: int = Field(default=0, ge=0)
+    terminal_failed: int = Field(default=0, ge=0)
+    settled_child_count: int = Field(default=0, ge=0)
+    complete: bool = False
