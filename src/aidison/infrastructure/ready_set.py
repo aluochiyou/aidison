@@ -53,6 +53,15 @@ class ReadySetConflictError(RuntimeError):
     """Raised when a ready-set dispatch races a stale or conflicting durable fact."""
 
 
+class ReadySetDispatchSkipped(RuntimeError):
+    """A durable re-check declined dispatch without invalidating the root claim."""
+
+    def __init__(self, reason: SchedulerSkipReason, detail: str) -> None:
+        super().__init__(detail)
+        self.reason = reason
+        self.detail = detail
+
+
 @dataclass(frozen=True)
 class ReadySetContext:
     """One immutable read of the durable facts a ready-set tick needs."""
@@ -260,6 +269,7 @@ class ReadySetRepository:
         token_budget: int,
         tool_call_budget: int,
         deadline: datetime,
+        max_concurrency: int,
     ) -> PlanTaskClaim | None:
         """Atomically claim one ready task and dispatch its frozen child Job.
 
@@ -296,6 +306,75 @@ class ReadySetRepository:
         }:
             await self._session.commit()
             return None
+
+        node = PostgresPlanStore._node_from_row(task)
+        # collect() is only a scheduling hint. This transaction owns the root
+        # row, so every fact which authorizes a child must be checked again
+        # against the revision and bindings actually about to be dispatched.
+        binding = await self._session.scalar(
+            select(JobProfileBindingRow).where(
+                JobProfileBindingRow.root_job_id == root.id,
+                JobProfileBindingRow.role_key == node.role_key,
+            )
+        )
+        if (
+            binding is None
+            or binding.profile_id != node.profile_id
+            or binding.profile_revision != node.profile_revision
+        ):
+            await self._session.commit()
+            raise ReadySetDispatchSkipped(
+                SchedulerSkipReason.CAPABILITY,
+                "role binding changed after ready-set collection",
+            )
+        try:
+            profile = await ProfileRepository(self._session).get_revision(
+                node.profile_id, node.profile_revision
+            )
+        except ProfileNotFoundError:
+            await self._session.commit()
+            raise ReadySetDispatchSkipped(
+                SchedulerSkipReason.CAPABILITY,
+                "frozen profile revision disappeared before dispatch",
+            ) from None
+
+        revision_tasks = list(
+            await self._session.scalars(
+                select(PlanTaskRow).where(PlanTaskRow.plan_revision_id == revision_row.id)
+            )
+        )
+        active_child_ids = [
+            item.dispatched_job_id
+            for item in revision_tasks
+            if item.dispatched_job_id is not None
+        ]
+        active_children = (
+            list(
+                await self._session.scalars(
+                    select(JobRow).where(
+                        JobRow.id.in_(active_child_ids),
+                        JobRow.status.in_(tuple(_ACTIVE_JOB_STATUSES)),
+                    )
+                )
+            )
+            if active_child_ids
+            else []
+        )
+        if len(active_children) >= max_concurrency:
+            await self._session.commit()
+            raise ReadySetDispatchSkipped(
+                SchedulerSkipReason.CONCURRENCY,
+                f"root active count reaches max_concurrency {max_concurrency}",
+            )
+        active_for_profile = sum(
+            child.profile_id == node.profile_id for child in active_children
+        )
+        if active_for_profile >= profile.concurrency_cap:
+            await self._session.commit()
+            raise ReadySetDispatchSkipped(
+                SchedulerSkipReason.CONCURRENCY,
+                f"profile {node.profile_id} reaches concurrency_cap {profile.concurrency_cap}",
+            )
         active_claim = await self._session.scalar(
             select(PlanTaskClaimRow.id).where(
                 PlanTaskClaimRow.plan_revision_id == revision_row.id,
@@ -309,7 +388,6 @@ class ReadySetRepository:
             await self._session.commit()
             return None
 
-        node = PostgresPlanStore._node_from_row(task)
         generation = (
             await self._session.scalar(
                 select(func.coalesce(func.max(PlanTaskClaimRow.claim_generation), 0)).where(
@@ -376,16 +454,35 @@ class ReadySetRepository:
             tool_call_budget=intent.tool_call_budget,
             deadline=intent.deadline,
         )
-        wave = await PostgresRuntime(self._session).create_delegation_wave(
-            specs=(spec,),
-            policy=JoinPolicy(
-                mode=JoinMode.ALL_REQUIRED,
-                expected_delegation_ids=(spec.delegation_id,),
-                min_successes=1,
-                deadline=intent.deadline,
-            ),
-            commit=False,
-        )
+        try:
+            wave = await PostgresRuntime(self._session).create_delegation_wave(
+                specs=(spec,),
+                policy=JoinPolicy(
+                    mode=JoinMode.ALL_REQUIRED,
+                    expected_delegation_ids=(spec.delegation_id,),
+                    min_successes=1,
+                    deadline=intent.deadline,
+                ),
+                commit=False,
+            )
+        except RuntimeConflictError as exc:
+            # BudgetLedger is the final cross-workflow serialization point. A
+            # lost race must roll back our provisional claim and surface as a
+            # normal scheduler skip, never abort the entire tick.
+            await self._session.rollback()
+            message = str(exc)
+            normalized = message.lower()
+            if any(term in normalized for term in ("budget", "token", "tool-call")):
+                raise ReadySetDispatchSkipped(SchedulerSkipReason.BUDGET, message) from None
+            if "concurrency cap" in normalized:
+                raise ReadySetDispatchSkipped(
+                    SchedulerSkipReason.CONCURRENCY, message
+                ) from None
+            if "frozen agentprofile" in normalized or "frozen role binding" in normalized:
+                raise ReadySetDispatchSkipped(
+                    SchedulerSkipReason.CAPABILITY, message
+                ) from None
+            raise
         await PostgresPlanStore(self._session).bind_task_job(
             root_job_id=root.id,
             logical_key=node.logical_key,
@@ -753,14 +850,28 @@ class ReadySetScheduler:
                 continue
             profile = context.profiles[(node.profile_id, node.profile_revision)]
             deadline = datetime.now(UTC) + timedelta(seconds=profile.timeout_seconds)
-            async with self._factory() as session:
-                record = await ReadySetRepository(session).claim_and_dispatch(
-                    claim=claim,
-                    logical_key=node.logical_key,
-                    token_budget=profile.token_cap,
-                    tool_call_budget=profile.tool_call_cap,
-                    deadline=deadline,
+            try:
+                async with self._factory() as session:
+                    record = await ReadySetRepository(session).claim_and_dispatch(
+                        claim=claim,
+                        logical_key=node.logical_key,
+                        token_budget=profile.token_cap,
+                        tool_call_budget=profile.tool_call_cap,
+                        deadline=deadline,
+                        max_concurrency=self._default_concurrency,
+                    )
+            except ReadySetDispatchSkipped as exc:
+                # A locked re-check can reject facts that were valid in the
+                # earlier collect() snapshot. It is a normal, diagnosable
+                # scheduler outcome rather than a failed root execution.
+                skipped.append(
+                    SchedulerSkip(
+                        task_logical_key=node.logical_key,
+                        reason=exc.reason,
+                        detail=exc.detail,
+                    )
                 )
+                continue
             if record is None:
                 skipped.append(
                     SchedulerSkip(

@@ -35,6 +35,7 @@ from aidison.runtime.contracts import (
     DelegationResult,
     DelegationStatus,
     JobClaim,
+    JobStatus,
     ResultDisposition,
 )
 from aidison.runtime.planning import (
@@ -338,6 +339,46 @@ async def test_ready_set_racing_schedulers_dispatch_exactly_once() -> None:
         runner_up = first if first.dispatched == () else second
         assert {item.reason for item in runner_up.skipped} == {
             SchedulerSkipReason.ALREADY_CLAIMED
+        }
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ready_set_racing_ticks_respect_locked_root_concurrency() -> None:
+    """Two stale frontier snapshots must not over-dispatch one root."""
+    _, engine = _database()
+    factory = create_session_factory(engine)
+    try:
+        root_job_id, _, claim = await _bootstrap(
+            factory,
+            nodes=(_node("a", depth=0), _node("b", depth=0)),
+            suffix="concurrent-cap",
+        )
+        scheduler = ReadySetScheduler(session_factory=factory, default_concurrency=1)
+
+        first, second = await asyncio.gather(
+            scheduler.tick(claim), scheduler.tick(claim)
+        )
+        dispatched = [*first.dispatched, *second.dispatched]
+        assert len(dispatched) == 1
+        assert await _claim_count(factory, root_job_id=root_job_id) == 1
+
+        async with factory() as session:
+            active_count = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(JobRow)
+                    .where(
+                        JobRow.parent_job_id == root_job_id,
+                        JobRow.status.in_((JobStatus.QUEUED.value, JobStatus.RUNNING.value)),
+                    )
+                )
+                or 0
+            )
+        assert active_count == 1
+        assert SchedulerSkipReason.CONCURRENCY in {
+            item.reason for tick in (first, second) for item in tick.skipped
         }
     finally:
         await engine.dispose()
