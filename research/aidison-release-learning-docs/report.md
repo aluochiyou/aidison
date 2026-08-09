@@ -1,7 +1,7 @@
 # Aidison release learning evidence report
 
-- Date: 2026-08-08
-- Scope: Git revision `0dca4b8` and its repository-local evidence
+- Date: 2026-08-08; refreshed 2026-08-09
+- Scope: C5 baseline revision `0dca4b8`, plus the current repository-local documentation audit at `38b5efe`
 - Method: local source, migrations, tests, ADRs and pinned upstream map first
 - Labels: `[F]` verified fact, `[J]` design judgment, `[H]` hypothesis/pending work, `[X]` rejected or superseded claim
 
@@ -10,7 +10,7 @@
 | ID | Claim | Status | Evidence |
 |---|---|---|---|
 | E-001 | Top-level durable orchestration is Aidison-owned and PostgreSQL-backed; it is not delegated to LangGraph or DeepAgents. | `[F]` | `src/aidison/infrastructure/runtime.py`, `src/aidison/infrastructure/planning.py`, ADR-0001/0004 |
-| E-002 | `DurablePlanExecutor` is business-neutral and is used by both Research and Solution; dynamic orchestration is no longer Research-only. | `[F]` | `src/aidison/application/execution.py`, `tests/integration/test_durable_plan_executor.py`, ADR-0004 |
+| E-002 | `DurablePlanExecutor` is business-neutral and is used by Research, Solution and Impact; dynamic orchestration is no longer Research-only. | `[F]` | `src/aidison/application/execution.py`, Research/Solution/Impact integration tests, ADR-0004 |
 | E-003 | The executor currently consumes a bounded ready wave; it is not an arbitrary-depth autonomous DAG scheduler. | `[F]` | `DurablePlanExecutor.dispatch_ready_wave`, ADR-0004 consequences |
 | E-004 | Plan history supports immutable revisions, ready frontier, task-to-Job binding and compare-and-swap replan. | `[F]` | `src/aidison/infrastructure/planning.py`, `tests/integration/test_plan_store.py` |
 | E-005 | Runtime supports `ALL_REQUIRED`, `BOUNDED_PARTIAL` and deterministic `FIRST_VALID` Join policies. | `[F]` | `src/aidison/runtime/contracts.py`, `_evaluate_open_join`, ADR-0005 |
@@ -60,7 +60,7 @@ This separation is justified by crash recovery, replay, audit and stale-write te
 
 ## Next evidence needed
 
-- `[H]` A real Taobao/Open Platform or approved MCP sandbox contract, including auth, rate limits, order semantics and idempotency.
+- `[H]` A real, callable Taobao keyword-search API or approved MCP contract. `item.info.get` only accepts existing item IDs and cannot satisfy discovery by itself.
 - `[H]` Authenticated actor/RBAC binding for approval resolution.
 - `[H]` Provider-side usage reconciliation and repeatable live end-to-end gate.
 - `[H]` A second non-Research workflow using multi-wave replan before expanding into a generic DAG scheduler.

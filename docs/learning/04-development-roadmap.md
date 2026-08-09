@@ -74,7 +74,7 @@ C5 增加 `BOUNDED_PARTIAL`、`FIRST_VALID` 和统一 Join evaluator；Join 关�
 
 ## 下一阶段建议
 
-### P0：真实淘宝集成前的合同研究
+### P0：取得可调用淘宝搜索接口后的合同研究
 
 1. 确认官方 Open Platform/API 或可信 MCP 的可用范围；
 2. 验证商品搜索、SKU、价格/库存快照、购物车/订单接口和 sandbox；

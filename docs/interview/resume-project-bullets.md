@@ -15,7 +15,7 @@ Python 3.11/3.12、FastAPI、Pydantic v2、SQLAlchemy asyncio、PostgreSQL 17/18
 ## 推荐简历 bullet（选 4–6 条）
 
 - 设计并实现 PostgreSQL-backed durable multi-Agent runtime，以 `Job/Attempt/Delegation/JoinReceipt`、lease generation fencing 和幂等 receipt 处理进程崩溃、任务重领、迟到结果与重复提交。
-- 将 Research 内部编排提取为业务无关 `DurablePlanExecutor`，支持不可变 PlanRevision、ready frontier、CAS replan 与 task→child Job 原子绑定，并由 Research、Solution 两个真实工作流复用。
+- 将 Research 内部编排提取为业务无关 `DurablePlanExecutor`，支持不可变 PlanRevision、ready frontier、CAS replan 与 task→child Job 原子绑定，并由 Research、Solution、Impact 三条真实业务闭环复用。
 - 实现 `ALL_REQUIRED`、`BOUNDED_PARTIAL`、`FIRST_VALID` 三种确定性 JoinPolicy；Join 关闭时在同一事务取消 sibling、隔离 late result、投影任务状态并完成预算 reconciliation。
 - 构建 Agent 调用预算账本，以 `reserve → dispatch → settle/release/ambiguous` 区分未发出与结果未知的模型/工具调用，支持重试和 reclaim 下的可解释成本控制。
 - 为购物外部副作用设计一次性 scoped EffectApproval，使用服务端 scope hash、CAS、partial unique index、immutable trigger 和 PREPARED handoff 防止授权漂移与危险自动重试。
@@ -30,7 +30,7 @@ Python 3.11/3.12、FastAPI、Pydantic v2、SQLAlchemy asyncio、PostgreSQL 17/18
 ## 不建议写入简历
 
 - “生产级/高可用”——尚无真实生产流量、容量与长期运维证据；
-- “已接入淘宝自动下单”——真实淘宝 provider 仍待开发；
+- “已接入淘宝自动下单”——当前没有购买能力，关键词搜索也等待可调用接口；
 - “LangGraph 完成全部编排”——顶层 durable orchestration 是 Aidison 自研；
 - “自主购买”——当前设计明确要求人工 EffectApproval；
 - “精确节省 xx% token/延迟”——没有稳定对照实验数据；
