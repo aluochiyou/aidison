@@ -58,6 +58,9 @@ class ShoppingSettings(AidisonSettings):
     yaml_section = "shopping"
 
     effect_approval_ttl_seconds: int = Field(default=900, ge=60, le=86_400)
+    # Runtime shopping provider selection (nonsecret): "none" (no provider)
+    # or "taobao" (search-only).  Provider secrets come from the environment.
+    provider: str = Field(default="none")
 
 
 def _validate_region(region: str) -> str:

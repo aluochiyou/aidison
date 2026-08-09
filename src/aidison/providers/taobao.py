@@ -1,22 +1,27 @@
-"""Taobao Affiliate TOP API adapter.
+"""Taobao Affiliate TOP API adapter — search/recommendation only.
 
 Supports the official Taobao Open Platform (TOP) API for:
-- ``taobao.tbk.dg.material.optimal`` — keyword material search
-- ``PRODUCT_REDIRECT`` — affiliate link handoff via ``coupon_share_url`` or
-  ``tk_total_commission`` link generation.
+- ``taobao.tbk.dg.material.optional`` — keyword material search.
 
 This adapter follows the ShoppingProvider contract: fail-closed when
 configuration is missing, bounded results, strict timeouts, HTTPS-only,
 deterministic TOP signing, and error sanitisation.
 
 Key constraints:
-- **Never cart/order/payment** — Taobao only supports search + redirect.
-- **Never fabricates cart IDs** — ``PRODUCT_REDIRECT`` produces a
-  ``ProductRedirect``, never a ``CreatedCart``.
-- **Availability always UNKNOWN** — Taobao inventory is not real-time.
+- **Search-only** — Taobao never creates carts, orders, payments, or
+  product-redirect handoffs.  ``create_handoff`` / ``create_cart`` always
+  fail closed with ``ShoppingProviderError``.
+- **Availability always UNKNOWN / quantity 0** — Taobao inventory is not
+  real-time, so offers are never purchaseable or proposable.
 - **Short TTL** — offers expire in 5 minutes by default.
 - **Final-price/inventory disclaimer** — search results carry an explicit
   disclaimer that prices may differ at checkout.
+
+NOTE (not_checked): the TOP request contract — method name, MD5 signing
+canonicalisation (including URL-encoding of values and timestamp timezone/
+format), and the response/error schema — has NOT been verified against an
+authenticated sandbox or an official Taobao SDK.  Do not call live TOP
+until it is verified and a golden-vector signing test is added.
 """
 
 from __future__ import annotations
@@ -29,12 +34,13 @@ from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+from pydantic import Field
 
+from aidison.config import AidisonSettings
 from aidison.domain.models import HandoffKind
 from aidison.providers.shopping import (
     HandoffResult,
     OfferAvailability,
-    ProductRedirect,
     ProviderCapabilities,
     ShoppingConfigError,
     ShoppingOffer,
@@ -52,18 +58,21 @@ _DEFAULT_MAX_RESULTS = 20
 _OFFER_TTL_MINUTES = 5
 _SEARCH_TIMEOUT_DEFAULT = 5.0
 
-# Only these hosts may appear in redirect URLs.
-_ALLOWED_REDIRECT_HOSTS: frozenset[str] = frozenset(
-    {
-        "item.taobao.com",
-        "detail.tmall.com",
-        "uland.taobao.com",
-        "s.click.taobao.com",
-    }
-)
 
-# Kept for backward compat in tests; not referenced by production code.
-TAOBAO_ALLOWED_HOSTS = _ALLOWED_REDIRECT_HOSTS
+class TaobaoSettings(AidisonSettings):
+    """Non-secret Taobao configuration read from the ``taobao:`` YAML section.
+
+    Secrets (TAOBAO_APP_KEY, TAOBAO_APP_SECRET) never appear here; the
+    adapter wiring reads them from the process environment only.
+    """
+
+    yaml_section = "taobao"
+
+    adzone_id: str = Field(default=_DEFAULT_ADZONE_ID)
+    search_timeout_seconds: float = Field(
+        default=_SEARCH_TIMEOUT_DEFAULT, ge=0.1, le=30
+    )
+    max_search_results: int = Field(default=_DEFAULT_MAX_RESULTS, ge=1, le=50)
 
 
 # ── TOP signing ──────────────────────────────────────────────────────────────
@@ -72,12 +81,15 @@ TAOBAO_ALLOWED_HOSTS = _ALLOWED_REDIRECT_HOSTS
 def _top_sign(params: dict[str, str], secret: str) -> str:
     """Compute the TOP MD5 signature for the given parameters.
 
-    Implementation follows the official TOP signing protocol:
-    1. Sort parameters lexicographically.
-    2. Concatenate with ``{secret}`` prefix and suffix (not interpolated into the string).
-    3. MD5 hex digest, uppercased.
+    Deterministic: sort keys lexicographically, concatenate
+    ``secret + canonical(key+value) + secret``, return the uppercased MD5
+    hex digest.
 
-    This is deterministic given the same inputs.
+    not_checked: this canonicalisation is NOT verified against an official
+    TOP signing reference.  In particular, parameter values are not
+    URL-encoded before signing and the timestamp uses UTC — both are common
+    TOP contract mismatches.  Verify with an authenticated sandbox or a
+    known-good Taobao SDK before any live use.
     """
     sorted_keys = sorted(params)
     canonical = "".join(f"{key}{params[key]}" for key in sorted_keys)
@@ -85,21 +97,6 @@ def _top_sign(params: dict[str, str], secret: str) -> str:
     # secret + canonical + secret
     payload = f"{secret}{canonical}{secret}"
     return hashlib.md5(payload.encode("utf-8")).hexdigest().upper()
-
-
-# ── URL validation ───────────────────────────────────────────────────────────
-
-
-def _is_allowed_redirect_url(url: str) -> bool:
-    """Check whether ``url`` starts with ``https://`` and its host is allowed."""
-    if not url.startswith("https://"):
-        return False
-    # Simple extraction — avoids depending on urllib.parse for a well-known pattern.
-    host_end = url.find("/", 8)
-    host = url[8:host_end] if host_end != -1 else url[8:]
-    # Strip port if present
-    host = host.split(":", 1)[0]
-    return host in _ALLOWED_REDIRECT_HOSTS
 
 
 # ── Response helpers ─────────────────────────────────────────────────────────
@@ -126,10 +123,11 @@ def _safe_int(value: Any, default: int = 0) -> int:
 
 
 class TaobaoAffiliateAdapter(ShoppingProvider):
-    """TOP API adapter for Taobao affiliate product search and redirect.
+    """TOP API adapter for Taobao affiliate product search (search-only).
 
     Secrets come from environment only (TAOBAO_APP_KEY, TAOBAO_APP_SECRET).
-    Non-secret defaults (adzone_id) come from config.yaml.
+    Non-secret defaults (adzone_id, timeouts, result caps) come from
+    config.yaml.  Handoff/cart creation always fail closed.
     """
 
     def __init__(
@@ -138,11 +136,25 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         app_key: str | None = None,
         app_secret: str | None = None,
         adzone_id: str | None = None,
+        search_timeout_seconds: float | None = None,
+        max_search_results: int | None = None,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._app_key = (app_key or "").strip()
         self._app_secret = (app_secret or "").strip()
         self._adzone_id = (adzone_id or _DEFAULT_ADZONE_ID).strip()
+        self._search_timeout_seconds = (
+            search_timeout_seconds
+            if search_timeout_seconds is not None
+            else _SEARCH_TIMEOUT_DEFAULT
+        )
+        self._max_search_results = max(
+            1,
+            min(
+                max_search_results if max_search_results is not None else _DEFAULT_MAX_RESULTS,
+                50,
+            ),
+        )
         self._http = http_client
 
     # ── ShoppingProvider contract ────────────────────────────────────────
@@ -157,10 +169,7 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
 
     @property
     def capabilities(self) -> ProviderCapabilities:
-        return ProviderCapabilities(
-            search=True,
-            handoff_kinds=frozenset({HandoffKind.PRODUCT_REDIRECT}),
-        )
+        return ProviderCapabilities(search=True, handoff_kinds=frozenset())
 
     async def search_offers(
         self,
@@ -168,7 +177,7 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         *,
         region: str = "CN",
         max_results: int = 10,
-        timeout_seconds: float = 5.0,
+        timeout_seconds: float | None = None,
     ) -> Sequence[ShoppingOffer]:
         """Search Taobao products via keyword material API.
 
@@ -179,20 +188,24 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         if not query:
             raise ShoppingProviderError("search query must not be empty")
         max_results = max(1, min(max_results, 50))
+        effective_timeout = (
+            timeout_seconds if timeout_seconds is not None else self._search_timeout_seconds
+        )
 
-        # Taobao API uses "material_query" parameter, not "q"
+        # not_checked: the method name, material_id/platform values, and the
+        # response envelope are unverified against official TOP docs.
         params = self._build_params(
-            method="taobao.tbk.dg.material.optimal",
+            method="taobao.tbk.dg.material.optional",
             extra={
                 "adzone_id": self._adzone_id,
                 "material_id": "13366",  # Default promotion material ID
-                "page_size": str(min(max_results, _DEFAULT_MAX_RESULTS)),
+                "page_size": str(min(max_results, self._max_search_results)),
                 "page_no": "1",
                 "q": query,
                 "platform": "2",  # Cross-platform result format
             },
         )
-        raw = await self._call_api(params, timeout_seconds=timeout_seconds)
+        raw = await self._call_api(params, timeout_seconds=effective_timeout)
         return self._parse_search_results(query, raw, max_results, region)
 
     async def create_handoff(
@@ -205,40 +218,16 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         quantity: int = 1,
         timeout_seconds: float = 5.0,
     ) -> HandoffResult:
-        """Create a Taobao PRODUCT_REDIRECT handoff.
+        """Fail closed — Taobao is search-only and creates no handoff.
 
-        CART_REDIRECT is not supported.  PRODUCT_REDIRECT returns the
-        ``product_url`` from the offer — the Taobao API does not generate
-        per-transaction deeplinks; the offer's existing ``coupon_share_url``
-        / ``item_url`` is used directly.
+        Raises ``ShoppingProviderError`` for every call, regardless of
+        ``kind`` or ``offer``, so Taobao offers can never reach the
+        purchase/approval/handoff flow.
         """
-        if kind is not HandoffKind.PRODUCT_REDIRECT:
-            raise ShoppingProviderError(
-                f"taobao does not support handoff kind {kind.value}"
-            )
-        if offer is None:
-            raise ShoppingProviderError("PRODUCT_REDIRECT requires an offer")
-        self._require_available()
-
-        # Validate the redirect URL against the allowlist
-        product_url = offer.product_url
-        if not _is_allowed_redirect_url(product_url):
-            raise ShoppingProviderError(
-                "taobao redirect failed: offer product_url is not in the allowed hosts"
-            )
-
-        redirect = ProductRedirect(
-            product_url=product_url,
-            provider_offer_id=offer.provider_offer_id,
-            raw_provider_payload={
-                "provider_offer_id": offer.provider_offer_id,
-                "title": offer.title[:200],
-                "unit_price": offer.unit_price,
-            },
+        raise ShoppingProviderError(
+            "taobao is search-only and does not support handoff creation"
         )
-        return HandoffResult(kind=HandoffKind.PRODUCT_REDIRECT, redirect=redirect)
 
-    # Backward-compat — Taobao never supports cart creation
     async def create_cart(
         self,
         lines: Sequence[Any],
@@ -246,7 +235,9 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         region: str = "CN",
         timeout_seconds: float = 5.0,
     ) -> Any:
-        raise ShoppingProviderError("taobao does not support cart creation")
+        raise ShoppingProviderError(
+            "taobao is search-only and does not support cart creation"
+        )
 
     # ── internals ─────────────────────────────────────────────────────────
 
@@ -263,7 +254,12 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         method: str,
         extra: dict[str, str] | None = None,
     ) -> dict[str, str]:
-        """Build signed TOP request parameters."""
+        """Build signed TOP request parameters.
+
+        not_checked: the ``timestamp`` timezone/format and the signing
+        canonicalisation are unverified against official TOP docs; see
+        ``_top_sign``.
+        """
         params: dict[str, str] = {
             "method": method,
             "app_key": self._app_key,
@@ -362,7 +358,7 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         """Parse TOP material search response into ShoppingOffer list."""
         result_list = _deep_get(
             raw,
-            "tbk_dg_material_optimal_response",
+            "tbk_dg_material_optional_response",
             "result_list",
             "map_data",
         )
@@ -406,7 +402,9 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
             # Handle float-like values from API
             unit_price = _safe_decimal_str(raw_price)
 
-            # The offer URL for product redirect
+            # Search metadata surfaced as product_url (required by
+            # OfferSnapshot.product_url); it is never used for a redirect —
+            # Taobao is search-only.
             product_url = str(
                 item.get("coupon_share_url")
                 or item.get("item_url")

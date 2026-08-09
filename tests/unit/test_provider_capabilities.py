@@ -34,14 +34,13 @@ def test_cart_only_provider_has_no_product_redirect() -> None:
     assert HandoffKind.PRODUCT_REDIRECT not in caps.handoff_kinds
 
 
-def test_product_redirect_provider_has_no_cart() -> None:
+def test_search_only_provider_has_no_handoff_kinds() -> None:
     adapter = TaobaoAffiliateAdapter(
         app_key="k", app_secret="s", adzone_id="a",
     )
     caps = adapter.capabilities
     assert caps.search is True
-    assert caps.handoff_kinds == frozenset({HandoffKind.PRODUCT_REDIRECT})
-    assert HandoffKind.CART_REDIRECT not in caps.handoff_kinds
+    assert caps.handoff_kinds == frozenset()
 
 
 # ── HandoffResult ────────────────────────────────────────────────────────

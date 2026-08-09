@@ -17,7 +17,6 @@ from aidison.providers.shopping import (
 )
 from aidison.providers.taobao import (
     TaobaoAffiliateAdapter,
-    _is_allowed_redirect_url,
     _safe_decimal_str,
 )
 
@@ -55,31 +54,10 @@ def test_taobao_unavailable_without_adzone_id() -> None:
     assert adapter.available is False
 
 
-def test_taobao_capabilities_are_product_redirect_only() -> None:
+def test_taobao_capabilities_are_search_only() -> None:
     caps = _adapter().capabilities
     assert caps.search is True
-    assert caps.handoff_kinds == frozenset({HandoffKind.PRODUCT_REDIRECT})
-
-
-# ── URL validation ──────────────────────────────────────────────────────
-
-
-@pytest.mark.parametrize(
-    "url,expected",
-    [
-        ("https://item.taobao.com/item.htm?id=123", True),
-        ("https://detail.tmall.com/item.htm?id=456", True),
-        ("https://uland.taobao.com/sem/tbsearch?keyword=test", True),
-        ("https://s.click.taobao.com/t?e=abc123", True),
-        ("http://item.taobao.com/item.htm", False),
-        ("https://evil.example.com/redirect", False),
-        ("ftp://item.taobao.com/item.htm", False),
-        ("not-a-url", False),
-        ("", False),
-    ],
-)
-def test_is_allowed_redirect_url(url: str, expected: bool) -> None:
-    assert _is_allowed_redirect_url(url) is expected
+    assert caps.handoff_kinds == frozenset()
 
 
 # ── Search ──────────────────────────────────────────────────────────────
@@ -94,7 +72,7 @@ async def test_taobao_search_rejects_empty_query() -> None:
 @pytest.mark.asyncio
 async def test_taobao_search_parses_response() -> None:
     mock_response = {
-        "tbk_dg_material_optimal_response": {
+        "tbk_dg_material_optional_response": {
             "result_list": {
                 "map_data": [
                     {
@@ -136,7 +114,7 @@ async def test_taobao_search_parses_response() -> None:
 async def test_taobao_search_parses_response_dict_format() -> None:
     """result_list can be a dict keyed by index."""
     mock_response = {
-        "tbk_dg_material_optimal_response": {
+        "tbk_dg_material_optional_response": {
             "result_list": {
                 "map_data": {
                     "0": {
@@ -172,7 +150,7 @@ async def test_taobao_search_parses_response_dict_format() -> None:
 @pytest.mark.asyncio
 async def test_taobao_search_respects_max_results() -> None:
     mock_response = {
-        "tbk_dg_material_optimal_response": {
+        "tbk_dg_material_optional_response": {
             "result_list": {
                 "map_data": [
                     {"num_iid": str(i), "title": f"Item {i}", "zk_final_price": "10.00",
@@ -197,7 +175,7 @@ async def test_taobao_search_respects_max_results() -> None:
 
 @pytest.mark.asyncio
 async def test_taobao_search_missing_data_raises() -> None:
-    mock_response: dict[str, dict[str, object]] = {"tbk_dg_material_optimal_response": {}}
+    mock_response: dict[str, dict[str, object]] = {"tbk_dg_material_optional_response": {}}
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -211,40 +189,12 @@ async def test_taobao_search_missing_data_raises() -> None:
             await _adapter(client).search_offers("test")
 
 
-# ── Handoff ─────────────────────────────────────────────────────────────
+# ── Handoff / cart fail closed (search-only) ────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_taobao_handoff_rejects_cart_redirect() -> None:
-    with pytest.raises(ShoppingProviderError, match="does not support handoff kind"):
-        await _adapter().create_handoff(kind=HandoffKind.CART_REDIRECT, lines=[])
-
-
-@pytest.mark.asyncio
-async def test_taobao_handoff_requires_offer() -> None:
-    with pytest.raises(ShoppingProviderError, match="requires an offer"):
-        await _adapter().create_handoff(kind=HandoffKind.PRODUCT_REDIRECT, offer=None)
-
-
-@pytest.mark.asyncio
-async def test_taobao_handoff_rejects_disallowed_url() -> None:
-    offer = ShoppingOffer(
-        provider="taobao",
-        provider_offer_id="tb-123",
-        title="Test",
-        unit_price="99.00",
-        currency="CNY",
-        region="CN",
-        product_url="https://evil.example.com/product",
-        observed_at=datetime.now(UTC),
-        expires_at=datetime.now(UTC) + timedelta(minutes=5),
-    )
-    with pytest.raises(ShoppingProviderError, match="allowed hosts"):
-        await _adapter().create_handoff(kind=HandoffKind.PRODUCT_REDIRECT, offer=offer)
-
-
-@pytest.mark.asyncio
-async def test_taobao_handoff_success() -> None:
+async def test_taobao_create_handoff_always_fails_closed() -> None:
+    """Taobao is search-only: create_handoff errors for every kind/offer."""
     offer = ShoppingOffer(
         provider="taobao",
         provider_offer_id="123456789",
@@ -256,22 +206,18 @@ async def test_taobao_handoff_success() -> None:
         observed_at=datetime.now(UTC),
         expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
-    result = await _adapter().create_handoff(
-        kind=HandoffKind.PRODUCT_REDIRECT,
-        offer=offer,
-        region="CN",
-        quantity=1,
-    )
-    assert result.kind == HandoffKind.PRODUCT_REDIRECT
-    assert result.redirect is not None
-    assert result.redirect.product_url == "https://item.taobao.com/item.htm?id=123456789"
-    assert result.redirect.provider_offer_id == "123456789"
-    assert result.cart is None
+    with pytest.raises(ShoppingProviderError, match="search-only"):
+        await _adapter().create_handoff(kind=HandoffKind.CART_REDIRECT, lines=[])
+    with pytest.raises(ShoppingProviderError, match="search-only"):
+        await _adapter().create_handoff(
+            kind=HandoffKind.PRODUCT_REDIRECT,
+            offer=offer,
+        )
 
 
 @pytest.mark.asyncio
-async def test_taobao_create_cart_always_fails() -> None:
-    with pytest.raises(ShoppingProviderError, match="cart creation"):
+async def test_taobao_create_cart_always_fails_closed() -> None:
+    with pytest.raises(ShoppingProviderError, match="search-only"):
         await _adapter().create_cart(lines=[])
 
 
@@ -381,7 +327,7 @@ def test_safe_decimal_str_from_invalid() -> None:
 @pytest.mark.asyncio
 async def test_taobao_offers_have_short_ttl() -> None:
     mock_response = {
-        "tbk_dg_material_optimal_response": {
+        "tbk_dg_material_optional_response": {
             "result_list": {
                 "map_data": [
                     {

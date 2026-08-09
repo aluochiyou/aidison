@@ -68,7 +68,6 @@ class FakeShoppingProvider(ShoppingProvider):
 
     def __init__(self) -> None:
         self.search_called = 0
-        self.cart_create_called = 0
         self.handoff_create_called = 0
         self._search_failure: Exception | None = None
         self._handoff_failure: Exception | None = None
@@ -141,18 +140,6 @@ class FakeShoppingProvider(ShoppingProvider):
             )
             return HandoffResult(kind=HandoffKind.PRODUCT_REDIRECT, redirect=redirect)
         raise ShoppingProviderError(f"fake provider does not support handoff kind {kind.value}")
-
-    async def create_cart(
-        self,
-        lines: Sequence[CartLineInput],
-        *,
-        region: str = "CN",
-        timeout_seconds: float = 5.0,
-    ) -> CreatedCart:
-        self.cart_create_called += 1
-        if self._handoff_failure is not None:
-            raise self._handoff_failure
-        return SCENARIO_CART
 
 def build_fixture_app(
     artifact_root: Path | None = None,

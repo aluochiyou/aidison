@@ -1,4 +1,11 @@
-"""Tests for Taobao TOP MD5 signing protocol."""
+"""Tests for Taobao TOP MD5 signing protocol.
+
+NOTE (not_checked): the TOP signing canonicalisation (URL-encoding of
+values, timestamp timezone/format) is unverified against an official
+reference.  The vector tests below are self-consistent and cannot detect a
+wrong canonicalisation; replace them with a golden vector sourced from an
+authenticated sandbox or a known-good Taobao SDK before any live use.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +15,7 @@ from aidison.providers.taobao import _top_sign
 def test_top_sign_is_deterministic() -> None:
     """Same parameters + same secret → same signature every time."""
     params = {
-        "method": "taobao.tbk.dg.material.optimal",
+        "method": "taobao.tbk.dg.material.optional",
         "app_key": "12345678",
         "format": "json",
         "v": "2.0",
@@ -29,7 +36,7 @@ def test_top_sign_is_deterministic() -> None:
 
 def test_top_sign_changes_with_secret() -> None:
     params = {
-        "method": "taobao.tbk.dg.material.optimal",
+        "method": "taobao.tbk.dg.material.optional",
         "app_key": "123",
         "format": "json",
         "v": "2.0",
@@ -48,7 +55,7 @@ def test_top_sign_changes_with_secret() -> None:
 def test_top_sign_changes_with_params() -> None:
     secret = "my-secret"
     base = {
-        "method": "taobao.tbk.dg.material.optimal",
+        "method": "taobao.tbk.dg.material.optional",
         "app_key": "123",
         "format": "json",
         "v": "2.0",
@@ -77,10 +84,12 @@ def test_top_sign_sort_order_matters_not_key_order() -> None:
     assert _top_sign(params_a, secret) == _top_sign(params_b, secret)
 
 
-def test_top_sign_well_known_vector() -> None:
-    """Verify against a hand-computed vector using the TOP signing formula.
+def test_top_sign_self_consistent_vector() -> None:
+    """Self-consistency vector computed from the code's own formula.
 
-    TOP signing: MD5(secret + sorted_key=value pairs + secret), uppercased.
+    not_checked: this is NOT an official TOP golden vector.  It only pins the
+    current canonicalisation (secret + sorted(key+value) + secret, MD5
+    uppercased) and cannot detect a wrong canonicalisation.
     """
     params = {"k1": "v1", "k2": "v2"}
     secret = "secret"
