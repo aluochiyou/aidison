@@ -703,7 +703,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                 },
             )
             assert pending_checkout.status_code == 409
-            assert fake_provider.cart_create_called == 0
+            assert fake_provider.handoff_create_called == 0
 
             wrong_scope = await client.post(
                 f"/api/effect-approvals/{approval['id']}/resolve",
@@ -766,7 +766,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert replay_checkout.status_code == 201
             assert replay_checkout.json()["id"] == handoff["id"]
             assert replay_checkout.headers["etag"] == '"14"'
-            assert fake_provider.cart_create_called == 1
+            assert fake_provider.handoff_create_called == 1
             replayed_approval_resolve = await client.post(
                 f"/api/effect-approvals/{approval['id']}/resolve",
                 json={
@@ -790,7 +790,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                 },
             )
             assert consumed_with_new_key.status_code == 409
-            assert fake_provider.cart_create_called == 1
+            assert fake_provider.handoff_create_called == 1
 
             # Proposal should now be handed_off
             final_snapshot = await client.get(f"/api/projects/{project_id}/snapshot")
@@ -951,8 +951,8 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
             assert cross_scope.status_code == 412
 
-            # Make the FakeProvider fail cart creation
-            fake_provider.set_cart_failure(ShoppingProviderError("cart service down"))
+            # Make the FakeProvider fail handoff creation
+            fake_provider.set_handoff_failure(ShoppingProviderError("cart service down"))
 
             ambiguous_checkout = await client.post(
                 f"/api/purchase-proposals/{prop2_id}/checkout-handoffs",
@@ -1022,7 +1022,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
             assert approval3_resolve.status_code == 200
 
-            fake_provider.set_cart_failure(RuntimeError("simulated provider process crash"))
+            fake_provider.set_handoff_failure(RuntimeError("simulated provider process crash"))
             crash_headers = {
                 "Idempotency-Key": f"{key_prefix}:crash-checkout",
                 "If-Match": '"26"',
@@ -1033,7 +1033,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
                     json={"effect_approval_id": approval3["id"]},
                     headers=crash_headers,
                 )
-            calls_after_crash = fake_provider.cart_create_called
+            calls_after_crash = fake_provider.handoff_create_called
             crash_replay = await client.post(
                 f"/api/purchase-proposals/{prop3_id}/checkout-handoffs",
                 json={"effect_approval_id": approval3["id"]},
@@ -1042,7 +1042,7 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             assert crash_replay.status_code == 201
             assert crash_replay.json()["status"] == "prepared"
             assert crash_replay.headers["etag"] == '"27"'
-            assert fake_provider.cart_create_called == calls_after_crash
+            assert fake_provider.handoff_create_called == calls_after_crash
             crash_snapshot = await client.get(f"/api/projects/{project_id}/snapshot")
             assert crash_snapshot.json()["project"]["revision"] == 27
             approval3_state = next(

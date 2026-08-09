@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator
 from datetime import datetime
 from pathlib import Path
@@ -68,6 +69,7 @@ from aidison.infrastructure.runtime import (
 )
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.providers.shopping import ShoppingConfigError, ShoppingProvider
+from aidison.providers.taobao import TaobaoAffiliateAdapter, TaobaoSettings
 from aidison.runtime.contracts import MAX_DELEGATION_WAVE_SIZE
 
 SessionDependency = Annotated[AsyncSession, Depends()]
@@ -220,11 +222,28 @@ def create_app(
     @api.get("/api/integration-health")
     async def integration_health(request: Request) -> dict[str, Any]:
         provider = getattr(request.app.state, "shopping_provider", None)
+        if provider is None:
+            return {
+                "status": "ok",
+                "shopping": {
+                    "provider": "none",
+                    "available": False,
+                    "search": False,
+                    "handoff_kinds": [],
+                },
+            }
+        capabilities = provider.capabilities
         return {
             "status": "ok",
             "shopping": {
-                "provider": provider.name if provider else "none",
-                "available": provider.available if provider else False,
+                "provider": provider.name,
+                "available": provider.available,
+                # Search-only providers (e.g. Taobao) declare search with an
+                # empty handoff_kinds; cart-capable providers list their kinds.
+                "search": capabilities.search,
+                "handoff_kinds": sorted(
+                    kind.value for kind in capabilities.handoff_kinds
+                ),
             },
         }
 
@@ -1031,4 +1050,27 @@ def create_app(
     return api
 
 
-app = create_app()
+def build_default_shopping_provider() -> ShoppingProvider | None:
+    """Compose the runtime shopping provider from non-secret config + env secrets.
+
+    Provider selection (``shopping.provider``) and Taobao non-secrets
+    (``adzone_id``, timeouts, result caps) come from config.yaml.  Secrets
+    (TAOBAO_APP_KEY, TAOBAO_APP_SECRET) come from the process environment
+    only.  Taobao is wired search-only: ``available`` is False until both
+    secrets and ``adzone_id`` are present, and its capabilities declare no
+    handoff kinds.
+    """
+    provider_name = ShoppingSettings().provider.strip().lower()
+    if provider_name != "taobao":
+        return None
+    settings = TaobaoSettings()
+    return TaobaoAffiliateAdapter(
+        app_key=os.getenv("TAOBAO_APP_KEY"),
+        app_secret=os.getenv("TAOBAO_APP_SECRET"),
+        adzone_id=settings.adzone_id or None,
+        search_timeout_seconds=settings.search_timeout_seconds,
+        max_search_results=settings.max_search_results,
+    )
+
+
+app = create_app(shopping_provider=build_default_shopping_provider())

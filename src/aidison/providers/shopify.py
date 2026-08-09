@@ -21,9 +21,11 @@ from typing import Any
 
 import httpx
 
+from aidison.domain.models import HandoffKind
 from aidison.providers.shopping import (
     CartLineInput,
     CreatedCart,
+    HandoffResult,
     OfferAvailability,
     ShoppingConfigError,
     ShoppingOffer,
@@ -140,10 +142,43 @@ class ShopifyStorefrontAdapter(ShoppingProvider):
         region: str = "CN",
         timeout_seconds: float = 5.0,
     ) -> CreatedCart:
-        self._require_available()
+        result = await self.create_handoff(
+            kind=HandoffKind.CART_REDIRECT,
+            lines=lines,
+            region=region,
+            timeout_seconds=timeout_seconds,
+        )
+        if result.cart is None:
+            raise ShoppingProviderError("shopify create_cart produced no cart")
+        return result.cart
+
+    async def create_handoff(
+        self,
+        *,
+        kind: HandoffKind,
+        lines: Sequence[CartLineInput] | None = None,
+        offer: ShoppingOffer | None = None,
+        region: str = "CN",
+        quantity: int = 1,
+        timeout_seconds: float = 5.0,
+    ) -> HandoffResult:
+        if kind is not HandoffKind.CART_REDIRECT:
+            raise ShoppingProviderError(
+                f"shopify does not support handoff kind {kind.value}"
+            )
         if not lines:
             raise ShoppingProviderError("cart requires at least one line")
+        cart = await self._create_cart_impl(lines, region=region, timeout_seconds=timeout_seconds)
+        return HandoffResult(kind=HandoffKind.CART_REDIRECT, cart=cart)
 
+    async def _create_cart_impl(
+        self,
+        lines: Sequence[CartLineInput],
+        *,
+        region: str = "CN",
+        timeout_seconds: float = 5.0,
+    ) -> CreatedCart:
+        self._require_available()
         line_vars = [
             {"merchandiseId": line.merchandise_id, "quantity": line.quantity} for line in lines
         ]
