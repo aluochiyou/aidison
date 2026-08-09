@@ -6,6 +6,7 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
+from aidison.infrastructure.ready_set import _is_tick_complete
 from aidison.runtime.planning import (
     PlanTaskClaim,
     SchedulerSkip,
@@ -97,6 +98,32 @@ def test_scheduler_skip_carries_reason() -> None:
     assert skip.reason is SchedulerSkipReason.CONCURRENCY
     with pytest.raises(ValidationError, match="reason"):
         SchedulerSkip(task_logical_key="research.b", reason="nope")
+
+
+def test_tick_complete_is_forced_false_without_plan_revision() -> None:
+    assert (
+        _is_tick_complete(plan_revision=0, active_total=0, ready_remaining=0, terminal_failed=0)
+        is False
+    )
+
+
+def test_tick_complete_requires_plan_and_all_work_done() -> None:
+    assert (
+        _is_tick_complete(plan_revision=1, active_total=0, ready_remaining=0, terminal_failed=0)
+        is True
+    )
+    assert (
+        _is_tick_complete(plan_revision=1, active_total=1, ready_remaining=0, terminal_failed=0)
+        is False
+    )
+    assert (
+        _is_tick_complete(plan_revision=1, active_total=0, ready_remaining=1, terminal_failed=0)
+        is False
+    )
+    assert (
+        _is_tick_complete(plan_revision=1, active_total=0, ready_remaining=0, terminal_failed=1)
+        is False
+    )
 
 
 def test_claim_generation_and_lease_fields_are_positive() -> None:

@@ -82,6 +82,22 @@ def _intent_payload(intent: TaskDispatchIntent) -> dict[str, Any]:
     return intent.model_dump(mode="json")
 
 
+def _is_tick_complete(
+    *,
+    plan_revision: int,
+    active_total: int,
+    ready_remaining: int,
+    terminal_failed: int,
+) -> bool:
+    """A tick is complete only when a plan exists and no work is outstanding."""
+    return (
+        plan_revision > 0
+        and active_total == 0
+        and ready_remaining == 0
+        and terminal_failed == 0
+    )
+
+
 class ReadySetRepository:
     """PostgreSQL primitives for the generic ready-set scheduler.
 
@@ -503,6 +519,21 @@ class ReadySetRepository:
         }:
             await self._session.commit()
             return False
+        child_id = task.dispatched_job_id
+        if child_id is not None:
+            child = await self._session.get(JobRow, child_id)
+            if child is not None and child.status in _TERMINAL_JOB_STATUSES:
+                try:
+                    ledger = BudgetLedger(self._session)
+                    account_id = await ledger.get_account_id(root.id)
+                    allocation = await ledger.get_allocation(
+                        account_id=account_id,
+                        owner_kind=BudgetOwnerKind.CHILD,
+                        owner_ref=child_id,
+                    )
+                    await ledger.close_allocation(allocation.allocation_id)
+                except BudgetConflictError:
+                    pass
         await self._session.execute(
             update(PlanTaskClaimRow)
             .where(
@@ -643,7 +674,12 @@ class ReadySetScheduler:
             ready_remaining=ready_remaining,
             terminal_failed=context.terminal_failed,
             settled_child_count=settled,
-            complete=active_total == 0 and ready_remaining == 0 and context.terminal_failed == 0,
+            complete=_is_tick_complete(
+                plan_revision=context.plan_revision,
+                active_total=active_total,
+                ready_remaining=ready_remaining,
+                terminal_failed=context.terminal_failed,
+            ),
         )
 
     async def retry_task(self, *, claim: JobClaim, logical_key: str) -> bool:

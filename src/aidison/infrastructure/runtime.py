@@ -28,6 +28,7 @@ from aidison.infrastructure.orm import (
     JobRow,
     JoinGroupRow,
     JoinReceiptRow,
+    PlanTaskClaimRow,
     PlanTaskRow,
     ProjectRow,
 )
@@ -58,6 +59,7 @@ from aidison.runtime.contracts import (
     ResultDisposition,
     RuntimeWorkItem,
 )
+from aidison.runtime.planning import TaskClaimStatus
 
 
 class RuntimeNotFoundError(RuntimeError):
@@ -564,6 +566,18 @@ class PostgresRuntime:
                     .values(
                         dispatched_job_id=None,
                         status="ready",
+                    )
+                )
+                await self._session.execute(
+                    update(PlanTaskClaimRow)
+                    .where(
+                        PlanTaskClaimRow.root_job_id == candidate.id,
+                        PlanTaskClaimRow.child_job_id.in_(stale_child_ids),
+                        PlanTaskClaimRow.status == TaskClaimStatus.DISPATCHED.value,
+                    )
+                    .values(
+                        status=TaskClaimStatus.SUPERSEDED.value,
+                        completed_at=now,
                     )
                 )
                 await self._session.execute(

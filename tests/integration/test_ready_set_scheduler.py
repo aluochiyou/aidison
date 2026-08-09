@@ -19,6 +19,7 @@ from aidison.infrastructure.database import (
     create_session_factory,
 )
 from aidison.infrastructure.orm import (
+    BudgetAccountRow,
     JobRow,
     PlanHeadRow,
     PlanRevisionRow,
@@ -640,5 +641,103 @@ async def test_ready_set_expired_claim_recovery_redispatch_once() -> None:
         second = await scheduler.tick(claim)
         assert len(second.dispatched) == 1
         assert await _claim_count(factory, root_job_id=root_job_id) == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ready_set_root_reclaim_supersedes_stale_dispatched_claim() -> None:
+    """F1: root lease expiry re-claim must supersede the old dispatched claim,
+    so the reset ready task can actually be re-dispatched instead of dead-locking."""
+    _, engine = _database()
+    factory = create_session_factory(engine)
+    try:
+        root_job_id, basis_hash, claim = await _bootstrap(
+            factory, nodes=(_node("a", depth=0),), suffix="root-reclaim"
+        )
+        scheduler = ReadySetScheduler(session_factory=factory, default_concurrency=8)
+        first = await scheduler.tick(claim)
+        assert len(first.dispatched) == 1
+        assert first.dispatched[0].status == "dispatched"
+        assert await _claim_count(factory, root_job_id=root_job_id) == 1
+
+        # The scheduler crashed; its root lease expires while task "a" is still
+        # bound to a child that no worker ever picked up.
+        async with factory() as session:
+            await session.execute(
+                update(JobRow)
+                .where(JobRow.id == root_job_id)
+                .values(lease_expires_at=datetime.now(UTC) - timedelta(seconds=1))
+            )
+            await session.commit()
+
+        async with factory() as session:
+            runtime = PostgresRuntime(session)
+            reclaimed = await runtime.claim_next_job(
+                worker_id="ready-set-scheduler-2", lease_seconds=120
+            )
+            assert reclaimed is not None and reclaimed.job_id == root_job_id
+
+        async with factory() as session:
+            statuses = list(
+                await session.scalars(
+                    select(PlanTaskClaimRow.status).where(
+                        PlanTaskClaimRow.root_job_id == root_job_id
+                    )
+                )
+            )
+            assert statuses == ["superseded"]
+
+        second = await scheduler.tick(reclaimed)
+        assert len(second.dispatched) == 1
+        assert second.dispatched[0].claim_generation == 2
+        assert await _claim_count(factory, root_job_id=root_job_id) == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ready_set_retry_closes_terminal_child_allocation() -> None:
+    """F2: retry_task must close the terminal child's budget allocation before
+    clearing the task-child binding, or committed budget leaks forever."""
+    _, engine = _database()
+    factory = create_session_factory(engine)
+    try:
+        root_job_id, basis_hash, claim = await _bootstrap(
+            factory, nodes=(_node("a", depth=0),), suffix="retry-budget"
+        )
+        scheduler = ReadySetScheduler(session_factory=factory, default_concurrency=8)
+        first = await scheduler.tick(claim)
+        assert len(first.dispatched) == 1
+
+        async with factory() as session:
+            committed = int(
+                await session.scalar(
+                    select(BudgetAccountRow.token_committed).where(
+                        BudgetAccountRow.root_job_id == root_job_id
+                    )
+                )
+                or 0
+            )
+            assert committed == READY_WORKER_PROFILE.token_cap
+
+        assert (
+            await _run_child(factory, basis_hash=basis_hash, status=DelegationStatus.FAILED)
+            is ResultDisposition.ELIGIBLE
+        )
+        # No settle tick runs between failure and retry: the old code leaked the
+        # committed grant because settle_terminal_children never saw the orphaned child.
+        assert await scheduler.retry_task(claim=claim, logical_key="a") is True
+
+        async with factory() as session:
+            committed = int(
+                await session.scalar(
+                    select(BudgetAccountRow.token_committed).where(
+                        BudgetAccountRow.root_job_id == root_job_id
+                    )
+                )
+                or 0
+            )
+            assert committed == 0
     finally:
         await engine.dispose()
