@@ -1254,3 +1254,38 @@ class CheckoutHandoffRow(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+# ── V3 Result Admission ──────────────────────────────────────────────────────
+
+
+class ResultAdmissionRow(Base):
+    """Append-only ledger binding one verified result to a single admission status.
+
+    The write key is the deterministic SHA-256 of ``handoff_id + result_ref +
+    basis_hash``; the unique ``key_hash`` is the final barrier against a competing
+    writer replaying the same key. A row is never updated: a replay must match the
+    stored result/receipt payloads or it is an explicit conflict.
+    """
+
+    __tablename__ = "result_admissions"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('admitted', 'rejected', 'quarantined')",
+            name="status",
+        ),
+        UniqueConstraint("key_hash", name="uq_result_admissions_key_hash"),
+        Index("ix_result_admissions_handoff_basis", "handoff_id", "basis_hash"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    handoff_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    result_ref: Mapped[str] = mapped_column(String(4_000), nullable=False)
+    basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    result_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    receipt_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
