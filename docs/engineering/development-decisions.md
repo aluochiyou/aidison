@@ -70,4 +70,4 @@ C5 Join 与 EffectApproval 主要是在 Aidison 自有 PostgreSQL runtime 和 Sh
 
 C5 版本已生成 `docs/learning/` 架构与算法教程、源码阅读地图、开发步骤与难点，以及 `docs/interview/` 简历 bullet、项目介绍模板和分层问答；事实证据表位于 `research/aidison-release-learning-docs/report.md`。后续每个 release 仍须更新测试数字与未完成边界，不能沿用过期 claims。
 
-淘宝 V1 是产品边界收敛，不是对 `ADR-0006` 的替代：通用 Shopify checkout 仍使用 scoped EffectApproval；淘宝 adapter 以空 `handoff_kinds` 从 capability 层阻断该流程。实现只验证了 adapter、runtime wiring 与 non-live 回归；TOP 请求 contract 和真实联盟权限尚未验收，因此不得在简历或演示中表述为“淘宝真实搜索已稳定上线”。
+淘宝 V1 是产品边界收敛，不是对 `ADR-0006` 的替代：通用 Shopify checkout 仍使用 scoped EffectApproval；淘宝 adapter 以空 `handoff_kinds` 从 capability 层阻断该流程。实现验证了 adapter、runtime wiring、non-live 回归，以及一次真实 TOP structured permission-denial；该调用证明网络与 JSON MIME 边界可达，但当前 App 未获物料搜索 scope，未返回商品。商品 response contract、价格解析和 signing golden vector 仍未验收，因此不得在简历或演示中表述为“淘宝真实搜索已稳定上线”。

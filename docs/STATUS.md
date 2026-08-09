@@ -15,7 +15,7 @@
 - PostgreSQL 17 与 18.4 隔离库从零 Alembic migration：passed；C4 完整 integration：两版均 passed（各 42 项）；unit：139 passed；Ruff、mypy、diff check、Alembic single head：passed。
 - Join runtime 新增 `BOUNDED_PARTIAL` 与 `FIRST_VALID`；确定性 winner、boundary/deadline、sibling cancellation、late-result quarantine、PlanTask projection 和预算 reconciliation 已进入 C5 测试矩阵。
 - Shopping 新增独立 EffectApproval 状态机、不可变服务端 scope、PostgreSQL partial unique/CAS/trigger、request/resolve API，以及 consume gate 后才调用 provider 的 checkout crash boundary。
-- 淘宝 V1 作为 opt-in、只读商品搜索/推荐 provider 已合入：`shopping.provider=taobao` 且环境中有密钥和 `adzone_id` 才 available；它声明 `search=true`、`handoff_kinds=[]`，cart、redirect、下单、支付和审批/checkout handoff 均 fail closed。TOP 请求方法、签名、时间戳与响应 envelope 明确标为 `not_checked`，不宣称真实可用。
+- 淘宝 V1 作为 opt-in、只读商品搜索/推荐 provider 已合入：`shopping.provider=taobao` 且环境中有密钥和 `adzone_id` 才 available；它声明 `search=true`、`handoff_kinds=[]`，cart、redirect、下单、支付和审批/checkout handoff 均 fail closed。一次真实只读请求已穿过网络、MIME/JSON 处理并收到 TOP structured `code 11` permission denial；当前 App 缺少物料搜索 scope，未返回商品，故仍不宣称真实搜索可用。
 - 合并后验证：淘宝 focused unit 43 passed；non-live `tests/unit tests/integration` 258 passed；Ruff 与 mypy passed。完整 pytest 的唯一失败是既有 `tests/live/test_research_worker_live.py` 的 `github_unavailable`，与淘宝改动无关；不进行无界外部重试。
 - Web ShoppingView 已接入 request → approve/deny → checkout 三步，以及 PREPARED/AMBIGUOUS 的“刷新 durable snapshot 后重新授权”恢复入口；Prettier 全库基线、ESLint（0 error，4 个既有 Fast Refresh warning）和 Next.js production build：passed。
 - C5 final gate：unit 155 passed；PostgreSQL 17/18 integration 各 50 passed；两版全新隔离库从零 migration 到 `b7d3e5f91a20` 并通过 `alembic check`；Ruff、mypy、diff check、Alembic single head：passed。EffectApproval trigger 与 partial unique index 有直接 SQL 拒绝测试。
@@ -94,4 +94,4 @@ C5 代码与文档已经收口，项目继续处于 active development。下一�
 - 本地长期 `127.0.0.1:55432/aidison_test` 含一条早期试验残留、定义不同的 `research-worker-ro@4`；不可变门禁正确拒绝覆盖。全新临时 `aidison_test` 从零迁移、Alembic drift 和 107 项 non-live 回归均通过；是否重建长期测试库需显式清理决定。
 - Aidison Agent 已消除两个 vendor-only 构造参数；Windows ripgrep 上游等价仍 not_checked，且删除 vendor 需要用户最终确认。
 - Auto-shopping, A2A, and full user console interaction features deferred to later versions.
-- 淘宝 provider 的 TOP 方法、签名 canonicalization、UTC timestamp、response/error envelope 与联盟权限仍为 `not_checked`；真实搜索需用户提供有效联盟权限并显式授权只读外部调用。当前 adapter 不会创建购物车、跳转购买、订单或支付。
+- 淘宝 provider 已实际验证到 TOP structured permission-denial 边界，并兼容其 `text/javascript` JSON MIME；商品成功 response envelope、价格解析、签名 golden vector 和联盟物料搜索 scope 仍为 `not_checked`。真实搜索需用户开通相应联盟权限并显式授权只读外部调用。当前 adapter 不会创建购物车、跳转购买、订单或支付。

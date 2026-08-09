@@ -97,7 +97,7 @@ Command payload 的 canonical hash 先把 Pydantic model、UUID、Enum 和 times
 ## Remaining architecture work
 
 - EffectApproval 当前 resolver 是本地单用户 control plane；生产化仍需认证主体、RBAC/双人审批策略和 actor audit，不能把当前 endpoint 描述成完整 IAM。
-- Shopping 当前仍是同步 provider/domain service。淘宝已有 opt-in、search-only TOP adapter，可生成 UNKNOWN availability、短 TTL 的报价快照；TOP 方法、签名、时间戳、response envelope、联盟权限和真实搜索仍是 `not_checked`。若要进入多智能体编排，需定义候选比较与报价快照的 Agent plan；淘宝购买能力不在当前产品范围。
+- Shopping 当前仍是同步 provider/domain service。淘宝已有 opt-in、search-only TOP adapter，可生成 UNKNOWN availability、短 TTL 的报价快照；一次真实只读请求已验证到 TOP structured permission-denial（而非网络/MIME 错误），但缺少物料搜索 scope，商品 response envelope、价格解析和真实搜索仍为 `not_checked`。若要进入多智能体编排，需定义候选比较与报价快照的 Agent plan；淘宝购买能力不在当前产品范围。
 - 稳定真实 Bailian structured output + Tavily Remote MCP + Artifact + Join + Domain 的四旋翼 live gate；一次完整业务闭环已成功，但重复运行仍受外部来源/Agent 工具行为波动影响。
 - GitHub 单次公开文件读取、fake stdio 和 Artifact/hash 内核已验证；完整 Agent 是否稳定选择 GitHub 工具仍需纳入四旋翼 live gate，而不是增加无界重试。
 - HarnessProfile 项目回归通过后仍需验证上游 Windows ripgrep 行为；在用户确认前不删除 `packages/deepagents`。
