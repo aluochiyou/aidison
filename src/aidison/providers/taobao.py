@@ -52,7 +52,9 @@ from aidison.providers.shopping import (
 
 _TAOBAO_API_URL = "https://eco.taobao.com/router/rest"
 _MAX_RESPONSE_BYTES = 1 * 1024 * 1024  # 1 MiB
-_EXPECTED_CONTENT_TYPE = "application/json"
+_ACCEPTED_JSON_CONTENT_TYPES: frozenset[str] = frozenset(
+    {"application/json", "text/javascript"}
+)
 _DEFAULT_ADZONE_ID = ""  # Must be set in config.yaml
 _DEFAULT_MAX_RESULTS = 20
 _OFFER_TTL_MINUTES = 5
@@ -310,7 +312,11 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
                         )
 
                 content_type = response.headers.get("content-type", "")
-                if _EXPECTED_CONTENT_TYPE not in content_type.lower() and response.is_success:
+                media_type = content_type.split(";", 1)[0].strip().lower()
+                if (
+                    media_type not in _ACCEPTED_JSON_CONTENT_TYPES
+                    and response.is_success
+                ):
                     raise ShoppingProviderError(
                         "taobao response has an unexpected content type"
                     )

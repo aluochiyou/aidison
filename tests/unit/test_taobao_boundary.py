@@ -235,6 +235,38 @@ async def test_taobao_rejects_non_json_response() -> None:
 
 
 @pytest.mark.asyncio
+async def test_taobao_accepts_json_body_with_top_text_javascript_content_type() -> None:
+    """TOP may label JSON payloads as text/javascript; parse them only after MIME allowlist."""
+
+    mock_response = {
+        "tbk_dg_material_optional_response": {
+            "result_list": {
+                "map_data": [
+                    {
+                        "num_iid": "1001",
+                        "title": "TOP JSON payload",
+                        "zk_final_price": "9.90",
+                    }
+                ]
+            }
+        }
+    }
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/javascript;charset=UTF-8"},
+            content=json.dumps(mock_response).encode(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        offers = await _adapter(client).search_offers("test")
+
+    assert len(offers) == 1
+    assert offers[0].title == "TOP JSON payload"
+
+
+@pytest.mark.asyncio
 async def test_taobao_rejects_oversized_response() -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
