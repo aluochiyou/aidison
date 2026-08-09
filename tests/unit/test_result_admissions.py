@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from contextlib import asynccontextmanager
 from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
@@ -78,18 +79,30 @@ class FakeSession:
 
     def __init__(self) -> None:
         self._committed: dict[str, ResultAdmissionRow] = {}
+        self._visible: dict[str, ResultAdmissionRow] = {}
         self._pending: list[ResultAdmissionRow] = []
 
     async def scalar(self, statement: Any) -> ResultAdmissionRow | None:
         value = statement.whereclause.right.value
-        return self._committed.get(value)
+        return self._visible.get(value)
 
     def add(self, row: ResultAdmissionRow) -> None:
         self._pending.append(row)
 
+    @asynccontextmanager
+    async def begin_nested(self):
+        yield
+
+    async def flush(self, rows: list[ResultAdmissionRow]) -> None:
+        for row in rows:
+            self._visible[row.key_hash] = row
+            self._pending.remove(row)
+
     async def commit(self) -> None:
         for row in self._pending:
             self._committed[row.key_hash] = row
+            self._visible[row.key_hash] = row
+        self._committed.update(self._visible)
         self._pending.clear()
 
     @property
@@ -225,3 +238,32 @@ async def test_admit_without_commit_is_not_persisted() -> None:
     returned = await repository.admit(admission, commit=False)
     assert returned == admission
     assert session.stored == {}
+
+
+@pytest.mark.asyncio
+async def test_admit_without_commit_replays_idempotently_in_same_session() -> None:
+    session = FakeSession()
+    repository = ResultAdmissionRepository(session)  # type: ignore[arg-type]
+    admission = admitted(uuid4(), "artifact+sha256://result/uncommitted-replay")
+
+    first = await repository.admit(admission, commit=False)
+    replay = await repository.admit(admission, commit=False)
+
+    assert first == replay == admission
+    assert len(session._pending) == 0
+    assert session.stored == {}
+
+
+@pytest.mark.asyncio
+async def test_same_session_uncommitted_conflict_never_overwrites_visible_row() -> None:
+    session = FakeSession()
+    repository = ResultAdmissionRepository(session)  # type: ignore[arg-type]
+    handoff_id = uuid4()
+    result_ref = "artifact+sha256://result/uncommitted-conflict"
+
+    original = admitted(handoff_id, result_ref)
+    await repository.admit(original, commit=False)
+    with pytest.raises(ResultAdmissionConflictError, match="conflicts"):
+        await repository.admit(admitted(handoff_id, result_ref, confidence=0.5), commit=False)
+
+    assert await repository.get(handoff_id, result_ref, basis()) == original

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import hashlib
+from typing import cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aidison.infrastructure.orm import ResultAdmissionRow
@@ -82,21 +84,18 @@ class ResultAdmissionRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def admit(self, admission: ResultAdmission, *, commit: bool = True) -> ResultAdmission:
-        """Persist one admission exactly once, idempotently for equal replays."""
-        key_hash = result_admission_key_hash(
-            admission.result.handoff_id,
-            admission.result.result_ref,
-            admission.result.basis_hash,
+    async def _lookup(self, key_hash: str) -> ResultAdmissionRow | None:
+        return cast(
+            ResultAdmissionRow | None,
+            await self._session.scalar(
+                select(ResultAdmissionRow).where(ResultAdmissionRow.key_hash == key_hash)
+            ),
         )
-        row = await self._session.scalar(
-            select(ResultAdmissionRow).where(ResultAdmissionRow.key_hash == key_hash)
-        )
-        if row is None:
-            self._session.add(row_from_admission(admission))
-            if commit:
-                await self._session.commit()
-            return admission
+
+    @staticmethod
+    def _resolve_existing(
+        row: ResultAdmissionRow, admission: ResultAdmission, key_hash: str
+    ) -> ResultAdmission:
         stored = admission_from_row(row)
         if stored == admission:
             return stored
@@ -105,6 +104,37 @@ class ResultAdmissionRepository:
             f"{stored.status.value} does not match {admission.status.value}"
         )
 
+    async def admit(self, admission: ResultAdmission, *, commit: bool = True) -> ResultAdmission:
+        """Persist one admission exactly once, idempotently for equal replays."""
+        key_hash = result_admission_key_hash(
+            admission.result.handoff_id,
+            admission.result.result_ref,
+            admission.result.basis_hash,
+        )
+        row = await self._lookup(key_hash)
+        if row is not None:
+            return self._resolve_existing(row, admission, key_hash)
+
+        candidate = row_from_admission(admission)
+        try:
+            # The savepoint rolls back only this insert when another transaction
+            # wins the unique-key race, leaving the caller's outer transaction
+            # usable. Flushing makes commit=False replays visible in this session.
+            async with self._session.begin_nested():
+                self._session.add(candidate)
+                await self._session.flush([candidate])
+        except IntegrityError:
+            row = await self._lookup(key_hash)
+            if row is None:
+                raise ResultAdmissionConflictError(
+                    f"result admission race for key {key_hash} did not yield a stored row"
+                ) from None
+            return self._resolve_existing(row, admission, key_hash)
+
+        if commit:
+            await self._session.commit()
+        return admission
+
     async def get(
         self,
         handoff_id: UUID,
@@ -112,10 +142,5 @@ class ResultAdmissionRepository:
         basis_hash: str,
     ) -> ResultAdmission | None:
         """Read one admission by its deterministic key, or None when absent."""
-        row = await self._session.scalar(
-            select(ResultAdmissionRow).where(
-                ResultAdmissionRow.key_hash
-                == result_admission_key_hash(handoff_id, result_ref, basis_hash)
-            )
-        )
+        row = await self._lookup(result_admission_key_hash(handoff_id, result_ref, basis_hash))
         return None if row is None else admission_from_row(row)
