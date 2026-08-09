@@ -31,6 +31,7 @@ from aidison.runtime.contracts import (
     BudgetOwnerKind,
     DelegationSpec,
     DelegationStatus,
+    FailureClass,
     JobClaim,
     JobStatus,
     JoinMode,
@@ -85,6 +86,60 @@ _TERMINAL_JOB_STATUSES = {
     JobStatus.FAILED.value,
     JobStatus.CANCELLED.value,
 }
+
+_DEFAULT_RETRYABLE_FAILURES = frozenset(
+    {FailureClass.TRANSIENT, FailureClass.TIMEOUT}
+)
+
+
+def classify_failure(normalized_error: str | None) -> FailureClass:
+    """Classify a normalized worker error without treating unknown errors as retryable."""
+    error = (normalized_error or "").lower()
+    if "timeout" in error or "deadline" in error:
+        return FailureClass.TIMEOUT
+    if any(term in error for term in ("permission", "forbidden", "unauthorized", "auth")):
+        return FailureClass.PERMISSION
+    if any(term in error for term in ("budget", "quota", "token", "tool-call")):
+        return FailureClass.BUDGET
+    if any(term in error for term in ("configuration", "config", "invalid parameter")):
+        return FailureClass.CONFIGURATION
+    if any(term in error for term in ("evidence", "contradiction", "conflict")):
+        return FailureClass.EVIDENCE_CONFLICT
+    if any(
+        term in error
+        for term in ("provider", "unavailable", "network", "connection", "rate limit")
+    ):
+        return FailureClass.TRANSIENT
+    return FailureClass.UNKNOWN_EFFECT
+
+
+def _retry_policy_allows(
+    profile: AgentProfileRevision,
+    *,
+    failure_class: FailureClass,
+    physical_attempts: int,
+) -> bool:
+    """Apply one frozen profile retry policy with a fail-closed default."""
+    policy = profile.retry_policy
+    max_attempts = policy.get("max_physical_attempts", 1)
+    if not isinstance(max_attempts, int) or max_attempts < 1:
+        return False
+    configured = policy.get("retryable_failure_classes")
+    if configured is None:
+        retryable = _DEFAULT_RETRYABLE_FAILURES
+    elif not isinstance(configured, (list, tuple, set, frozenset)):
+        return False
+    else:
+        values: set[FailureClass] = set()
+        for value in configured:
+            if not isinstance(value, str):
+                continue
+            try:
+                values.add(FailureClass(value))
+            except ValueError:
+                continue
+        retryable = frozenset(values)
+    return physical_attempts < max_attempts and failure_class in retryable
 
 
 def _task_kind_from_mode(mode: str) -> str:
@@ -620,6 +675,22 @@ class ReadySetRepository:
         }:
             await self._session.commit()
             return False
+        reopened = await self._reopen_task_for_retry(
+            root=root,
+            revision_row=revision_row,
+            task=task,
+        )
+        await self._session.commit()
+        return reopened
+
+    async def _reopen_task_for_retry(
+        self,
+        *,
+        root: JobRow,
+        revision_row: PlanRevisionRow,
+        task: PlanTaskRow,
+    ) -> bool:
+        """Reset one terminal plan task while holding its root transaction lock."""
         child_id = task.dispatched_job_id
         if child_id is not None:
             child = await self._session.get(JobRow, child_id)
@@ -648,8 +719,100 @@ class ReadySetRepository:
         )
         task.status = TaskStatus.PLANNED.value
         task.dispatched_job_id = None
-        await self._session.commit()
         return True
+
+    async def auto_retry_terminal_tasks(self, *, claim: JobClaim) -> int:
+        """Re-open only policy-authorized, terminally failed tasks.
+
+        The decision uses the profile revision pinned into the PlanTask row. Unknown,
+        permission, configuration, budget, and evidence failures remain terminal for
+        diagnosis rather than being retried blindly.
+        """
+        root = await self.lock_root(claim)
+        head = await self._session.scalar(
+            select(PlanHeadRow).where(PlanHeadRow.root_job_id == root.id).with_for_update()
+        )
+        if head is None:
+            await self._session.commit()
+            return 0
+        revision_row = await self._session.scalar(
+            select(PlanRevisionRow).where(
+                PlanRevisionRow.root_job_id == root.id,
+                PlanRevisionRow.revision == head.current_revision,
+            )
+        )
+        if revision_row is None:
+            await self._session.commit()
+            return 0
+        failed_tasks = list(
+            await self._session.scalars(
+                select(PlanTaskRow)
+                .where(
+                    PlanTaskRow.plan_revision_id == revision_row.id,
+                    PlanTaskRow.status == TaskStatus.FAILED.value,
+                    PlanTaskRow.dispatched_job_id.is_not(None),
+                )
+                .with_for_update()
+            )
+        )
+        retries = 0
+        profiles = ProfileRepository(self._session)
+        for task in failed_tasks:
+            child_id = task.dispatched_job_id
+            if child_id is None:
+                continue
+            child = await self._session.get(JobRow, child_id)
+            if child is None or child.status != JobStatus.FAILED.value:
+                continue
+            attempt = await self._session.scalar(
+                select(AttemptRow)
+                .where(AttemptRow.job_id == child_id)
+                .order_by(AttemptRow.claim_generation.desc())
+                .limit(1)
+            )
+            if attempt is None:
+                continue
+            try:
+                profile = await profiles.get_revision(task.profile_id, task.profile_revision)
+            except ProfileNotFoundError:
+                continue
+            physical_attempts = (
+                await self._session.scalar(
+                    select(func.coalesce(func.max(PlanTaskClaimRow.claim_generation), 0)).where(
+                        PlanTaskClaimRow.task_id == task.id
+                    )
+                )
+                or 0
+            )
+            failure_class = classify_failure(attempt.normalized_error)
+            if not _retry_policy_allows(
+                profile,
+                failure_class=failure_class,
+                physical_attempts=physical_attempts,
+            ):
+                continue
+            if not await self._reopen_task_for_retry(
+                root=root,
+                revision_row=revision_row,
+                task=task,
+            ):
+                continue
+            await PostgresDomainStore(self._session).append_event(
+                root.project_id,
+                "ready_set.task_auto_retry_scheduled",
+                {
+                    "root_job_id": str(root.id),
+                    "task_logical_key": task.logical_key,
+                    "failure_class": failure_class.value,
+                    "physical_attempts": physical_attempts,
+                    "max_physical_attempts": profile.retry_policy.get(
+                        "max_physical_attempts", 1
+                    ),
+                },
+            )
+            retries += 1
+        await self._session.commit()
+        return retries
 
     async def recover_expired_claims(self, *, claim: JobClaim) -> int:
         """Recover expired undispatched claims and queued children that never started."""
@@ -826,6 +989,13 @@ class ReadySetScheduler:
         # eligibility scan below and flows back into the ready set immediately.
         async with self._factory() as session:
             settled = await ReadySetRepository(session).settle_terminal_children(claim=claim)
+        # Retry eligibility is a frozen per-profile policy. The helper only
+        # reopens explicitly retryable terminal failures; the ordinary frontier
+        # refresh below then dispatches them under the usual budget/capacity gates.
+        async with self._factory() as session:
+            auto_retries = await ReadySetRepository(session).auto_retry_terminal_tasks(
+                claim=claim
+            )
         async with self._factory() as session:
             context = await ReadySetRepository(session).collect(claim)
 
@@ -899,6 +1069,7 @@ class ReadySetScheduler:
             ready_remaining=ready_remaining,
             terminal_failed=context.terminal_failed,
             settled_child_count=settled,
+            auto_retry_count=auto_retries,
             complete=_is_tick_complete(
                 plan_revision=context.plan_revision,
                 active_total=active_total,

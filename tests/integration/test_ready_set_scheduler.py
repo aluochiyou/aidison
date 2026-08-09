@@ -78,6 +78,25 @@ READY_WORKER_SLOW_PROFILE = build_profile_revision(
     timeout_seconds=60,
 )
 
+READY_WORKER_RETRY_PROFILE = build_profile_revision(
+    profile_id="ready-worker-retry",
+    revision=1,
+    purpose="Deterministic ready-set worker with bounded automatic retry.",
+    prompt_template="Deterministic ready-set test worker. It performs no model call.",
+    input_schema_ref="aidison://schemas/ready-worker-input/v1",
+    output_schema_ref="aidison://schemas/ready-worker-output/v1",
+    allowed_effects=("read",),
+    model_capabilities=("structured_output",),
+    token_cap=1_000,
+    tool_call_cap=1,
+    concurrency_cap=8,
+    timeout_seconds=60,
+    retry_policy={
+        "max_physical_attempts": 2,
+        "retryable_failure_classes": ["transient", "timeout"],
+    },
+)
+
 
 def _database() -> tuple[str, Any]:
     database_url = os.getenv("TEST_DATABASE_URL")
@@ -182,6 +201,7 @@ async def _run_child(
     *,
     basis_hash: str,
     status: DelegationStatus = DelegationStatus.SUCCEEDED,
+    normalized_error: str | None = None,
 ) -> ResultDisposition:
     async with factory() as session:
         runtime = PostgresRuntime(session)
@@ -199,7 +219,9 @@ async def _run_child(
                 basis_hash=basis_hash,
                 proposal_ref=f"proposal://{work.delegation.shard_key}",
                 normalized_error=(
-                    None if status is DelegationStatus.SUCCEEDED else "worker_failed"
+                    None
+                    if status is DelegationStatus.SUCCEEDED
+                    else normalized_error or "worker_failed"
                 ),
             ),
             lease_token=claim.lease_token,
@@ -435,6 +457,50 @@ async def test_ready_set_retries_failed_task_with_new_claim_generation() -> None
         )
         final = await scheduler.tick(claim)
         assert final.complete is True
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ready_set_auto_retries_only_policy_authorized_failures() -> None:
+    _, engine = _database()
+    factory = create_session_factory(engine)
+    try:
+        root_job_id, basis_hash, claim = await _bootstrap(
+            factory,
+            nodes=(
+                _node(
+                    "a",
+                    depth=0,
+                    profile_id=READY_WORKER_RETRY_PROFILE.profile_id,
+                    role_key="retry-worker",
+                ),
+            ),
+            profile=READY_WORKER_RETRY_PROFILE,
+            role_key="retry-worker",
+            suffix="auto-retry",
+        )
+        scheduler = ReadySetScheduler(session_factory=factory, default_concurrency=8)
+        first = await scheduler.tick(claim)
+        assert len(first.dispatched) == 1
+        assert (
+            await _run_child(
+                factory,
+                basis_hash=basis_hash,
+                status=DelegationStatus.FAILED,
+                normalized_error="provider_unavailable",
+            )
+            is ResultDisposition.ELIGIBLE
+        )
+
+        retried = await scheduler.tick(claim)
+        assert retried.auto_retry_count == 1
+        assert len(retried.dispatched) == 1
+        assert retried.dispatched[0].claim_generation == 2
+        assert await _claim_generations(factory, root_job_id=root_job_id) == [
+            ("a", 1, "superseded"),
+            ("a", 2, "dispatched"),
+        ]
     finally:
         await engine.dispose()
 

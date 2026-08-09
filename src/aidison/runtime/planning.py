@@ -284,4 +284,5 @@ class SchedulerTickResult(PlanningContract):
     ready_remaining: int = Field(default=0, ge=0)
     terminal_failed: int = Field(default=0, ge=0)
     settled_child_count: int = Field(default=0, ge=0)
+    auto_retry_count: int = Field(default=0, ge=0)
     complete: bool = False

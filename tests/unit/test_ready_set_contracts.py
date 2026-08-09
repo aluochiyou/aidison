@@ -6,7 +6,8 @@ from uuid import uuid4
 import pytest
 from pydantic import ValidationError
 
-from aidison.infrastructure.ready_set import _is_tick_complete
+from aidison.infrastructure.ready_set import _is_tick_complete, classify_failure
+from aidison.runtime.contracts import FailureClass
 from aidison.runtime.planning import (
     PlanTaskClaim,
     SchedulerSkip,
@@ -86,7 +87,26 @@ def test_scheduler_tick_result_defaults_are_safe() -> None:
     assert result.skipped == ()
     assert result.active_count == 0
     assert result.ready_remaining == 0
+    assert result.auto_retry_count == 0
     assert result.complete is False
+
+
+@pytest.mark.parametrize(
+    ("normalized_error", "expected"),
+    [
+        ("provider_unavailable", FailureClass.TRANSIENT),
+        ("request_timeout", FailureClass.TIMEOUT),
+        ("permission_denied", FailureClass.PERMISSION),
+        ("budget_exhausted", FailureClass.BUDGET),
+        ("evidence_conflict", FailureClass.EVIDENCE_CONFLICT),
+        ("unrecognized_failure", FailureClass.UNKNOWN_EFFECT),
+        (None, FailureClass.UNKNOWN_EFFECT),
+    ],
+)
+def test_failure_classification_fails_closed(
+    normalized_error: str | None, expected: FailureClass
+) -> None:
+    assert classify_failure(normalized_error) is expected
 
 
 def test_scheduler_skip_carries_reason() -> None:
