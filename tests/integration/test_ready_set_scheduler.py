@@ -483,13 +483,13 @@ async def test_ready_set_budget_eligibility_gates_and_releases() -> None:
         assert len(first.dispatched) == 1
         assert [item.reason for item in first.skipped] == [SchedulerSkipReason.BUDGET]
 
-        assert await _run_child(factory, basis_hash=basis_hash) is ResultDisposition.ELIGIBLE
-        second = await scheduler.tick(claim)
-        assert len(second.dispatched) == 1
-        assert await _claim_count(factory, root_job_id=root_job_id) == 2
         assert (
             await _run_child(factory, basis_hash=basis_hash) is ResultDisposition.ELIGIBLE
         )
+        second = await scheduler.tick(claim)
+        assert len(second.dispatched) == 1
+        assert await _claim_count(factory, root_job_id=root_job_id) == 2
+        assert await _run_child(factory, basis_hash=basis_hash) is ResultDisposition.ELIGIBLE
         assert (await scheduler.tick(claim)).complete is True
     finally:
         await engine.dispose()
@@ -641,6 +641,53 @@ async def test_ready_set_expired_claim_recovery_redispatch_once() -> None:
         second = await scheduler.tick(claim)
         assert len(second.dispatched) == 1
         assert await _claim_count(factory, root_job_id=root_job_id) == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_ready_set_expired_queued_child_is_cancelled_and_redispatched() -> None:
+    """F4: a child that never leaves QUEUED cannot hold a task forever."""
+    _, engine = _database()
+    factory = create_session_factory(engine)
+    try:
+        root_job_id, _, claim = await _bootstrap(
+            factory, nodes=(_node("a", depth=0),), suffix="queued-child-expiry"
+        )
+        scheduler = ReadySetScheduler(session_factory=factory, default_concurrency=8)
+        first = await scheduler.tick(claim)
+        assert len(first.dispatched) == 1
+        original_child_id = first.dispatched[0].child_job_id
+        assert original_child_id is not None
+
+        async with factory() as session:
+            await session.execute(
+                update(PlanTaskClaimRow)
+                .where(
+                    PlanTaskClaimRow.root_job_id == root_job_id,
+                    PlanTaskClaimRow.child_job_id == original_child_id,
+                )
+                .values(lease_expires_at=datetime.now(UTC) - timedelta(seconds=1))
+            )
+            await session.commit()
+
+        second = await scheduler.tick(claim)
+        assert len(second.dispatched) == 1
+        assert second.dispatched[0].child_job_id != original_child_id
+
+        async with factory() as session:
+            original = await session.get(JobRow, original_child_id)
+            assert original is not None
+            assert original.status == "cancelled"
+            assert original.cancel_requested is True
+            statuses = list(
+                await session.scalars(
+                    select(PlanTaskClaimRow.status)
+                    .where(PlanTaskClaimRow.root_job_id == root_job_id)
+                    .order_by(PlanTaskClaimRow.created_at)
+                )
+            )
+            assert statuses == ["superseded", "dispatched"]
     finally:
         await engine.dispose()
 

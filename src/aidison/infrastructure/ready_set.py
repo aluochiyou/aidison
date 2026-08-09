@@ -10,7 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aidison.infrastructure.budget import BudgetConflictError, BudgetLedger
 from aidison.infrastructure.orm import (
+    AttemptRow,
     BudgetAccountRow,
+    DelegationRow,
     JobProfileBindingRow,
     JobRow,
     PlanHeadRow,
@@ -25,8 +27,10 @@ from aidison.infrastructure.runtime import PostgresRuntime, RuntimeConflictError
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.contracts import (
     AgentProfileRevision,
+    AttemptStatus,
     BudgetOwnerKind,
     DelegationSpec,
+    DelegationStatus,
     JobClaim,
     JobStatus,
     JoinMode,
@@ -551,7 +555,7 @@ class ReadySetRepository:
         return True
 
     async def recover_expired_claims(self, *, claim: JobClaim) -> int:
-        """Fail durable claims that expired without ever being dispatched."""
+        """Recover expired undispatched claims and queued children that never started."""
         root = await self.lock_root(claim)
         now = datetime.now(UTC)
         rows = list(
@@ -559,17 +563,122 @@ class ReadySetRepository:
                 select(PlanTaskClaimRow)
                 .where(
                     PlanTaskClaimRow.root_job_id == root.id,
-                    PlanTaskClaimRow.status == TaskClaimStatus.CLAIMED.value,
+                    PlanTaskClaimRow.status.in_(
+                        (TaskClaimStatus.CLAIMED.value, TaskClaimStatus.DISPATCHED.value)
+                    ),
                     PlanTaskClaimRow.lease_expires_at < now,
                 )
                 .with_for_update()
             )
         )
+        child_ids = [row.child_job_id for row in rows if row.child_job_id is not None]
+        children = (
+            {
+                child.id: child
+                for child in await self._session.scalars(
+                    select(JobRow).where(JobRow.id.in_(child_ids)).with_for_update()
+                )
+            }
+            if child_ids
+            else {}
+        )
+        task_ids = [row.task_id for row in rows]
+        tasks = (
+            {
+                task.id: task
+                for task in await self._session.scalars(
+                    select(PlanTaskRow).where(PlanTaskRow.id.in_(task_ids)).with_for_update()
+                )
+            }
+            if task_ids
+            else {}
+        )
+        has_expired_dispatched = any(
+            row.status == TaskClaimStatus.DISPATCHED.value for row in rows
+        )
+        ledger: BudgetLedger | None = None
+        account_id: UUID | None = None
+        if has_expired_dispatched:
+            try:
+                ledger = BudgetLedger(self._session)
+                account_id = await ledger.get_account_id(root.id)
+            except BudgetConflictError as exc:
+                raise ReadySetConflictError(
+                    "expired ready-set child budget account is unavailable"
+                ) from exc
+
+        recovered = 0
         for row in rows:
-            row.status = TaskClaimStatus.FAILED.value
+            if row.status == TaskClaimStatus.CLAIMED.value:
+                row.status = TaskClaimStatus.FAILED.value
+                row.completed_at = now
+                recovered += 1
+                continue
+
+            child = None if row.child_job_id is None else children.get(row.child_job_id)
+            # A running child owns a valid worker lease and must not be cancelled
+            # merely because the scheduler's dispatch lease expired. Queued is the
+            # only state that proves no worker ever claimed this child.
+            if child is None or child.status != JobStatus.QUEUED.value:
+                continue
+            child.cancel_requested = True
+            child.status = JobStatus.CANCELLED.value
+            child.completed_at = now
+            child.lease_owner = None
+            child.lease_token = None
+            child.lease_expires_at = None
+            await self._session.execute(
+                update(AttemptRow)
+                .where(
+                    AttemptRow.job_id == child.id,
+                    AttemptRow.status == AttemptStatus.RUNNING.value,
+                )
+                .values(
+                    status=AttemptStatus.CANCELLED.value,
+                    completed_at=now,
+                    normalized_error="ready_set_dispatch_lease_expired",
+                )
+            )
+            await self._session.execute(
+                update(DelegationRow)
+                .where(
+                    DelegationRow.child_job_id == child.id,
+                    DelegationRow.status == "pending",
+                )
+                .values(status=DelegationStatus.CANCELLED.value, completed_at=now)
+            )
+            if ledger is None or account_id is None:
+                raise ReadySetConflictError("expired ready-set child has no budget ledger")
+            try:
+                await ledger.reconcile_reclaimed_owner(
+                    account_id=account_id,
+                    owner_kind=BudgetOwnerKind.CHILD,
+                    owner_ref=child.id,
+                    normalized_error="ready_set_dispatch_lease_expired",
+                )
+            except BudgetConflictError as exc:
+                raise ReadySetConflictError(
+                    "expired ready-set child budget could not be reconciled"
+                ) from exc
+            task = tasks.get(row.task_id)
+            if task is not None and task.dispatched_job_id == child.id:
+                task.status = TaskStatus.PLANNED.value
+                task.dispatched_job_id = None
+            row.status = TaskClaimStatus.SUPERSEDED.value
             row.completed_at = now
+            await PostgresDomainStore(self._session).append_event(
+                root.project_id,
+                "ready_set.task_dispatch_expired",
+                {
+                    "root_job_id": str(root.id),
+                    "task_logical_key": row.logical_key,
+                    "claim_generation": row.claim_generation,
+                    "child_job_id": str(child.id),
+                },
+            )
+            recovered += 1
         await self._session.commit()
-        return len(rows)
+        return recovered
 
     @staticmethod
     def _claim_from_row(row: PlanTaskClaimRow) -> PlanTaskClaim:
@@ -611,6 +720,11 @@ class ReadySetScheduler:
         self._default_concurrency = default_concurrency
 
     async def tick(self, claim: JobClaim) -> SchedulerTickResult:
+        # Recover queued children whose scheduler-side dispatch lease expired
+        # before they reached a worker, then make the recovered task visible to
+        # the normal frontier refresh below.
+        async with self._factory() as session:
+            await ReadySetRepository(session).recover_expired_claims(claim=claim)
         # Settle terminal children first so released budget is visible to the
         # eligibility scan below and flows back into the ready set immediately.
         async with self._factory() as session:
