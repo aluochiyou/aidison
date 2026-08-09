@@ -5,7 +5,7 @@
 | 可用主张 | 代码证据 | 测试/验收证据 | 边界 |
 |---|---|---|---|
 | 自研 PostgreSQL durable multi-Agent runtime | `src/aidison/infrastructure/runtime.py`, `orm.py` | `test_postgres_runtime.py`, `test_join_policies.py` | 参考协议 donor，不是从零发明所有概念 |
-| 通用动态编排已被两个业务复用 | `application/execution.py`, Research/Solution adapters | `test_durable_plan_executor.py`, ADR-0004 | bounded wave，不是任意 DAG |
+| 通用动态编排已被三条业务闭环复用 | `application/execution.py`, Research/Solution/Impact adapters | `test_durable_plan_executor.py`, Research/Solution/Impact integration, ADR-0004 | bounded wave，不是任意 DAG |
 | 支持 immutable plan 和 CAS replan | `runtime/planning.py`, `infrastructure/planning.py` | `test_plan_store.py` | gap policy 仍可业务专属 |
 | 有 deterministic Join 与 late-result policy | `_evaluate_open_join`, Join commit/cleanup | unit truth table + PG17/18 integration | 无模型评分型 winner |
 | 有 lease generation fencing | Job/Attempt claim/result paths | crash/reclaim runtime tests | 不是跨区域 HA scheduler |
@@ -55,7 +55,7 @@
 
 ## 明确的未完成项
 
-- 真实淘宝 API/MCP 与订单 sandbox；
+- 淘宝关键词搜索 API 的实际可用权限；当前仅确认后续可做 item ID 详情核验；
 - authenticated actor、RBAC、多租户审批；
 - provider billing reconciliation；
 - 重复稳定的 live Agent gate；

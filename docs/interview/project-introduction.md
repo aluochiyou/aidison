@@ -12,7 +12,7 @@ Aidison 是我做的一个 DIY 工程决策 Agent。它不只生成答案，而�
 
 最难的是故障语义。我用 lease generation fencing 拒绝旧 Worker，用 idempotency receipt 恢复重复命令，用三个确定性 JoinPolicy 收敛并行 Agent，并在 Join 关闭时同事务取消 sibling 和对账预算。购物场景又加了 scoped EffectApproval：先把一次性授权和 PREPARED handoff 持久化，再调用 provider，结果未知时不自动重试。
 
-当前通用 executor 已被 Research 和 Solution 复用，并通过 PostgreSQL 17/18 fresh migration、双版本集成测试和静态检查。真实淘宝 API、生产身份权限和重复 live provider 稳定性仍是下一阶段。
+当前通用 executor 已被 Research、Solution 和 Impact 三条业务闭环复用，并通过 PostgreSQL 17/18 fresh migration、双版本集成测试和静态检查。淘宝关键词搜索、生产身份权限和重复 live provider 稳定性仍是下一阶段。
 
 ## 5 分钟版结构
 
@@ -39,7 +39,7 @@ Aidison 是我做的一个 DIY 工程决策 Agent。它不只生成答案，而�
 
 ### 5. 验证与边界
 
-验证重点是 crash/reclaim/replay/concurrency，不只测 happy path。当前 release gate 已覆盖 PostgreSQL 17/18，但真实淘宝、IAM/RBAC、容量和 live provider 稳定性未完成。
+验证重点是 crash/reclaim/replay/concurrency，不只测 happy path。当前 release gate 已覆盖 PostgreSQL 17/18，但淘宝关键词搜索、IAM/RBAC、容量和 live provider 稳定性未完成。
 
 ## 面试官追问时的主线
 

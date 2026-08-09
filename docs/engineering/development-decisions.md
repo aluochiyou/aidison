@@ -15,7 +15,7 @@
 | C4 | 通用 `DurablePlanExecutor` + 业务 adapter | 消除 research/solution/impact 重复的派发、绑定、等待、receipt/recovery，同时保留业务类型边界 | 通用 Gap、第二 scheduler、任意 DAG 引擎 | `ADR-0004`、generic boundary、research/solution/impact integration | 多智能体编排、端到端恢复、抽象边界 |
 | C5A | 三种确定性 JoinPolicy + transactional sibling cleanup | 让并行 Agent 的全量、边界部分成功和首个有效结果共享可恢复收敛语义 | 业务 Worker 自行数结果、非确定 winner、只关 Join 不回收 sibling | `ADR-0005`、join policy integration | 并行收敛、锁顺序、预算回收 |
 | C5B | 一次性 scoped EffectApproval | 外部副作用必须绑定服务端冻结 scope，并在 provider 前 durable consume | 复用 DecisionRequest、布尔 approval、provider 后才消费 | `ADR-0006`、shopping API closed loop | capability security、幂等副作用、crash window |
-| V1 | 淘宝 search-only provider | 先把真实电商场景收敛为商品搜索、推荐和报价快照，避免把联盟链接误包装为下单能力 | cart、redirect、订单、支付、淘宝 EffectApproval/checkout | `7fb6e01`、淘宝 unit 43 passed、non-live 258 passed | capability boundary、外部 API 契约、fail-closed 产品范围 |
+| V1（当前延期） | 淘宝商品详情核验候选 | 当前应用仅有 `16189 item.info.get` 可用；它要求已有商品 ID，不能将“详情查询”包装成关键词搜索 | cart、redirect、订单、支付、淘宝 EffectApproval/checkout、未获可调用权限的关键词搜索 | 用户确认的开放平台权限边界；现有 adapter/unit 仅证明本地 fail-closed 边界 | capability boundary、外部 API 契约、fail-closed 产品范围 |
 
 ## C3 工程细节
 
@@ -70,4 +70,4 @@ C5 Join 与 EffectApproval 主要是在 Aidison 自有 PostgreSQL runtime 和 Sh
 
 C5 版本已生成 `docs/learning/` 架构与算法教程、源码阅读地图、开发步骤与难点，以及 `docs/interview/` 简历 bullet、项目介绍模板和分层问答；事实证据表位于 `research/aidison-release-learning-docs/report.md`。后续每个 release 仍须更新测试数字与未完成边界，不能沿用过期 claims。
 
-淘宝 V1 是产品边界收敛，不是对 `ADR-0006` 的替代：通用 Shopify checkout 仍使用 scoped EffectApproval；淘宝 adapter 以空 `handoff_kinds` 从 capability 层阻断该流程。实现验证了 adapter、runtime wiring、non-live 回归，以及两次真实 TOP structured permission-denial（第二次在用户更新配置后）；调用证明网络与 JSON MIME 边界可达，但当前 App 未获生效的物料搜索 scope，未返回商品。商品 response contract、价格解析和 signing golden vector 仍未验收，因此不得在简历或演示中表述为“淘宝真实搜索已稳定上线”。
+淘宝 V1 的探索实现不替代 `ADR-0006`：通用 Shopify checkout 仍使用 scoped EffectApproval；淘宝 adapter 以空 `handoff_kinds` 从 capability 层阻断该流程。当前用户确认只有 `16189 item.info.get` 可用，它要求已有商品 ID，故关键词搜索/推荐已延期；此前的 TOP `code 11` 只证明该搜索调用未成功，不能表述为“淘宝真实搜索已稳定上线”，也不能仅凭错误码断言具体权限原因。

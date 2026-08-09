@@ -44,7 +44,7 @@ flowchart TB
 | `src/aidison/api` | FastAPI command/query、ETag、错误 envelope、typed historical snapshot normalization 和 cursor SSE。 |
 | `src/aidison/agents` | typed Research Proposal 契约与受限 Deep Agent 组装。 |
 | `src/aidison/tools` | Tavily Remote MCP 与 GitHub 官方只读 MCP 薄适配、有界参数/结果/预算/Artifact 映射，以及已知 URL 的 SSRF/redirect/MIME/size/timeout 边界。 |
-| `src/aidison/providers` | DeepSeek 官方 OpenAI-compatible 模型路由，以及 capability-aware shopping adapters；缺 Key 不降级。淘宝 adapter 仅支持搜索/推荐。 |
+| `src/aidison/providers` | DeepSeek 官方 OpenAI-compatible 模型路由，以及 capability-aware shopping adapters；缺 Key 不降级。淘宝探索 adapter 不具备任何购买 capability，关键词搜索当前因无可调用接口而延期。 |
 | `src/aidison/runtime` | Job、Attempt、Delegation、JoinPolicy/Receipt 与业务无关 PlanRevision/TaskNode 的 typed contracts。 |
 | `src/aidison/operations` + `ops` | 只读 Artifact 一致性检查，以及 Windows/Docker PostgreSQL + Artifact 配对备份和隔离恢复。 |
 | `packages/deepagents` | 固定 SHA 导入的 Deep Agents Core；Aidison Agent 构造已迁移到官方 `HarnessProfile`，vendor 暂仅保留 Windows filesystem 差异与完整回归基线。 |
@@ -97,8 +97,8 @@ Command payload 的 canonical hash 先把 Pydantic model、UUID、Enum 和 times
 ## Remaining architecture work
 
 - EffectApproval 当前 resolver 是本地单用户 control plane；生产化仍需认证主体、RBAC/双人审批策略和 actor audit，不能把当前 endpoint 描述成完整 IAM。
-- Shopping 当前仍是同步 provider/domain service。淘宝已有 opt-in、search-only TOP adapter，可生成 UNKNOWN availability、短 TTL 的报价快照；两次获授权的真实只读请求（第二次在用户更新配置后）均验证到 TOP structured permission-denial（而非网络/MIME 错误），但物料搜索 scope 尚未对该 App 生效，商品 response envelope、价格解析和真实搜索仍为 `not_checked`。若要进入多智能体编排，需定义候选比较与报价快照的 Agent plan；淘宝购买能力不在当前产品范围。
-- 稳定真实 Bailian structured output + Tavily Remote MCP + Artifact + Join + Domain 的四旋翼 live gate；一次完整业务闭环已成功，但重复运行仍受外部来源/Agent 工具行为波动影响。
+- Shopping 当前仍是同步 provider/domain service。淘宝探索 adapter 不具备购买 capability；当前用户确认只有需要已有商品 ID 的 `item.info.get` 可用，关键词搜索/推荐已延期。此前 TOP structured failure 只能证明搜索调用未成功，不能推断具体权限原因；商品 response envelope、价格解析和真实搜索仍为 `not_checked`。若要进入多智能体编排，需定义候选比较与报价快照的 Agent plan；淘宝购买能力不在当前产品范围。
+- 稳定真实 DeepSeek structured output + Tavily Remote MCP + Artifact + Join + Domain 的四旋翼 live gate；一次完整业务闭环已成功，但重复运行仍受外部来源/Agent 工具行为波动影响。
 - GitHub 单次公开文件读取、fake stdio 和 Artifact/hash 内核已验证；完整 Agent 是否稳定选择 GitHub 工具仍需纳入四旋翼 live gate，而不是增加无界重试。
 - HarnessProfile 项目回归通过后仍需验证上游 Windows ripgrep 行为；在用户确认前不删除 `packages/deepagents`。
 - 正式决定如何处置运行库中五条历史测试污染的 `present`/missing-byte Artifact 审计记录；在此之前运行库备份按设计 fail closed。

@@ -2,7 +2,7 @@
 
 - Updated: 2026-08-09
 - Lifecycle: active development
-- Current phase: C5 durable JoinPolicy 与 scoped EffectApproval 已合并；淘宝 V1 搜索/推荐 adapter 已合入，真实 TOP 验收仍待完成。
+- Current phase: C5 durable JoinPolicy 与 scoped EffectApproval 已合并；淘宝关键词搜索因当前无可调用搜索接口而延期，基础 runtime 进入真实环境验收阶段。
 
 > 说明：下方大部分条目是 2026-08-03 V0 handoff 的历史验收快照。当前增量以 Git、ADR-0003/0004 和 `docs/engineering/development-decisions.md` 为准，版本收口时再整体重写本页。
 
@@ -15,7 +15,7 @@
 - PostgreSQL 17 与 18.4 隔离库从零 Alembic migration：passed；C4 完整 integration：两版均 passed（各 42 项）；unit：139 passed；Ruff、mypy、diff check、Alembic single head：passed。
 - Join runtime 新增 `BOUNDED_PARTIAL` 与 `FIRST_VALID`；确定性 winner、boundary/deadline、sibling cancellation、late-result quarantine、PlanTask projection 和预算 reconciliation 已进入 C5 测试矩阵。
 - Shopping 新增独立 EffectApproval 状态机、不可变服务端 scope、PostgreSQL partial unique/CAS/trigger、request/resolve API，以及 consume gate 后才调用 provider 的 checkout crash boundary。
-- 淘宝 V1 作为 opt-in、只读商品搜索/推荐 provider 已合入：`shopping.provider=taobao` 且环境中有密钥和 `adzone_id` 才 available；它声明 `search=true`、`handoff_kinds=[]`，cart、redirect、下单、支付和审批/checkout handoff 均 fail closed。2026-08-09 两次获授权的真实只读请求（第二次在用户更新配置后）均穿过网络、MIME/JSON 处理并收到 TOP structured `code 11` permission denial；当前 App 尚未获得生效的物料搜索 scope，未返回商品，故仍不宣称真实搜索可用。
+- 淘宝探索 adapter 仍保持 `handoff_kinds=[]`，cart、redirect、下单、支付和审批/checkout handoff 均 fail closed。当前用户确认仅 `16189 item.info.get` 可用，它要求已有商品 ID，不能满足关键词搜索；淘宝搜索/推荐已延期。此前两次只读 TOP 请求的 `code 11` 只证明调用未成功，不能单独推断具体权限原因，故不宣称真实搜索可用。
 - 合并后验证：淘宝 focused unit 43 passed；non-live `tests/unit tests/integration` 258 passed；Ruff 与 mypy passed。完整 pytest 的唯一失败是既有 `tests/live/test_research_worker_live.py` 的 `github_unavailable`，与淘宝改动无关；不进行无界外部重试。
 - Web ShoppingView 已接入 request → approve/deny → checkout 三步，以及 PREPARED/AMBIGUOUS 的“刷新 durable snapshot 后重新授权”恢复入口；Prettier 全库基线、ESLint（0 error，4 个既有 Fast Refresh warning）和 Next.js production build：passed。
 - C5 final gate：unit 155 passed；PostgreSQL 17/18 integration 各 50 passed；两版全新隔离库从零 migration 到 `b7d3e5f91a20` 并通过 `alembic check`；Ruff、mypy、diff check、Alembic single head：passed。EffectApproval trigger 与 partial unique index 有直接 SQL 拒绝测试。
@@ -79,7 +79,7 @@ The prior 2366 passed, 12 failed used the wrong root project virtualenv; after a
 
 ## Active milestone
 
-C5 代码与文档已经收口，项目继续处于 active development。下一里程碑是对已合入的淘宝 search-only provider 完成一次有授权的 TOP contract/live smoke，并补充外部来源的 golden signing vector；淘宝不会进入 EffectApproval/receipt checkout 边界，除非未来另有明确产品决策。
+C5 代码与文档已经收口，项目继续处于 active development。下一里程碑是以现有 PostgreSQL、DeepSeek、Tavily 与 GitHub 配置完成可重复的真实基础链路验收；淘宝关键词搜索等待取得实际可调用的搜索接口后再恢复。淘宝不会进入 EffectApproval/receipt checkout 边界，除非未来另有明确产品决策。
 
 ## Open work and not_checked
 
@@ -94,4 +94,4 @@ C5 代码与文档已经收口，项目继续处于 active development。下一�
 - 本地长期 `127.0.0.1:55432/aidison_test` 含一条早期试验残留、定义不同的 `research-worker-ro@4`；不可变门禁正确拒绝覆盖。全新临时 `aidison_test` 从零迁移、Alembic drift 和 107 项 non-live 回归均通过；是否重建长期测试库需显式清理决定。
 - Aidison Agent 已消除两个 vendor-only 构造参数；Windows ripgrep 上游等价仍 not_checked，且删除 vendor 需要用户最终确认。
 - Auto-shopping, A2A, and full user console interaction features deferred to later versions.
-- 淘宝 provider 已实际验证到 TOP structured permission-denial 边界，并兼容其 `text/javascript` JSON MIME；商品成功 response envelope、价格解析、签名 golden vector 和联盟物料搜索 scope 仍为 `not_checked`。真实搜索需用户开通相应联盟权限并显式授权只读外部调用。当前 adapter 不会创建购物车、跳转购买、订单或支付。
+- 淘宝 provider 已实际验证到 TOP structured failure 边界，并兼容其 `text/javascript` JSON MIME；当前只确认 `item.info.get` 式已有商品 ID 详情查询可作为后续候选，关键词搜索仍为 `not_checked`。当前 adapter 不会创建购物车、跳转购买、订单或支付。

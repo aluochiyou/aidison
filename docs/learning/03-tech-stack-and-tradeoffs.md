@@ -63,7 +63,7 @@ Tavily 和 GitHub 使用 MCP 是为了标准化工具发现/调用，而不是�
 
 ## 真实生产化仍缺什么
 
-1. 淘宝官方 API/MCP 的真实认证、限流、订单沙箱和 provider idempotency 语义；
+1. 淘宝关键词搜索 API 的实际可用权限与真实认证；当前仅确认 `item.info.get` 式已有商品 ID 详情核验，订单与支付仍不在范围内；
 2. approval resolver 绑定登录主体、RBAC/审计 actor；
 3. live provider 重复稳定性和账单级 usage reconciliation；
 4. metrics/tracing、告警和容量测试；

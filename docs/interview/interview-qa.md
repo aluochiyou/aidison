@@ -30,7 +30,7 @@ lease 表示所有权有效到什么时候；generation 是每次 reclaim 增加
 
 ## 8. 动态编排是否已经通用？
 
-已从 Research 提取 `DurablePlanExecutor`，Research 和 Solution 都在使用，通用模块不依赖 research contracts。限制是目前消费有界 ready wave，并非任意深度、自主生成的 DAG scheduler。
+已从 Research 提取 `DurablePlanExecutor`，Research、Solution 和 Impact 三条真实业务闭环都在使用，通用模块不依赖 research contracts。限制是目前消费有界 ready wave，并非任意深度、自主生成的 DAG scheduler。
 
 ## 9. 三种 JoinPolicy 有什么区别？
 

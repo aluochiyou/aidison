@@ -19,7 +19,7 @@ flowchart TB
     WORKER --> EXEC[DurablePlanExecutor]
     EXEC --> RUNTIME
     WORKER --> AGENT[Deep Agents / LangGraph leaf Agent]
-    AGENT --> MODEL[Bailian or OpenAI-compatible gateway]
+    AGENT --> MODEL[DeepSeek official OpenAI-compatible gateway]
     AGENT --> TOOLS[Tavily MCP / GitHub MCP / Safe Fetch]
     TOOLS --> ARTIFACT[Content-addressed Artifacts]
     AGENT -->|typed Proposal| RUNTIME
@@ -81,7 +81,7 @@ Worker 是可丢弃进程：领取 Job、获得带 generation 的 claim、执行
 
 ## 当前边界
 
-- 已解决：动态编排不再只属于 Research；Research 和 Solution 复用通用 executor。
+- 已解决：动态编排不再只属于 Research；Research、Solution 和 Impact 复用通用 executor。
 - 尚有限制：执行器当前处理有界 ready wave，不是任意深度自主 DAG scheduler。
 - 购物已具备 Proposal、Offer、Approval、CheckoutHandoff 的安全边界，但没有真实淘宝 connector。
 - live provider 闭环曾成功，但重复稳定性和厂商账单精确对账仍未完成。

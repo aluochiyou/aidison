@@ -49,7 +49,7 @@ Tavily Remote MCP、GitHub MCP 和安全 HTTP fetch 进入同一受控链路：a
 这解决了“动态编排只在 research 落地”的问题。抽象的成立证据不是类名变通用，而是：
 
 - 通用模块不导入 research；
-- Research 和 Solution 共用 executor；
+- Research、Solution 和 Impact 共用 executor；
 - atomic wave 创建和 reclaim tests 仍通过。
 
 当前仍有意只支持有界 ready wave。只有至少两个业务出现跨层 DAG 的共同需求，才扩展通用 scheduler。
