@@ -1,7 +1,7 @@
 # Aidison 工程决策与面试素材日志
 
 - 维护状态：active
-- 更新日期：2026-08-08
+- 更新日期：2026-08-09
 - 用途：开发期间记录“为什么这样选、替代方案、证据和工程取舍”；版本收口时作为学习文档、简历和面试问答的事实来源。
 - 规则：代码和测试是实现事实，ADR 是已接受决策，本日志只做跨版本索引，不反向覆盖二者。
 
@@ -15,6 +15,7 @@
 | C4 | 通用 `DurablePlanExecutor` + 业务 adapter | 消除 research/solution/impact 重复的派发、绑定、等待、receipt/recovery，同时保留业务类型边界 | 通用 Gap、第二 scheduler、任意 DAG 引擎 | `ADR-0004`、generic boundary、research/solution/impact integration | 多智能体编排、端到端恢复、抽象边界 |
 | C5A | 三种确定性 JoinPolicy + transactional sibling cleanup | 让并行 Agent 的全量、边界部分成功和首个有效结果共享可恢复收敛语义 | 业务 Worker 自行数结果、非确定 winner、只关 Join 不回收 sibling | `ADR-0005`、join policy integration | 并行收敛、锁顺序、预算回收 |
 | C5B | 一次性 scoped EffectApproval | 外部副作用必须绑定服务端冻结 scope，并在 provider 前 durable consume | 复用 DecisionRequest、布尔 approval、provider 后才消费 | `ADR-0006`、shopping API closed loop | capability security、幂等副作用、crash window |
+| V1 | 淘宝 search-only provider | 先把真实电商场景收敛为商品搜索、推荐和报价快照，避免把联盟链接误包装为下单能力 | cart、redirect、订单、支付、淘宝 EffectApproval/checkout | `7fb6e01`、淘宝 unit 43 passed、non-live 258 passed | capability boundary、外部 API 契约、fail-closed 产品范围 |
 
 ## C3 工程细节
 
@@ -63,8 +64,10 @@
 | LangGraph | 中：执行模型与 Agent substrate | 单次 Agent graph/structured response | 上层 durable plan、lease、join、receipt 由 Aidison PostgreSQL 实现 |
 | LoopX | 中：durable protocol donor | generation/CAS、write scope、validate→writeback→spend→ack | 未运行 daemon/tmux/file truth；Aidison 在 PostgreSQL 中重实现最小语义 |
 | OpenRath | 中：durable runtime design donor | lease/fencing、Effect Ledger、interrupt、event cursor/SSE | 未整体 Fork，也未采用 v1/v2 双 runtime 或 Session truth |
-| Globex | 浅：电商教程与交互概念 | 商品搜索/购买流程候选参考 | 教程不构成完整可运行采购后端；当前不作为 planner/executor 代码基础 |
+| Globex | 浅：电商教程与交互概念 | 商品搜索、候选比较和只读工具权限 | 教程不构成完整可运行采购后端；当前不作为 planner/executor 代码基础，也不作为购买自动化实现 |
 
 C5 Join 与 EffectApproval 主要是在 Aidison 自有 PostgreSQL runtime 和 Shopping 闭环上演进，没有复制 LoopX、OpenRath 或 Globex 的代码。参考对象是分布式系统的稳定原则：确定性 replay、事务内状态收敛、capability scope、幂等 receipt 和 provider crash boundary；具体 schema、锁顺序、状态机与验收测试均为本项目实现。
 
 C5 版本已生成 `docs/learning/` 架构与算法教程、源码阅读地图、开发步骤与难点，以及 `docs/interview/` 简历 bullet、项目介绍模板和分层问答；事实证据表位于 `research/aidison-release-learning-docs/report.md`。后续每个 release 仍须更新测试数字与未完成边界，不能沿用过期 claims。
+
+淘宝 V1 是产品边界收敛，不是对 `ADR-0006` 的替代：通用 Shopify checkout 仍使用 scoped EffectApproval；淘宝 adapter 以空 `handoff_kinds` 从 capability 层阻断该流程。实现只验证了 adapter、runtime wiring 与 non-live 回归；TOP 请求 contract 和真实联盟权限尚未验收，因此不得在简历或演示中表述为“淘宝真实搜索已稳定上线”。

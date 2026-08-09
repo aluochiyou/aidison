@@ -19,7 +19,7 @@ flowchart TB
     RT --> PROFILE["Immutable AgentProfile revisions"]
     WORKER --> BUDGET["PostgreSQL budget allocations + operation ledger"]
     WORKER --> DA["Aidison-owned Deep Agents Core 0.7.1"]
-    DA --> MODEL["Bailian / OpenAI provider gateway"]
+    DA --> MODEL["DeepSeek official OpenAI-compatible provider gateway"]
     DA --> SEARCH["Tavily Remote MCP adapter"]
     DA --> GITHUB["GitHub MCP Server v1.8.0 / stdio"]
     SEARCH --> FETCH["Safe HTTPX + Trafilatura fetch"]
@@ -44,7 +44,7 @@ flowchart TB
 | `src/aidison/api` | FastAPI command/query、ETag、错误 envelope、typed historical snapshot normalization 和 cursor SSE。 |
 | `src/aidison/agents` | typed Research Proposal 契约与受限 Deep Agent 组装。 |
 | `src/aidison/tools` | Tavily Remote MCP 与 GitHub 官方只读 MCP 薄适配、有界参数/结果/预算/Artifact 映射，以及已知 URL 的 SSRF/redirect/MIME/size/timeout 边界。 |
-| `src/aidison/providers` | Bailian/OpenAI 显式模型路由；缺 Key 不降级。 |
+| `src/aidison/providers` | DeepSeek 官方 OpenAI-compatible 模型路由，以及 capability-aware shopping adapters；缺 Key 不降级。淘宝 adapter 仅支持搜索/推荐。 |
 | `src/aidison/runtime` | Job、Attempt、Delegation、JoinPolicy/Receipt 与业务无关 PlanRevision/TaskNode 的 typed contracts。 |
 | `src/aidison/operations` + `ops` | 只读 Artifact 一致性检查，以及 Windows/Docker PostgreSQL + Artifact 配对备份和隔离恢复。 |
 | `packages/deepagents` | 固定 SHA 导入的 Deep Agents Core；Aidison Agent 构造已迁移到官方 `HarnessProfile`，vendor 暂仅保留 Windows filesystem 差异与完整回归基线。 |
@@ -92,12 +92,12 @@ Command payload 的 canonical hash 先把 Pydantic model、UUID、Enum 和 times
 2. 本地 control plane 对相同 scope resolve 为 approved 或 denied；TTL 到期只能 expired，terminal gate 不能 reopen。
 3. checkout 重新计算 scope，CAS `approved → consumed`，并在一个事务写 `PREPARED` CheckoutHandoff、event 与 command receipt。
 4. 数据库提交后才调用 provider。相同 idempotency key replay 返回原 handoff且不重复 provider；不同 key 不能复用 consumed approval。
-5. 当前输出仍是 provider-hosted HTTPS checkout，不保存支付凭证、不自动付款。未来淘宝 API/MCP 也必须经过同样的 effect gate，Agent 不获得任意购买工具权限。
+5. 当前通用 checkout 输出仍是 provider-hosted HTTPS handoff，不保存支付凭证、不自动付款。淘宝 V1 不参与该 effect sequence：它只有搜索 capability，handoff capability 为空，所有 cart/redirect/checkout 调用都会 fail closed。
 
 ## Remaining architecture work
 
 - EffectApproval 当前 resolver 是本地单用户 control plane；生产化仍需认证主体、RBAC/双人审批策略和 actor audit，不能把当前 endpoint 描述成完整 IAM。
-- Shopping 当前仍是同步 provider/domain service；若要进入多智能体编排，需定义淘宝商品搜索、候选比较和报价快照的 Agent plan。最终 checkout effect 已有 approval gate，但淘宝真实 API/MCP 适配与服务条款验收尚未完成。
+- Shopping 当前仍是同步 provider/domain service。淘宝已有 opt-in、search-only TOP adapter，可生成 UNKNOWN availability、短 TTL 的报价快照；TOP 方法、签名、时间戳、response envelope、联盟权限和真实搜索仍是 `not_checked`。若要进入多智能体编排，需定义候选比较与报价快照的 Agent plan；淘宝购买能力不在当前产品范围。
 - 稳定真实 Bailian structured output + Tavily Remote MCP + Artifact + Join + Domain 的四旋翼 live gate；一次完整业务闭环已成功，但重复运行仍受外部来源/Agent 工具行为波动影响。
 - GitHub 单次公开文件读取、fake stdio 和 Artifact/hash 内核已验证；完整 Agent 是否稳定选择 GitHub 工具仍需纳入四旋翼 live gate，而不是增加无界重试。
 - HarnessProfile 项目回归通过后仍需验证上游 Windows ripgrep 行为；在用户确认前不删除 `packages/deepagents`。
