@@ -593,16 +593,30 @@ export function DraftWorkbench({
     []
   );
 
-  const handleDraftEdgeRemove = useCallback(
+  /**
+   * Toggle a dependency edge's Draft removal state.
+   *
+   * - If the edge is a Draft-only addition (in draftEdges), remove it.
+   * - If the edge is canonical (from the snapshot), toggle removedEdges.
+   * - If the edge is already in removedEdges, restore it.
+   */
+  const handleEdgeToggle = useCallback(
     (edgeKey: string) => {
       setDraftEdges((prev) => {
-        const next = new Set(prev);
-        next.delete(edgeKey);
-        return next;
+        if (prev.has(edgeKey)) {
+          const next = new Set(prev);
+          next.delete(edgeKey);
+          return next;
+        }
+        return prev;
       });
       setRemovedEdges((prev) => {
         const next = new Set(prev);
-        next.add(edgeKey);
+        if (next.has(edgeKey)) {
+          next.delete(edgeKey);
+        } else {
+          next.add(edgeKey);
+        }
         return next;
       });
     },
@@ -1013,7 +1027,7 @@ export function DraftWorkbench({
             lockedModuleIds={lockedModuleIds}
             modules={snapshot.modules}
             onDraftEdgeAdd={handleDraftEdgeAdd}
-            onDraftEdgeRemove={handleDraftEdgeRemove}
+            onEdgeToggle={handleEdgeToggle}
             onSelectModule={setOpenModuleId}
             removedEdges={removedEdges}
             selectedModuleId={openModuleId}

@@ -21,7 +21,7 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LockKeyhole } from "lucide-react";
-import { ModulePixel } from "@/app/components/ModulePixel";
+import { ModulePixelSprite } from "@/app/components/ModulePixelSprite";
 import type { Module } from "@/app/types/types";
 
 interface ModuleGraphNodeData extends Record<string, unknown> {
@@ -29,8 +29,6 @@ interface ModuleGraphNodeData extends Record<string, unknown> {
   tone: string;
   selectionLabel: string;
   locked: boolean;
-  /** Whether this edge/connection is a Draft-only addition not persisted. */
-  draft?: boolean;
 }
 
 type ModuleGraphNode = Node<ModuleGraphNodeData, "moduleNode">;
@@ -137,6 +135,7 @@ function buildGraph(modules: Module[]): BuiltGraph {
   return { nodes, edges, canonicalEdges };
 }
 
+/** Pixel sprite for graph nodes — larger & more detailed than ModulePixel. */
 function ModuleGraphNodeView({
   data,
   selected,
@@ -148,7 +147,7 @@ function ModuleGraphNodeView({
     >
       <Handle className="crafting-graph-handle" position={Position.Top} type="target" />
       <span className="crafting-graph-node-pixel">
-        <ModulePixel seed={module.key} tone={tone} size={9} />
+        <ModulePixelSprite seed={module.key} tone={tone} size={72} />
         {locked ? (
           <LockKeyhole aria-label="已锁定" className="crafting-lock-badge" />
         ) : null}
@@ -171,9 +170,9 @@ const NODE_TYPES: NodeTypes = { moduleNode: ModuleGraphNodeView };
 
 const ARIA_LABEL_CONFIG: Partial<AriaLabelConfig> = {
   "node.a11yDescription.default":
-    "按回车或空格键选中该模块。选中后可用方向键在模块间移动焦点。按 Delete 键删除节点。",
+    "按回车或空格键选中该模块。选中后可用方向键在模块间移动焦点。选中后可在下方详情面板中编辑模块参数。",
   "node.a11yDescription.keyboardDisabled":
-    "按回车或空格键选中该模块。选中后可用方向键在模块间移动焦点。",
+    "找到该模块后按回车或空格键可选中，选中后可用方向键在模块间移动焦点。",
   "controls.ariaLabel": "依赖图控制面板",
   "controls.zoomIn.ariaLabel": "放大",
   "controls.zoomOut.ariaLabel": "缩小",
@@ -189,12 +188,12 @@ export interface ModuleDependencyGraphProps {
   onSelectModule: (moduleId: string | null) => void;
   /** Draft-only edges added by the user (keyed as "source->target"). */
   draftEdges: ReadonlySet<string>;
-  /** Draft-only edges removed by the user. */
+  /** Draft-only edges removed by the user (keyed as "source->target"). */
   removedEdges: ReadonlySet<string>;
   /** Called when user connects two nodes (creates a draft edge). */
   onDraftEdgeAdd?: (source: string, target: string) => void;
-  /** Called when user deletes a draft edge. */
-  onDraftEdgeRemove?: (edgeKey: string) => void;
+  /** Called when user clicks an edge to toggle its Draft removal state. */
+  onEdgeToggle?: (edgeKey: string) => void;
 }
 
 export function ModuleDependencyGraph({
@@ -206,12 +205,12 @@ export function ModuleDependencyGraph({
   draftEdges,
   removedEdges,
   onDraftEdgeAdd,
-  onDraftEdgeRemove,
+  onEdgeToggle,
 }: ModuleDependencyGraphProps) {
   const built = useMemo(() => buildGraph(modules), [modules]);
   const lastReported = useRef<string | null>(selectedModuleId);
 
-  // Merge canonical + draft − removed edges for the displayed graph.
+  // Merge canonical + draft - removed edges for the displayed graph.
   const mergedEdges = useMemo(() => {
     const result: Edge[] = [];
     const seen = new Set<string>();
@@ -224,13 +223,12 @@ export function ModuleDependencyGraph({
       result.push(e);
     }
 
-    // Draft edges (only if not overlapping canonical)
+    // Draft edges (only if not overlapping canonical or removed)
     for (const draftKey of draftEdges) {
       if (seen.has(draftKey)) continue;
       if (removedEdges.has(draftKey)) continue;
       const [source, target] = draftKey.split("->");
       if (!source || !target) continue;
-      // Only add if both nodes exist
       if (!built.nodes.some((n) => n.id === source)) continue;
       if (!built.nodes.some((n) => n.id === target)) continue;
       seen.add(draftKey);
@@ -242,14 +240,13 @@ export function ModuleDependencyGraph({
           type: MarkerType.ArrowClosed,
           width: 16,
           height: 16,
-          color: "#b85f35", // copper tone for draft edges
+          color: "#b85f35",
         },
         style: {
           stroke: "#b85f35",
           strokeWidth: 2,
           strokeDasharray: "6 3",
         },
-        deletable: true,
       });
     }
 
@@ -259,9 +256,9 @@ export function ModuleDependencyGraph({
   const [nodes, setNodes, onNodesChange] = useNodesState<ModuleGraphNode>(
     built.nodes
   );
-  const [edges, setEdges, onEdgesChange] = useEdgesState(mergedEdges);
+  const [, , onEdgesChange] = useEdgesState(mergedEdges);
 
-  // Sync nodes in when underlying data changes
+  // Sync node labels, tones, selection state when snapshot data changes
   useEffect(() => {
     setNodes((current) =>
       current.map((node) => {
@@ -293,19 +290,20 @@ export function ModuleDependencyGraph({
     );
   }, [built.nodes, lockedModuleIds, selectedNames, selectedModuleId, setNodes]);
 
-  // Sync edges when merged edges change
   useEffect(() => {
     lastReported.current = selectedModuleId;
   }, [selectedModuleId]);
 
-  // Sync edges when merged result changes (draft add/remove)
-  useEffect(() => {
-    setEdges(mergedEdges);
-  }, [mergedEdges, setEdges]);
-
+  // Block node removal: onNodesChange fires for position/selection changes
+  // but we never allow node deletions. React Flow's deleteKeyCode=null
+  // prevents keyboard-driven removal; the absence of a onNodesDelete handler
+  // combined with nodesDraggable (but not deletable) blocks pointer-driven
+  // removal. Each node lacks the `.deletable` class and attribute.
   const handleNodesChange: OnNodesChange<ModuleGraphNode> = useCallback(
     (changes) => {
-      for (const change of changes) {
+      // Filter out any "remove" change type — nodes are immutable canonical data
+      const safe = changes.filter((change) => change.type !== "remove");
+      for (const change of safe) {
         if (change.type === "select") {
           const next = change.selected ? change.id : null;
           if (next !== lastReported.current) {
@@ -314,7 +312,7 @@ export function ModuleDependencyGraph({
           }
         }
       }
-      onNodesChange(changes);
+      onNodesChange(safe);
     },
     [onNodesChange, onSelectModule]
   );
@@ -334,7 +332,6 @@ export function ModuleDependencyGraph({
   const handleConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
-      // Prevent self-loops
       if (connection.source === connection.target) return;
       const key = `${connection.source}->${connection.target}`;
       // Skip if already canonical
@@ -344,29 +341,14 @@ export function ModuleDependencyGraph({
     [built.canonicalEdges, onDraftEdgeAdd]
   );
 
-  // Edge click → delete (only draft edges)
+  // Edge click toggles Draft-only removal.
+  // Canonical edges → removedEdges toggle.  Draft edges → draftEdges toggle.
   const handleEdgeClick = useCallback(
     (_event: unknown, edge: Edge) => {
-      if (!edge.deletable) return;
       const key = `${edge.source}->${edge.target}`;
-      onDraftEdgeRemove?.(key);
+      onEdgeToggle?.(key);
     },
-    [onDraftEdgeRemove]
-  );
-
-  // Delete key handling on nodes (from graph view, removing deps)
-  const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
-      if (event.key === "Delete") {
-        // Delete selected node's draft connections — done via edge removal
-        const selected = nodes.filter((n) => n.selected);
-        if (selected.length) {
-          // For now, deleting a node removes it from selection, not from data
-          // since the graph is read-only for canonical data
-        }
-      }
-    },
-    [nodes]
+    [onEdgeToggle]
   );
 
   if (!modules.length) {
@@ -377,24 +359,28 @@ export function ModuleDependencyGraph({
     );
   }
 
+  // Count Draft changes for the notice
+  const draftChangeCount = draftEdges.size + removedEdges.size;
+
   return (
-    <div className="crafting-graph" onKeyDown={handleKeyDown}>
+    <div className="crafting-graph">
       <ReactFlow
         aria-label="模块依赖图"
         ariaLabelConfig={ARIA_LABEL_CONFIG}
         colorMode="light"
-        deleteKeyCode="Delete"
-        edges={edges}
+        deleteKeyCode={null}
+        edges={mergedEdges}
         edgesFocusable
         edgesReconnectable={false}
         fitView
         fitViewOptions={{ padding: 0.18, maxZoom: 1.1 }}
         maxZoom={1.6}
         minZoom={0.35}
+        multiSelectionKeyCode={null}
         nodeOrigin={[0.5, 0.5]}
         nodeTypes={NODE_TYPES}
         nodes={nodes}
-        nodesConnectable={true}
+        nodesConnectable
         nodesDraggable
         nodesFocusable
         onConnect={handleConnect}
@@ -417,11 +403,11 @@ export function ModuleDependencyGraph({
         />
         <Controls position="bottom-right" showInteractive={false} />
       </ReactFlow>
-      {draftEdges.size > 0 || removedEdges.size > 0 ? (
+      {draftChangeCount > 0 ? (
         <div className="crafting-graph-draft-notice">
           {draftEdges.size > 0 ? `新增 ${draftEdges.size} 条草案连线 · ` : ""}
           {removedEdges.size > 0 ? `暂移除 ${removedEdges.size} 条连线 · ` : ""}
-          所有修改仅保存在前端草稿中
+          点击连线可切换移除状态；所有修改仅保存在前端草稿中
         </div>
       ) : null}
     </div>

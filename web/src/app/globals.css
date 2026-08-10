@@ -2621,6 +2621,12 @@ button {
 .crafting-graph .react-flow__edge:hover .react-flow__edge-path {
   stroke: var(--copper);
   stroke-width: 2.5;
+  cursor: pointer;
+}
+
+/* Edge click feedback: all edges are clickable for Draft toggle */
+.crafting-graph .react-flow__edge {
+  cursor: pointer;
 }
 
 .crafting-graph .react-flow__controls {
@@ -2668,10 +2674,6 @@ button {
   font: 0.6rem "Cascadia Code", monospace;
   box-shadow: 2px 2px 0 rgba(36, 26, 18, 0.3);
   pointer-events: none;
-}
-
-.crafting-graph .react-flow__edge.deletable .react-flow__edge-path {
-  stroke-dasharray: 5 4;
 }
 
 /* ============================================================
