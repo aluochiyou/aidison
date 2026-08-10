@@ -68,6 +68,17 @@ def test_taobao_unavailable_without_adzone_id() -> None:
     assert adapter.available is False
 
 
+def test_taobao_normalizes_full_mm_adzone_display_value() -> None:
+    """TOP receives only the final numeric segment of an Alimama display ID."""
+    adapter = TaobaoAffiliateAdapter(
+        app_key="k",
+        app_secret="s",
+        adzone_id="mm_123_456_7890",
+    )
+
+    assert adapter._adzone_id == "7890"
+
+
 def test_taobao_capabilities_are_search_only() -> None:
     caps = _adapter().capabilities
     assert caps.search is True

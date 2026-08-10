@@ -136,6 +136,21 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _normalize_adzone_id(value: str | None) -> str:
+    """Accept an Alimama ``mm_*_*_<id>`` display value or a numeric ID.
+
+    The TOP ``adzone_id`` request parameter expects only the final numeric
+    segment.  Configuration screens often display the full promotion-slot
+    identifier, so normalise that documented display format at the provider
+    boundary while leaving other values untouched for backwards compatibility.
+    """
+    normalized = (value or _DEFAULT_ADZONE_ID).strip()
+    parts = normalized.split("_")
+    if len(parts) == 4 and parts[0] == "mm" and parts[-1].isdigit():
+        return parts[-1]
+    return normalized
+
+
 # ── Adapter ──────────────────────────────────────────────────────────────────
 
 
@@ -159,7 +174,7 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
     ) -> None:
         self._app_key = (app_key or "").strip()
         self._app_secret = (app_secret or "").strip()
-        self._adzone_id = (adzone_id or _DEFAULT_ADZONE_ID).strip()
+        self._adzone_id = _normalize_adzone_id(adzone_id)
         self._search_timeout_seconds = (
             search_timeout_seconds
             if search_timeout_seconds is not None
