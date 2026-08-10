@@ -48,6 +48,7 @@ flowchart TB
 | `src/aidison/runtime` | Job、Attempt、Delegation、JoinPolicy/Receipt 与业务无关 PlanRevision/TaskNode 的 typed contracts。 |
 | `src/aidison/operations` + `ops` | 只读 Artifact 一致性检查，以及 Windows/Docker PostgreSQL + Artifact 配对备份和隔离恢复。 |
 | `packages/deepagents` | 固定 SHA 导入的 Deep Agents Core；Aidison Agent 构造已迁移到官方 `HarnessProfile`，vendor 暂仅保留 Windows filesystem 差异与完整回归基线。 |
+| `src/aidison/evaluation` | 独立的离线评测域：固定 fixture 的 `EvaluationCase`、`CaseResult`、`MetricResult`、`EvaluationSummary` 与 JSON-safe `EvaluationReport`；纯函数 metric checker 复用 runtime verification/replay 与 capability gate；可选 LangSmith reporter 默认 disabled/fail-closed，`report()` 内惰性 import，当前不发起真实请求。 |
 | `web` | deep-agents-ui 派生的 Project-first 工程控制台。 |
 
 ## State ownership
@@ -103,4 +104,4 @@ Command payload 的 canonical hash 先把 Pydantic model、UUID、Enum 和 times
 - HarnessProfile 项目回归通过后仍需验证上游 Windows ripgrep 行为；在用户确认前不删除 `packages/deepagents`。
 - 正式决定如何处置运行库中五条历史测试污染的 `present`/missing-byte Artifact 审计记录；在此之前运行库备份按设计 fail closed。
 - Provider-side usage reconciliation 与 vendor bill 精确一致性仍为 `not_checked`；本地 ledger 采用上界 reservation 与 ambiguous 保守计费保证不超卖。
-- LangSmith/Langfuse 仅作为可丢弃 observability；当前未接入，也不改变事实源。
+- LangSmith/Langfuse 仅作为可丢弃 observability；`src/aidison/evaluation` 的 LangSmith reporter 默认 disabled/fail-closed，仅显式启用且配置齐全时才可构造客户端，当前未发起任何真实请求，也不改变事实源。
