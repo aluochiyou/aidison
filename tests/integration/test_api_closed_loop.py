@@ -1057,12 +1057,12 @@ async def test_http_closed_loop_etag_idempotency_errors_and_cursor_replay() -> N
             )
 
             events = await client.get(f"/api/projects/{project_id}/events")
-            assert [item["sequence"] for item in events.json()] == list(range(1, 34))
+            assert [item["sequence"] for item in events.json()] == list(range(1, 37))
             replayed_events = await client.get(
                 f"/api/projects/{project_id}/events",
                 params={"after": 5},
             )
-            assert [item["sequence"] for item in replayed_events.json()] == list(range(6, 34))
+            assert [item["sequence"] for item in replayed_events.json()] == list(range(6, 37))
             assert replayed_events.json()[0]["id"] == f"{project_id}:6"
     finally:
         await engine.dispose()

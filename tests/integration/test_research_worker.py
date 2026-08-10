@@ -611,7 +611,7 @@ async def test_worker_runs_bounded_nway_research_into_one_canonical_decision(
                     .select_from(ArtifactRow)
                     .where(ArtifactRow.project_id == project.id)
                 )
-                == child_count * 2 + 1
+                == child_count * 4 + 1
             )
             assert (
                 await session.scalar(

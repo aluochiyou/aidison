@@ -712,7 +712,12 @@ class ReadySetRepository:
                 PlanTaskClaimRow.plan_revision_id == revision_row.id,
                 PlanTaskClaimRow.task_id == task.id,
                 PlanTaskClaimRow.status.in_(
-                    (TaskClaimStatus.CLAIMED.value, TaskClaimStatus.DISPATCHED.value)
+                    (
+                        TaskClaimStatus.CLAIMED.value,
+                        TaskClaimStatus.DISPATCHED.value,
+                        TaskClaimStatus.FAILED.value,
+                        TaskClaimStatus.CANCELLED.value,
+                    )
                 ),
             )
             .values(status=TaskClaimStatus.SUPERSEDED.value, completed_at=datetime.now(UTC))

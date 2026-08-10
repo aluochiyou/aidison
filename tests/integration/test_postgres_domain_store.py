@@ -401,7 +401,7 @@ async def test_postgres_closed_loop_is_idempotent_and_immutable() -> None:
             stored_project = await session.get(ProjectRow, project.id)
             assert stored_project is not None
             assert stored_project.revision == 9
-            assert stored_project.event_sequence == 9
+            assert stored_project.event_sequence == 10
             assert stored_project.active_solution_version_id == revised.id
             assert (
                 await session.scalar(
@@ -418,7 +418,7 @@ async def test_postgres_closed_loop_is_idempotent_and_immutable() -> None:
                     .order_by(DomainEventRow.project_seq)
                 )
             )
-            assert event_sequences == list(range(1, 10))
+            assert event_sequences == list(range(1, 11))
 
             with pytest.raises(DuplicateCommandError):
                 await app.create_project(
