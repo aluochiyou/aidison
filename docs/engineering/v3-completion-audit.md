@@ -17,9 +17,9 @@
 | 草稿工作台事实模型 | Blueprint、configuration revision、lock、adjustment batch、history、snapshot、reshape proposal | `models.py`、`service.py`、`test_draft_application.py` |
 | 用户结构控制 | reshape 仅在 explicit apply 后生成新 active blueprint；历史 blueprint 不覆盖 | `ProjectReshapeProposal` service/API 与 unit test |
 | 执行授权 | approved ExecutionPlanProposal 对 Research/Solution/Impact 入口执行 basis/mode/concurrency/token fail-closed 校验，并冻结到 Job payload | `ADR-0007`、`api/app.py`、API integration contract |
-| UI | Project-first console 展示模块骨架、候选/参数、locks、snapshots、reshape 与执行提案 | `web/src/app/components/DraftWorkbench.tsx`、Next production build |
+| UI | Project-first console 展示模块骨架、候选/参数、locks、snapshots、reshape、ExecutionPlanProposal、影响/版本 diff；RJSF 需求 revision 表单预填当前版本并创建新的 requirement/blueprint revision | `DraftWorkbench.tsx`、`RequirementsRevisionForm.tsx`、Next production build |
 | 离线评测与可选观测 | 固定 fixture、确定性 metrics、JSON-safe report；LangSmith 惰性 import、显式启用且上报失败 fail-closed | `src/aidison/evaluation/`、ADR-0009、36 个 evaluation unit tests |
-| 淘宝只读推荐 | 官方 TOP material search，完整推广位标识兼容为末段数字；不支持 handoff/cart/order/payment | `providers/taobao.py`、focused unit tests、一次真实关键词搜索 |
+| 淘宝只读推荐 | 官方 TOP material search，完整推广位标识兼容为末段数字；Shopping UI 按 integration capability 只显示检索、比较与平台外链，`UNKNOWN` 库存不伪装为 0；不支持 handoff/cart/order/payment | `providers/taobao.py`、`ShoppingView.tsx`、focused unit tests、一次真实关键词搜索 |
 
 ## 验证结果
 
