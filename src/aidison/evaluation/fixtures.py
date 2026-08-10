@@ -80,7 +80,9 @@ FIXTURE_CASES: tuple[EvaluationCase, ...] = (
                 "status": "succeeded",
                 "result_ref": f"artifact+sha256://{_SHA256}/00000000-0000-0000-0000-000000000011",
                 "evidence_refs": [_EVIDENCE_ONE, _EVIDENCE_TWO],
-                "artifact_refs": [f"artifact+sha256://{_SHA256}/00000000-0000-0000-0000-000000000012"],
+                "artifact_refs": [
+                    f"artifact+sha256://{_SHA256}/00000000-0000-0000-0000-000000000012"
+                ],
                 "confidence": 0.9,
                 "schema_ref": "aidison://schemas/research-proposal/v2",
             },
@@ -135,6 +137,4 @@ FIXTURE_CASES: tuple[EvaluationCase, ...] = (
     ),
 )
 
-FIXTURE_CASES_BY_KEY: dict[str, EvaluationCase] = {
-    case.key: case for case in FIXTURE_CASES
-}
+FIXTURE_CASES_BY_KEY: dict[str, EvaluationCase] = {case.key: case for case in FIXTURE_CASES}

@@ -77,16 +77,18 @@ class LangSmithEvaluationReporter:
             return
 
     def _send(self, report: EvaluationReport) -> None:
-        client = self._client if self._client is not None else self._client_factory(
-            api_key=self._api_key, api_url=self._api_url
+        client = (
+            self._client
+            if self._client is not None
+            else self._client_factory(api_key=self._api_key, api_url=self._api_url)
         )
         self._client = client
         run_id = str(report.run_id)
         summary_payload = report.summary.model_dump(mode="json")
         client.create_run(
             name="aidison-evaluation",
-            run_id=run_id,
-            run_type="evaluation",
+            id=run_id,
+            run_type="chain",
             project_name=self._project_name,
             inputs={
                 "mode": report.mode.value,

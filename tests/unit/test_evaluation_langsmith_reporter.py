@@ -4,6 +4,7 @@ import asyncio
 import json
 
 from pydantic import SecretStr
+from pytest import MonkeyPatch
 
 from aidison.evaluation.langsmith_reporter import (
     LangSmithEvaluationReporter,
@@ -32,10 +33,7 @@ def test_build_reporter_returns_none_when_disabled() -> None:
 
 def test_build_reporter_returns_none_when_missing_key_or_project() -> None:
     assert (
-        build_evaluation_reporter(
-            _settings(langsmith_enabled=True, langsmith_api_key=None)
-        )
-        is None
+        build_evaluation_reporter(_settings(langsmith_enabled=True, langsmith_api_key=None)) is None
     )
     assert (
         build_evaluation_reporter(
@@ -55,6 +53,12 @@ def test_build_reporter_enabled_only_when_fully_configured() -> None:
     )
     assert reporter is not None
     assert reporter.enabled is True
+
+
+def test_settings_accepts_standard_langsmith_project_variable(monkeypatch: MonkeyPatch) -> None:
+    monkeypatch.setenv("LANGSMITH_PROJECT", "aidison-live-evaluation")
+    settings = EvaluationSettings(_env_file=None)
+    assert settings.langsmith_project == "aidison-live-evaluation"
 
 
 def test_report_payload_never_contains_the_api_key() -> None:
@@ -107,8 +111,10 @@ def test_fake_client_records_run_and_feedback_without_network() -> None:
     assert len(created) == 1
     client = created[0]
     assert len(client.runs) == 1
-    assert client.runs[0]["run_id"] == str(report.run_id)
-    assert client.runs[0]["run_type"] == "evaluation"
+    assert client.runs[0]["id"] == str(report.run_id)
+    assert "run_id" not in client.runs[0]
+    assert client.runs[0]["run_type"] == "chain"
+    assert "aidison-evaluation" in client.runs[0]["tags"]
     assert len(client.feedback) == 1
     assert client.feedback[0]["key"] == "case_status"
     assert client.feedback[0]["score"] == 1.0

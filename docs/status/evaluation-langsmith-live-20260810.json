@@ -1,0 +1,228 @@
+{
+  "cases": [
+    {
+      "case_key": "structured-contract-complete",
+      "completed_at": "2026-08-10T11:56:08.380386Z",
+      "duration_seconds": 0.000117,
+      "error": null,
+      "inputs": {
+        "payload": {
+          "confidence": 0.9,
+          "objective": "Compare three flight controller options",
+          "output_schema_ref": "aidison://schemas/research-proposal/v2",
+          "status": "succeeded",
+          "task_key": "research/quadrotor/components"
+        },
+        "schema": {
+          "fields": {
+            "confidence": {
+              "required": true,
+              "type": "float"
+            },
+            "objective": {
+              "required": true,
+              "type": "str"
+            },
+            "output_schema_ref": {
+              "required": true,
+              "type": "str"
+            },
+            "status": {
+              "enum": [
+                "succeeded",
+                "failed",
+                "cancelled"
+              ],
+              "required": true,
+              "type": "str"
+            },
+            "task_key": {
+              "pattern": "^[a-z][a-z0-9/._-]{0,119}$",
+              "required": true,
+              "type": "str"
+            }
+          }
+        }
+      },
+      "metric_id": "structured_contract",
+      "metrics": [
+        {
+          "detail": "structured output conforms to the declared contract",
+          "metric_id": "structured_contract",
+          "payload": {
+            "field_count": 5
+          },
+          "status": "pass"
+        }
+      ],
+      "started_at": "2026-08-10T11:56:08.380269Z",
+      "status": "passed",
+      "title": "Structured output conforms to the declared contract"
+    },
+    {
+      "case_key": "evidence-refs-resolved",
+      "completed_at": "2026-08-10T11:56:08.380415Z",
+      "duration_seconds": 1.2e-05,
+      "error": null,
+      "inputs": {
+        "available_refs": [
+          "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000001",
+          "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000002",
+          "artifact+sha256://eartifact+sha256://eartifact+sha256://eartifact+sha256://eartifact+sha256://eartifact+sha256://eartifact+sha256://eartifact+sha256://e"
+        ],
+        "cited_refs": [
+          "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000001",
+          "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000002"
+        ],
+        "min_evidence": 1
+      },
+      "metric_id": "evidence_completeness",
+      "metrics": [
+        {
+          "detail": "every cited evidence ref resolves and the minimum is met",
+          "metric_id": "evidence_completeness",
+          "payload": {
+            "available_count": 3,
+            "cited_count": 2
+          },
+          "status": "pass"
+        }
+      ],
+      "started_at": "2026-08-10T11:56:08.380403Z",
+      "status": "passed",
+      "title": "Every cited evidence reference resolves"
+    },
+    {
+      "case_key": "result-admission-coherent",
+      "completed_at": "2026-08-10T11:56:08.380518Z",
+      "duration_seconds": 9.8e-05,
+      "error": null,
+      "inputs": {
+        "policy": {
+          "accepted_schema_refs": [
+            "aidison://schemas/research-proposal/v2"
+          ],
+          "min_evidence_refs": 1,
+          "policy_id": "research-result-v1",
+          "require_artifact_refs": true
+        },
+        "result": {
+          "artifact_refs": [
+            "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000012"
+          ],
+          "basis_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "confidence": 0.9,
+          "evidence_refs": [
+            "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000001",
+            "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000002"
+          ],
+          "handoff_id": "00000000-0000-0000-0000-000000000010",
+          "result_ref": "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000011",
+          "schema_ref": "aidison://schemas/research-proposal/v2",
+          "status": "succeeded"
+        }
+      },
+      "metric_id": "result_admission",
+      "metrics": [
+        {
+          "detail": "runtime admission and verification receipt are coherent",
+          "metric_id": "result_admission",
+          "payload": {
+            "admission_status": "admitted",
+            "reasons": [
+              "policy:research-result-v1",
+              "declared_contract_valid"
+            ],
+            "verification_status": "admitted"
+          },
+          "status": "pass"
+        }
+      ],
+      "started_at": "2026-08-10T11:56:08.380420Z",
+      "status": "passed",
+      "title": "Runtime admission produces a coherent receipt for a valid result"
+    },
+    {
+      "case_key": "replay-dispatch-once",
+      "completed_at": "2026-08-10T11:56:08.380572Z",
+      "duration_seconds": 4.9e-05,
+      "error": null,
+      "inputs": {
+        "recording": {
+          "attempt_id": "00000000-0000-0000-0000-000000000022",
+          "basis_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "idempotency_key": "job-1:github:search_code:stable",
+          "job_id": "00000000-0000-0000-0000-000000000021",
+          "kind": "tool",
+          "operation_name": "search_code",
+          "project_id": "00000000-0000-0000-0000-000000000020",
+          "provider": "github",
+          "request_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "response_artifact_ref": "artifact+sha256://cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/00000000-0000-0000-0000-000000000023",
+          "status": "succeeded"
+        }
+      },
+      "metric_id": "replay_determinism",
+      "metrics": [
+        {
+          "detail": "replayed artifact served without invoking the external callable",
+          "metric_id": "replay_determinism",
+          "payload": {
+            "idempotency_key": "job-1:github:search_code:stable"
+          },
+          "status": "pass"
+        }
+      ],
+      "started_at": "2026-08-10T11:56:08.380523Z",
+      "status": "passed",
+      "title": "Recorded invocation replays without a second external dispatch"
+    },
+    {
+      "case_key": "red-action-blocked",
+      "completed_at": "2026-08-10T11:56:08.380591Z",
+      "duration_seconds": 1.5e-05,
+      "error": null,
+      "inputs": {
+        "allowed_effects": [
+          "discovery"
+        ],
+        "allowed_tool_classes": [
+          "web_search"
+        ],
+        "attempted_tool_class": "web_search",
+        "required_effects": [
+          "discovery",
+          "write"
+        ]
+      },
+      "metric_id": "red_action",
+      "metrics": [
+        {
+          "detail": "red action correctly blocked by the capability gate",
+          "metric_id": "red_action",
+          "payload": {
+            "reason": "delegation does not allow required effects: write"
+          },
+          "status": "pass"
+        }
+      ],
+      "started_at": "2026-08-10T11:56:08.380576Z",
+      "status": "passed",
+      "title": "Capability gate blocks an ungranted effect"
+    }
+  ],
+  "generated_at": "2026-08-10T11:56:08.380649Z",
+  "mode": "live",
+  "reporter": "langsmith",
+  "run_id": "204556f7-a4be-5108-898a-714f5b7d03c6",
+  "runner_version": "0.1.0",
+  "schema_version": "aidison-evaluation/v1",
+  "summary": {
+    "case_count": 5,
+    "duration_seconds": 0.000332,
+    "errored": 0,
+    "failed": 0,
+    "passed": 5,
+    "skipped": 0
+  }
+}
