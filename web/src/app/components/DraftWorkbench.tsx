@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
 import {
   Box,
@@ -568,6 +568,47 @@ export function DraftWorkbench({
   const [snapshotLabel, setSnapshotLabel] = useState("");
   const [feedback, setFeedback] = useState<Feedback | null>(null);
 
+  // Draft edge state — local-only, not sent to the server
+  const [draftEdges, setDraftEdges] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [removedEdges, setRemovedEdges] = useState<Set<string>>(
+    () => new Set()
+  );
+
+  const handleDraftEdgeAdd = useCallback(
+    (source: string, target: string) => {
+      const key = `${source}->${target}`;
+      setDraftEdges((prev) => {
+        const next = new Set(prev);
+        next.add(key);
+        return next;
+      });
+      setRemovedEdges((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleDraftEdgeRemove = useCallback(
+    (edgeKey: string) => {
+      setDraftEdges((prev) => {
+        const next = new Set(prev);
+        next.delete(edgeKey);
+        return next;
+      });
+      setRemovedEdges((prev) => {
+        const next = new Set(prev);
+        next.add(edgeKey);
+        return next;
+      });
+    },
+    []
+  );
+
   const configurations = useMemo(
     () => snapshot.module_configurations ?? [],
     [snapshot.module_configurations]
@@ -968,9 +1009,13 @@ export function DraftWorkbench({
               )
               .sort()
               .join(",")}`}
+            draftEdges={draftEdges}
             lockedModuleIds={lockedModuleIds}
             modules={snapshot.modules}
+            onDraftEdgeAdd={handleDraftEdgeAdd}
+            onDraftEdgeRemove={handleDraftEdgeRemove}
             onSelectModule={setOpenModuleId}
+            removedEdges={removedEdges}
             selectedModuleId={openModuleId}
             selectedNames={selectedNames}
           />

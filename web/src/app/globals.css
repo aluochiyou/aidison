@@ -192,6 +192,14 @@
 /* ============================================================
    V3 Player-facing Minecraft skin
    Ordinary users manipulate a workbench, not an orchestration dashboard.
+   This file covers:
+     - Base tokens (pixel-ink, pixel-dirt, pixel-wood, pixel-sand, pixel-grass, pixel-sky)
+     - Launch page (landing)
+     - Console shell (project header)
+     - Workbench (crafting-table + graph)
+     - Pixel UI components (buttons, panels, dialogs)
+     - Responsive breakpoints
+     - Reduced-motion media query
    ============================================================ */
 :root {
   --pixel-ink: #241a12;
@@ -222,6 +230,73 @@ select,
 .view-overlay-panel,
 [role="dialog"] {
   border-radius: 0 !important;
+}
+
+/* Globally unify all clickable UI with pixel block shadow.
+   Pages outside the workbench also get the Minecraft feel. */
+button:not(.no-pixel-style),
+a[role="button"]:not(.no-pixel-style),
+[role="button"]:not(.no-pixel-style) {
+  border-radius: 0 !important;
+  border: 2px solid var(--pixel-ink);
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.34),
+    inset -2px -2px 0 rgba(36, 26, 18, 0.2), 3px 3px 0 rgba(36, 26, 18, 0.78);
+}
+
+button:not(.no-pixel-style):active,
+a[role="button"]:not(.no-pixel-style):active,
+[role="button"]:not(.no-pixel-style):active {
+  transform: translate(2px, 2px);
+  box-shadow: inset 2px 2px 0 rgba(36, 26, 18, 0.2);
+}
+
+/* Dialog unification — every Radix dialog gets pixel framing */
+[data-slot="dialog-content"] {
+  border-radius: 0 !important;
+  border: 3px solid var(--pixel-ink) !important;
+  box-shadow: 8px 8px 0 rgba(36, 26, 18, 0.28) !important;
+  background: #f8faf9 !important;
+}
+
+[data-slot="dialog-content"] [data-slot="dialog-header"] {
+  border-bottom: 2px solid color-mix(in srgb, var(--pixel-ink) 25%, transparent);
+  padding-bottom: 0.6rem;
+  margin-bottom: 0.4rem;
+}
+
+[data-slot="dialog-content"] [data-slot="dialog-close"] {
+  border: 2px solid var(--pixel-ink) !important;
+  background: rgba(255, 255, 255, 0.85) !important;
+  color: var(--pixel-ink) !important;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+}
+
+/* Input/textarea pixel-border */
+[data-slot="dialog-content"] input,
+[data-slot="dialog-content"] textarea {
+  border: 2px solid color-mix(in srgb, var(--pixel-ink) 50%, transparent) !important;
+  border-radius: 0 !important;
+  background: #fff !important;
+  padding: 0.45rem 0.55rem !important;
+  font-family: "Cascadia Code", Consolas, monospace !important;
+  font-size: 0.78rem !important;
+}
+
+[data-slot="dialog-content"] input:focus,
+[data-slot="dialog-content"] textarea:focus {
+  border-color: var(--pixel-ink) !important;
+  outline: 2px solid var(--pixel-grass) !important;
+  outline-offset: 1px !important;
+}
+
+/* Ensure dialog title is pixel-weighted */
+[data-slot="dialog-content"] [data-slot="dialog-title"] {
+  font-family: "Arial Black", Impact, sans-serif !important;
+  letter-spacing: 0.015em !important;
+  text-shadow: 1px 1px 0 rgba(36, 26, 18, 0.15) !important;
 }
 
 .launch-shell,
@@ -280,6 +355,39 @@ select,
 .developer-mode-toggle {
   color: #f8edcf;
   background: #4b5960 !important;
+}
+
+/* ============================================================
+   View Overlay Pixel Unification
+   ============================================================ */
+.view-overlay-panel {
+  border: 3px solid var(--pixel-ink) !important;
+  box-shadow: 10px 10px 0 rgba(36, 26, 18, 0.24) !important;
+  border-radius: 0 !important;
+  background: #f8faf9 !important;
+}
+
+/* Module detail view sidebar — consistent with dialog unification */
+.view-nav {
+  border-right: 2px solid var(--pixel-ink) !important;
+  background: color-mix(in srgb, var(--pixel-sand) 12%, #fff) !important;
+}
+
+.view-nav-item {
+  border: 0 !important;
+  box-shadow: none !important;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.view-nav-item:hover {
+  background: color-mix(in srgb, var(--pixel-grass) 16%, transparent) !important;
+  color: var(--pixel-ink) !important;
+}
+
+.view-nav-item.is-active {
+  border-right: 4px solid var(--copper) !important;
+  background: color-mix(in srgb, var(--copper) 10%, transparent) !important;
+  color: var(--copper) !important;
 }
 
 .console-body.is-player {
@@ -2546,6 +2654,24 @@ button {
 
 .crafting-graph-empty {
   padding: 1rem;
+}
+
+.crafting-graph-draft-notice {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 10;
+  padding: 0.35rem 0.6rem;
+  border: 2px solid var(--copper, #b85f35);
+  color: #f8edcf;
+  background: #4b5960;
+  font: 0.6rem "Cascadia Code", monospace;
+  box-shadow: 2px 2px 0 rgba(36, 26, 18, 0.3);
+  pointer-events: none;
+}
+
+.crafting-graph .react-flow__edge.deletable .react-flow__edge-path {
+  stroke-dasharray: 5 4;
 }
 
 /* ============================================================
