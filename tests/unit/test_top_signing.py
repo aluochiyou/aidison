@@ -1,10 +1,12 @@
 """Tests for Taobao TOP MD5 signing protocol.
 
-NOTE (not_checked): the TOP signing canonicalisation (URL-encoding of
-values, timestamp timezone/format) is unverified against an official
-reference.  The vector tests below are self-consistent and cannot detect a
-wrong canonicalisation; replace them with a golden vector sourced from an
-authenticated sandbox or a known-good Taobao SDK before any live use.
+NOTE (not_checked): the TOP signing canonicalisation (value URL-encoding,
+canonical composition) is unverified against an official reference — the
+provided official ``api文档`` documents ``sign_method`` values but not the
+canonical composition.  The vector tests below are self-consistent and
+cannot detect a wrong canonicalisation; replace them with a golden vector
+sourced from an authenticated sandbox or a known-good Taobao SDK before any
+live use.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from aidison.providers.taobao import _top_sign
 def test_top_sign_is_deterministic() -> None:
     """Same parameters + same secret → same signature every time."""
     params = {
-        "method": "taobao.tbk.dg.material.optional",
+        "method": "taobao.tbk.dg.material.optional.upgrade",
         "app_key": "12345678",
         "format": "json",
         "v": "2.0",
@@ -36,7 +38,7 @@ def test_top_sign_is_deterministic() -> None:
 
 def test_top_sign_changes_with_secret() -> None:
     params = {
-        "method": "taobao.tbk.dg.material.optional",
+        "method": "taobao.tbk.dg.material.optional.upgrade",
         "app_key": "123",
         "format": "json",
         "v": "2.0",
@@ -55,7 +57,7 @@ def test_top_sign_changes_with_secret() -> None:
 def test_top_sign_changes_with_params() -> None:
     secret = "my-secret"
     base = {
-        "method": "taobao.tbk.dg.material.optional",
+        "method": "taobao.tbk.dg.material.optional.upgrade",
         "app_key": "123",
         "format": "json",
         "v": "2.0",

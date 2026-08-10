@@ -1,7 +1,8 @@
 """Taobao Affiliate TOP API adapter — search/recommendation only.
 
 Supports the official Taobao Open Platform (TOP) API for:
-- ``taobao.tbk.dg.material.optional`` — keyword material search.
+- ``taobao.tbk.dg.material.optional.upgrade`` — keyword material search
+  (淘宝客-推广者-物料搜索升级版，通用物料搜索API（导购）).
 
 This adapter follows the ShoppingProvider contract: fail-closed when
 configuration is missing, bounded results, strict timeouts, HTTPS-only,
@@ -17,11 +18,22 @@ Key constraints:
 - **Final-price/inventory disclaimer** — search results carry an explicit
   disclaimer that prices may differ at checkout.
 
-NOTE (not_checked): the TOP request contract — method name, MD5 signing
-canonicalisation (including URL-encoding of values and timestamp timezone/
-format), and the response/error schema — has NOT been verified against an
-authenticated sandbox or an official Taobao SDK.  Do not call live TOP
-until it is verified and a golden-vector signing test is added.
+Official contract (source: the latest ``docs/taobao/api文档`` in the main
+Aidison workspace):
+- request method ``taobao.tbk.dg.material.optional.upgrade``, 免费不需用户授权;
+- keyword ``q`` (affiliate links are NOT accepted as ``q``), default
+  ``material_id=80309``, required ``adzone_id``, optional
+  ``page_no``/``page_size``;
+- response envelope ``tbk_dg_material_optional_upgrade_response`` with
+  ``result_list.map_data[]`` items (``item_id``, ``item_basic_info``,
+  ``price_promotion_info``, ``publish_info``).
+
+not_checked (requires an authenticated TOP call or the TOP signing spec):
+- the TOP MD5 signing canonicalisation — the provided doc does not reproduce
+  the signing algorithm (value URL-encoding, canonical composition);
+- which optional response fields are actually populated on a live response.
+Do not call live TOP until signing is verified and a golden-vector signing
+test is added.
 """
 
 from __future__ import annotations
@@ -29,7 +41,7 @@ from __future__ import annotations
 import hashlib
 import json as _json
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import urlencode
 
@@ -56,9 +68,13 @@ _ACCEPTED_JSON_CONTENT_TYPES: frozenset[str] = frozenset(
     {"application/json", "text/javascript"}
 )
 _DEFAULT_ADZONE_ID = ""  # Must be set in config.yaml
+_DEFAULT_MATERIAL_ID = "80309"  # Official default material id
 _DEFAULT_MAX_RESULTS = 20
 _OFFER_TTL_MINUTES = 5
 _SEARCH_TIMEOUT_DEFAULT = 5.0
+# Official TOP timestamp timezone is GMT+8; UTC would be ~8h stale and exceed
+# the 10-minute server tolerance.
+_GMT_PLUS_8 = timezone(timedelta(hours=8))
 
 
 class TaobaoSettings(AidisonSettings):
@@ -71,9 +87,7 @@ class TaobaoSettings(AidisonSettings):
     yaml_section = "taobao"
 
     adzone_id: str = Field(default=_DEFAULT_ADZONE_ID)
-    search_timeout_seconds: float = Field(
-        default=_SEARCH_TIMEOUT_DEFAULT, ge=0.1, le=30
-    )
+    search_timeout_seconds: float = Field(default=_SEARCH_TIMEOUT_DEFAULT, ge=0.1, le=30)
     max_search_results: int = Field(default=_DEFAULT_MAX_RESULTS, ge=1, le=50)
 
 
@@ -88,10 +102,11 @@ def _top_sign(params: dict[str, str], secret: str) -> str:
     hex digest.
 
     not_checked: this canonicalisation is NOT verified against an official
-    TOP signing reference.  In particular, parameter values are not
-    URL-encoded before signing and the timestamp uses UTC — both are common
-    TOP contract mismatches.  Verify with an authenticated sandbox or a
-    known-good Taobao SDK before any live use.
+    TOP signing reference.  The provided official ``api文档`` documents the
+    ``sign_method`` values (hmac/md5/hmac-sha256) but not the canonical
+    composition itself (in particular whether values are URL-encoded before
+    signing).  Verify with an authenticated sandbox or a known-good Taobao
+    SDK before any live use.
     """
     sorted_keys = sorted(params)
     canonical = "".join(f"{key}{params[key]}" for key in sorted_keys)
@@ -194,17 +209,14 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
             timeout_seconds if timeout_seconds is not None else self._search_timeout_seconds
         )
 
-        # not_checked: the method name, material_id/platform values, and the
-        # response envelope are unverified against official TOP docs.
         params = self._build_params(
-            method="taobao.tbk.dg.material.optional",
+            method="taobao.tbk.dg.material.optional.upgrade",
             extra={
                 "adzone_id": self._adzone_id,
-                "material_id": "13366",  # Default promotion material ID
+                "material_id": _DEFAULT_MATERIAL_ID,  # Official default
                 "page_size": str(min(max_results, self._max_search_results)),
                 "page_no": "1",
                 "q": query,
-                "platform": "2",  # Cross-platform result format
             },
         )
         raw = await self._call_api(params, timeout_seconds=effective_timeout)
@@ -226,9 +238,7 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         ``kind`` or ``offer``, so Taobao offers can never reach the
         purchase/approval/handoff flow.
         """
-        raise ShoppingProviderError(
-            "taobao is search-only and does not support handoff creation"
-        )
+        raise ShoppingProviderError("taobao is search-only and does not support handoff creation")
 
     async def create_cart(
         self,
@@ -237,9 +247,7 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         region: str = "CN",
         timeout_seconds: float = 5.0,
     ) -> Any:
-        raise ShoppingProviderError(
-            "taobao is search-only and does not support cart creation"
-        )
+        raise ShoppingProviderError("taobao is search-only and does not support cart creation")
 
     # ── internals ─────────────────────────────────────────────────────────
 
@@ -258,9 +266,9 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
     ) -> dict[str, str]:
         """Build signed TOP request parameters.
 
-        not_checked: the ``timestamp`` timezone/format and the signing
-        canonicalisation are unverified against official TOP docs; see
-        ``_top_sign``.
+        The official doc fixes ``timestamp`` to ``yyyy-MM-dd HH:mm:ss`` in
+        GMT+8.  The signing canonicalisation itself remains not_checked;
+        see ``_top_sign``.
         """
         params: dict[str, str] = {
             "method": method,
@@ -268,7 +276,7 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
             "format": "json",
             "v": "2.0",
             "sign_method": "md5",
-            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S"),
+            "timestamp": datetime.now(_GMT_PLUS_8).strftime("%Y-%m-%d %H:%M:%S"),
         }
         if extra:
             params.update(extra)
@@ -361,17 +369,22 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         max_results: int,
         region: str,
     ) -> Sequence[ShoppingOffer]:
-        """Parse TOP material search response into ShoppingOffer list."""
+        """Parse TOP material-search response into ShoppingOffer list.
+
+        Reads the official ``taobao.tbk.dg.material.optional.upgrade``
+        response schema: ``result_list.map_data[]`` items carry ``item_id``
+        plus the ``item_basic_info`` / ``price_promotion_info`` /
+        ``publish_info`` blocks.  Flat legacy keys are kept as fallbacks for
+        robustness.
+        """
         result_list = _deep_get(
             raw,
-            "tbk_dg_material_optional_response",
+            "tbk_dg_material_optional_upgrade_response",
             "result_list",
             "map_data",
         )
         if result_list is None:
-            raise ShoppingProviderError(
-                "taobao search response is missing result_list data"
-            )
+            raise ShoppingProviderError("taobao search response is missing result_list data")
 
         # result_list may be a list or a dict keyed by index
         if isinstance(result_list, dict):
@@ -384,35 +397,53 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
         observed = datetime.now(UTC)
         expires_at = observed + timedelta(minutes=_OFFER_TTL_MINUTES)
         offers: list[ShoppingOffer] = []
-        details: list[dict[str, Any]] = []
 
         for item in items:
             if not isinstance(item, dict):
                 continue
-            # Flatten: some API versions nest data under fro_descend etc.
-            # Accept either a flat item or one with nested fields.
-            details.append(item)
-
-        for item in details:
             if len(offers) >= max_results:
                 break
 
-            title = str(item.get("title") or item.get("item_title") or query)
-            num_iid = str(item.get("num_iid") or item.get("item_id") or "")
+            basic = item.get("item_basic_info")
+            if not isinstance(basic, dict):
+                basic = {}
+            promo = item.get("price_promotion_info")
+            if not isinstance(promo, dict):
+                promo = {}
+            publish = item.get("publish_info")
+            if not isinstance(publish, dict):
+                publish = {}
+
+            title = str(basic.get("title") or item.get("title") or item.get("item_title") or query)
+            item_id = str(item.get("item_id") or item.get("num_iid") or "")
             seller = str(
-                item.get("nick") or item.get("seller_nick") or item.get("shop_title") or ""
+                basic.get("shop_title")
+                or basic.get("seller_id")
+                or item.get("nick")
+                or item.get("seller_nick")
+                or ""
             )
 
-            # Price: Decimal-safe — use string directly
-            raw_price = item.get("zk_final_price") or item.get("reserve_price") or "0.00"
-            # Handle float-like values from API
+            # Price: prefer 预估到手价 (final_promotion_price), then 销售价格
+            # (zk_final_price), then 划线价 (reserve_price).  Decimal-safe —
+            # unit_price is passed through as a string.
+            raw_price = (
+                promo.get("final_promotion_price")
+                or promo.get("zk_final_price")
+                or promo.get("reserve_price")
+                or item.get("zk_final_price")
+                or item.get("reserve_price")
+                or "0.00"
+            )
             unit_price = _safe_decimal_str(raw_price)
 
             # Search metadata surfaced as product_url (required by
             # OfferSnapshot.product_url); it is never used for a redirect —
-            # Taobao is search-only.
+            # Taobao is search-only.  Prefer the 宝贝+券二合一 link.
             product_url = str(
-                item.get("coupon_share_url")
+                publish.get("coupon_share_url")
+                or publish.get("click_url")
+                or item.get("coupon_share_url")
                 or item.get("item_url")
                 or item.get("url")
                 or ""
@@ -420,15 +451,11 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
 
             currency = "CNY"
 
-            # Post-coupon price is an approximation; always warn
-            coupon_amount = item.get("coupon_amount") or "0"
-            coupon_start_fee = item.get("coupon_start_fee") or "0"
-
             offers.append(
                 ShoppingOffer(
                     provider="taobao",
-                    provider_offer_id=num_iid or f"tb:{_hash_str(title[:50])}",
-                    merchandise_id=num_iid or None,
+                    provider_offer_id=item_id or f"tb:{_hash_str(title[:50])}",
+                    merchandise_id=item_id or None,
                     seller=seller or None,
                     title=title[:1000],
                     condition="new",
@@ -443,9 +470,9 @@ class TaobaoAffiliateAdapter(ShoppingProvider):
                     observed_at=observed,
                     expires_at=expires_at,
                     raw_provider_payload={
-                        "num_iid": num_iid,
-                        "coupon_amount": str(coupon_amount),
-                        "coupon_start_fee": str(coupon_start_fee),
+                        "item_id": item_id,
+                        "final_promotion_price": str(promo.get("final_promotion_price") or ""),
+                        "zk_final_price": str(promo.get("zk_final_price") or ""),
                         "search_query": query,
                         "disclaimer": (
                             "实际成交价格和库存请以淘宝/天猫商品详情页为准。"

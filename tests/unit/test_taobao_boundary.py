@@ -1,8 +1,17 @@
-"""Tests for the Taobao Affiliate adapter."""
+"""Tests for the Taobao Affiliate adapter (search/recommendation only).
+
+V3 official contract (source: ``docs/taobao/api文档`` in the main Aidison
+workspace): the adapter calls ``taobao.tbk.dg.material.optional.upgrade``
+and parses the ``tbk_dg_material_optional_upgrade_response`` envelope with
+nested ``item_basic_info`` / ``price_promotion_info`` / ``publish_info``
+blocks.
+"""
 
 from __future__ import annotations
 
 import json
+import re
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -28,6 +37,11 @@ def _adapter(client: httpx.AsyncClient | None = None) -> TaobaoAffiliateAdapter:
         adzone_id="test-adzone",
         http_client=client,
     )
+
+
+def _captured_params(request: httpx.Request) -> dict[str, str]:
+    """Parse the urlencoded TOP request body for contract assertions."""
+    return dict(urllib.parse.parse_qsl(request.content.decode("utf-8")))
 
 
 # ── Configuration / availability ───────────────────────────────────────
@@ -72,20 +86,30 @@ async def test_taobao_search_rejects_empty_query() -> None:
 @pytest.mark.asyncio
 async def test_taobao_search_parses_response() -> None:
     mock_response = {
-        "tbk_dg_material_optional_response": {
+        "tbk_dg_material_optional_upgrade_response": {
+            "total_results": 1212,
             "result_list": {
                 "map_data": [
                     {
-                        "num_iid": "123456789",
-                        "title": "SCD41 CO2 传感器模块",
-                        "nick": "传感器专卖店",
-                        "zk_final_price": "168.00",
-                        "coupon_amount": "10",
-                        "coupon_start_fee": "178.00",
-                        "coupon_share_url": "https://uland.taobao.com/item.htm?id=123456789",
+                        "item_id": "qeqscd1231-uqwenqe",
+                        "item_basic_info": {
+                            "title": "SCD41 CO2 传感器模块",
+                            "shop_title": "传感器专卖店",
+                            "seller_id": 998877,
+                        },
+                        "price_promotion_info": {
+                            "reserve_price": "199.00",
+                            "zk_final_price": "178.00",
+                            "final_promotion_price": "168.00",
+                        },
+                        "publish_info": {
+                            "click_url": "https://item.taobao.com/item.htm?id=123456789",
+                            "coupon_share_url": ("https://uland.taobao.com/coupon/edetail?e=abc"),
+                        },
                     }
                 ]
-            }
+            },
+            "uvid_msg": "123",
         }
     }
 
@@ -101,33 +125,74 @@ async def test_taobao_search_parses_response() -> None:
         assert len(offers) == 1
         offer = offers[0]
         assert offer.provider == "taobao"
-        assert offer.provider_offer_id == "123456789"
+        assert offer.provider_offer_id == "qeqscd1231-uqwenqe"
         assert "SCD41" in offer.title
         assert offer.seller == "传感器专卖店"
-        assert offer.unit_price == "168.00"
+        assert offer.unit_price == "168.00"  # final_promotion_price preferred
         assert offer.currency == "CNY"
         assert offer.availability == OfferAvailability.UNKNOWN
-        assert offer.product_url == "https://uland.taobao.com/item.htm?id=123456789"
+        assert offer.quantity_available == 0
+        assert offer.product_url == "https://uland.taobao.com/coupon/edetail?e=abc"
+
+
+@pytest.mark.asyncio
+async def test_taobao_search_uses_official_contract_params() -> None:
+    """The TOP request uses the upgrade method and the documented params."""
+    captured: list[dict[str, str]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        captured.append(_captured_params(request))
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json;charset=utf-8"},
+            content=json.dumps({"tbk_dg_material_optional_upgrade_response": {}}).encode(),
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        with pytest.raises(ShoppingProviderError, match="missing result_list"):
+            await _adapter(client).search_offers("SCD41 传感器", max_results=10)
+
+    assert len(captured) == 1
+    params = captured[0]
+    assert params["method"] == "taobao.tbk.dg.material.optional.upgrade"
+    assert params["q"] == "SCD41 传感器"
+    assert params["material_id"] == "80309"
+    assert params["adzone_id"] == "test-adzone"
+    assert params["page_no"] == "1"
+    assert params["page_size"] == "10"
+    assert "platform" not in params
+    assert params["format"] == "json"
+    assert params["v"] == "2.0"
+    assert params["sign_method"] == "md5"
+    assert params["sign"] != ""
+    # The secret never leaves the process: it is not part of the body.
+    assert "test-secret" not in params.values()
+    # Official timestamp format is yyyy-MM-dd HH:mm:ss (GMT+8).
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", params["timestamp"])
 
 
 @pytest.mark.asyncio
 async def test_taobao_search_parses_response_dict_format() -> None:
     """result_list can be a dict keyed by index."""
     mock_response = {
-        "tbk_dg_material_optional_response": {
+        "tbk_dg_material_optional_upgrade_response": {
             "result_list": {
                 "map_data": {
                     "0": {
-                        "num_iid": "111",
-                        "title": "Product A",
-                        "zk_final_price": "99.00",
-                        "coupon_share_url": "https://item.taobao.com/item.htm?id=111",
+                        "item_id": "111",
+                        "item_basic_info": {"title": "Product A"},
+                        "price_promotion_info": {"final_promotion_price": "99.00"},
+                        "publish_info": {
+                            "coupon_share_url": "https://item.taobao.com/item.htm?id=111"
+                        },
                     },
                     "1": {
-                        "num_iid": "222",
-                        "title": "Product B",
-                        "zk_final_price": "199.00",
-                        "coupon_share_url": "https://item.taobao.com/item.htm?id=222",
+                        "item_id": "222",
+                        "item_basic_info": {"title": "Product B"},
+                        "price_promotion_info": {"final_promotion_price": "199.00"},
+                        "publish_info": {
+                            "coupon_share_url": "https://item.taobao.com/item.htm?id=222"
+                        },
                     },
                 }
             }
@@ -150,11 +215,15 @@ async def test_taobao_search_parses_response_dict_format() -> None:
 @pytest.mark.asyncio
 async def test_taobao_search_respects_max_results() -> None:
     mock_response = {
-        "tbk_dg_material_optional_response": {
+        "tbk_dg_material_optional_upgrade_response": {
             "result_list": {
                 "map_data": [
-                    {"num_iid": str(i), "title": f"Item {i}", "zk_final_price": "10.00",
-                     "coupon_share_url": f"https://item.taobao.com/item.htm?id={i}"}
+                    {
+                        "item_id": str(i),
+                        "title": f"Item {i}",
+                        "zk_final_price": "10.00",
+                        "coupon_share_url": f"https://item.taobao.com/item.htm?id={i}",
+                    }
                     for i in range(10)
                 ]
             }
@@ -175,7 +244,7 @@ async def test_taobao_search_respects_max_results() -> None:
 
 @pytest.mark.asyncio
 async def test_taobao_search_missing_data_raises() -> None:
-    mock_response: dict[str, dict[str, object]] = {"tbk_dg_material_optional_response": {}}
+    mock_response: dict[str, dict[str, object]] = {"tbk_dg_material_optional_upgrade_response": {}}
 
     def respond(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -359,14 +428,16 @@ def test_safe_decimal_str_from_invalid() -> None:
 @pytest.mark.asyncio
 async def test_taobao_offers_have_short_ttl() -> None:
     mock_response = {
-        "tbk_dg_material_optional_response": {
+        "tbk_dg_material_optional_upgrade_response": {
             "result_list": {
                 "map_data": [
                     {
-                        "num_iid": "1",
-                        "title": "Fresh",
-                        "zk_final_price": "10.00",
-                        "coupon_share_url": "https://item.taobao.com/item.htm?id=1",
+                        "item_id": "1",
+                        "item_basic_info": {"title": "Fresh"},
+                        "price_promotion_info": {"final_promotion_price": "10.00"},
+                        "publish_info": {
+                            "coupon_share_url": "https://item.taobao.com/item.htm?id=1"
+                        },
                     }
                 ]
             }
