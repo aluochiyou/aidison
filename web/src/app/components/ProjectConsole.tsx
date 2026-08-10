@@ -9,6 +9,7 @@ import {
   Bot,
   Check,
   CircleAlert,
+  Code2,
   Database,
   FlaskConical,
   GitBranch,
@@ -374,7 +375,7 @@ function ResearchAction({
         snapshot.project.revision,
         approvedPlan.id
       );
-      toast.success("有界研究已进入 durable Job 队列");
+      toast.success("AI 已开始查找资料；完成后会把可选方案带回来给你看。");
       await onDone();
     } catch (error) {
       toast.error(displayError(error, "无法启动研究"));
@@ -389,7 +390,7 @@ function ResearchAction({
         snapshot.project.id,
         snapshot.project.revision
       );
-      toast.success("已生成研究执行范围草案，请在工作台确认后启动。");
+      toast.success("AI 已写好查找计划，请在工作台确认范围后再开始。");
       await onDone();
     } catch (error) {
       toast.error(displayError(error, "无法生成研究执行范围"));
@@ -404,19 +405,19 @@ function ResearchAction({
         <Search className="h-5 w-5" />
         <div>
           <small>查找资料</small>
-          <h2>启动有界研究</h2>
+          <h2>让 AI 帮你查找资料</h2>
         </div>
       </div>
       <p>
-        PostgreSQL 持有 Job、Attempt、Delegation 与 JoinReceipt；Deep Agent
-        只生成 typed Proposal。
+        AI
+        会先告诉你它准备查什么、怎么查；你确认后才开始。找到的资料和推荐理由会留在项目里，方便以后回看。
       </p>
       <Button
         disabled={busy}
         onClick={() => void (approvedPlan ? start() : proposePlan())}
       >
         <Bot className="h-4 w-4" />
-        {busy ? "正在准备…" : approvedPlan ? "开始查找资料" : "生成待确认执行范围"}
+        {busy ? "正在准备…" : approvedPlan ? "开始查找资料" : "先查看查找计划"}
       </Button>
     </div>
   );
@@ -1046,6 +1047,7 @@ export function ProjectConsole({
   onBack,
 }: ProjectConsoleProps) {
   const [auditOpen, setAuditOpen] = useState(false);
+  const [developerMode, setDeveloperMode] = useState(false);
   const { data, error, isLoading, mutate } = useSWR(
     ["project-snapshot", initialProject.id],
     () => getClient().getSnapshot(initialProject.id),
@@ -1111,15 +1113,17 @@ export function ProjectConsole({
             项目列表
           </Button>
           <div className="project-title">
-            <small>PROJECT / {shortId(project.id)}</small>
+            <small>正在制作</small>
             <h1>{project.name}</h1>
           </div>
-          <div className="truth-badge">
-            <Database className="h-4 w-4" />
-            <span>REV {String(project.revision).padStart(2, "0")}</span>
-            <i className={connected ? "is-online" : ""} />
-            {connected ? "LIVE" : "RECONNECTING"}
-          </div>
+          {developerMode ? (
+            <div className="truth-badge">
+              <Database className="h-4 w-4" />
+              <span>REV {String(project.revision).padStart(2, "0")}</span>
+              <i className={connected ? "is-online" : ""} />
+              {connected ? "LIVE" : "RECONNECTING"}
+            </div>
+          ) : null}
           <Button
             variant="outline"
             size="sm"
@@ -1128,49 +1132,74 @@ export function ProjectConsole({
             <RefreshCw className="h-4 w-4" />
             刷新
           </Button>
+          <Button
+            aria-pressed={developerMode}
+            className="developer-mode-toggle"
+            onClick={() => setDeveloperMode((current) => !current)}
+            size="sm"
+            variant="ghost"
+          >
+            <Code2 className="h-4 w-4" />
+            {developerMode ? "退出开发者模式" : "开发者模式"}
+          </Button>
         </div>
-        <StageRail project={project} />
+        {developerMode ? <StageRail project={project} /> : null}
       </header>
 
-      <div className="console-body">
-        {/* Left module board — always visible */}
-        <aside className="module-board">
-          <div className="panel-heading">
-            <div>
-              <small>MODULE GRAPH</small>
-              <h2>工程模块</h2>
+      <div
+        className={`console-body ${
+          developerMode ? "is-developer" : "is-player"
+        }`}
+      >
+        {/* 作品与模块的日常操作集中在像素工程台；传统模块列表只在开发者模式保留。 */}
+        {developerMode ? (
+          <aside className="module-board">
+            <div className="panel-heading">
+              <div>
+                <small>MODULE GRAPH</small>
+                <h2>工程模块</h2>
+              </div>
+              <span>{snapshot.modules.length}</span>
             </div>
-            <span>{snapshot.modules.length}</span>
-          </div>
-          <div className="module-list">
-            {snapshot.modules.length ? (
-              snapshot.modules.map((module) => (
-                <ModuleCard
-                  key={module.id}
-                  module={module}
-                  onClick={() => selectModule(module.id)}
-                />
-              ))
-            ) : (
-              <p className="empty-copy">
-                批准需求后，这里会显示通用 DIY 模块。
-              </p>
-            )}
-          </div>
-        </aside>
+            <div className="module-list">
+              {snapshot.modules.length ? (
+                snapshot.modules.map((module) => (
+                  <ModuleCard
+                    key={module.id}
+                    module={module}
+                    onClick={() => selectModule(module.id)}
+                  />
+                ))
+              ) : (
+                <p className="empty-copy">
+                  批准需求后，这里会显示通用 DIY 模块。
+                </p>
+              )}
+            </div>
+          </aside>
+        ) : null}
 
         {/* Center: V0 主线动作 + SolutionVersions + ViewShell with View Navigation */}
         <section className="workbench">
-          <ProjectPulse workspace={snapshot.workspace} />
+          {developerMode ? (
+            <ProjectPulse workspace={snapshot.workspace} />
+          ) : null}
           <div className="goal-strip">
             <span>GOAL</span>
             <p>{project.goal}</p>
           </div>
-          <DraftWorkbench snapshot={snapshot} onRefresh={refresh} />
+          <DraftWorkbench
+            developerMode={developerMode}
+            snapshot={snapshot}
+            onRefresh={refresh}
+          />
           <NextAction
             snapshot={snapshot}
             onDone={refresh}
-            onOpenAudit={() => setAuditOpen(true)}
+            onOpenAudit={() => {
+              setDeveloperMode(true);
+              setAuditOpen(true);
+            }}
           />
 
           <section className="solution-board">
@@ -1234,125 +1263,128 @@ export function ProjectConsole({
             onSelectSolutionVersion={selectSolutionVersion}
             onClearOverlay={clearOverlay}
             onRefresh={refresh}
+            developerMode={developerMode}
           />
         </section>
 
-        {/* Right board: readable work first, runtime audit on demand */}
-        <aside className="audit-board">
-          <div className="panel-heading">
-            <div>
-              <small>WORK ACTIVITY</small>
-              <h2>工作动态</h2>
+        {/* 运行预算、Agent 及事件流属于工程审计，不占普通用户的工作台。 */}
+        {developerMode ? (
+          <aside className="audit-board">
+            <div className="panel-heading">
+              <div>
+                <small>WORK ACTIVITY</small>
+                <h2>工作动态</h2>
+              </div>
+              <Activity className="h-4 w-4" />
             </div>
-            <Activity className="h-4 w-4" />
-          </div>
-          <div className="work-summary-stack">
-            {snapshot.workspace?.work.toReversed().map((item) => (
-              <article key={item.run_id}>
-                <div>
-                  <strong>{item.user_label}</strong>
-                  <StatusTag status={item.state} />
-                </div>
-                <p>
-                  {item.total_units
-                    ? `${item.completed_units} / ${item.total_units} 个子任务已结束`
-                    : "正在准备工作范围"}
-                </p>
-                {item.failed_units ? (
-                  <small>{item.failed_units} 个子任务需要检查</small>
-                ) : null}
-              </article>
-            ))}
-            {!snapshot.workspace?.work.length ? (
-              <p className="empty-copy">
-                当前没有后台工作；需要启动或确认时会在这里说明。
-              </p>
-            ) : null}
-          </div>
-
-          <details
-            className="advanced-audit"
-            open={auditOpen}
-            onToggle={(event) => setAuditOpen(event.currentTarget.open)}
-          >
-            <summary>
-              <Database className="h-4 w-4" />
-              查看 Agent 与事件审计
-            </summary>
-            <div className="advanced-audit-body">
-              {snapshot.runtime.budget_accounts.toReversed().map((budget) => (
-                <div
-                  className="runtime-stack"
-                  key={budget.id}
-                >
-                  <article>
-                    <div>
-                      <strong>Run budget</strong>
-                      <StatusTag status={budget.status} />
-                    </div>
-                    <small>
-                      tokens {budget.token_committed.toLocaleString()} /{" "}
-                      {budget.token_cap.toLocaleString()}
-                      {" · "}tools {budget.tool_calls_committed} /{" "}
-                      {budget.tool_call_cap}
-                    </small>
-                  </article>
-                </div>
+            <div className="work-summary-stack">
+              {snapshot.workspace?.work.toReversed().map((item) => (
+                <article key={item.run_id}>
+                  <div>
+                    <strong>{item.user_label}</strong>
+                    <StatusTag status={item.state} />
+                  </div>
+                  <p>
+                    {item.total_units
+                      ? `${item.completed_units} / ${item.total_units} 个子任务已结束`
+                      : "正在准备工作范围"}
+                  </p>
+                  {item.failed_units ? (
+                    <small>{item.failed_units} 个子任务需要检查</small>
+                  ) : null}
+                </article>
               ))}
-              <div className="runtime-stack">
-                {snapshot.runtime.jobs.toReversed().map((job) => {
-                  const error = snapshot.runtime.attempts.findLast(
-                    (attempt) =>
-                      attempt.job_id === job.id && attempt.normalized_error
-                  )?.normalized_error;
-                  return (
-                    <article key={job.id}>
+              {!snapshot.workspace?.work.length ? (
+                <p className="empty-copy">
+                  当前没有后台工作；需要启动或确认时会在这里说明。
+                </p>
+              ) : null}
+            </div>
+
+            <details
+              className="advanced-audit"
+              open={auditOpen}
+              onToggle={(event) => setAuditOpen(event.currentTarget.open)}
+            >
+              <summary>
+                <Database className="h-4 w-4" />
+                查看 Agent 与事件审计
+              </summary>
+              <div className="advanced-audit-body">
+                {snapshot.runtime.budget_accounts.toReversed().map((budget) => (
+                  <div
+                    className="runtime-stack"
+                    key={budget.id}
+                  >
+                    <article>
                       <div>
-                        <Bot className="h-4 w-4" />
-                        <strong>
-                          {job.parent_job_id ? job.profile_id : "Coordinator"}
-                        </strong>
-                        <StatusTag status={job.status} />
+                        <strong>Run budget</strong>
+                        <StatusTag status={budget.status} />
                       </div>
                       <small>
-                        gen {job.generation} · profile r{job.profile_revision} ·{" "}
-                        {shortId(job.id)}
+                        tokens {budget.token_committed.toLocaleString()} /{" "}
+                        {budget.token_cap.toLocaleString()}
+                        {" · "}tools {budget.tool_calls_committed} /{" "}
+                        {budget.tool_call_cap}
                       </small>
-                      {error ? (
-                        <code className="runtime-error">{error}</code>
-                      ) : null}
                     </article>
-                  );
-                })}
-              </div>
-
-              <div className="panel-heading timeline-heading">
-                <div>
-                  <small>PROJECT CURSOR</small>
-                  <h2>因果事件</h2>
-                </div>
-                <span>{events.length}</span>
-              </div>
-              <div className="event-timeline">
-                {latestEvents.map((event) => (
-                  <article key={event.id}>
-                    <span>{String(event.sequence).padStart(3, "0")}</span>
-                    <div>
-                      <strong>{eventLabel(event.type)}</strong>
-                      <code>{event.id}</code>
-                      <time dateTime={event.created_at}>
-                        {eventTime(event.created_at)}
-                      </time>
-                    </div>
-                  </article>
+                  </div>
                 ))}
-                {!latestEvents.length ? (
-                  <p className="empty-copy">等待事件流连接…</p>
-                ) : null}
+                <div className="runtime-stack">
+                  {snapshot.runtime.jobs.toReversed().map((job) => {
+                    const error = snapshot.runtime.attempts.findLast(
+                      (attempt) =>
+                        attempt.job_id === job.id && attempt.normalized_error
+                    )?.normalized_error;
+                    return (
+                      <article key={job.id}>
+                        <div>
+                          <Bot className="h-4 w-4" />
+                          <strong>
+                            {job.parent_job_id ? job.profile_id : "Coordinator"}
+                          </strong>
+                          <StatusTag status={job.status} />
+                        </div>
+                        <small>
+                          gen {job.generation} · profile r{job.profile_revision}{" "}
+                          · {shortId(job.id)}
+                        </small>
+                        {error ? (
+                          <code className="runtime-error">{error}</code>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+
+                <div className="panel-heading timeline-heading">
+                  <div>
+                    <small>PROJECT CURSOR</small>
+                    <h2>因果事件</h2>
+                  </div>
+                  <span>{events.length}</span>
+                </div>
+                <div className="event-timeline">
+                  {latestEvents.map((event) => (
+                    <article key={event.id}>
+                      <span>{String(event.sequence).padStart(3, "0")}</span>
+                      <div>
+                        <strong>{eventLabel(event.type)}</strong>
+                        <code>{event.id}</code>
+                        <time dateTime={event.created_at}>
+                          {eventTime(event.created_at)}
+                        </time>
+                      </div>
+                    </article>
+                  ))}
+                  {!latestEvents.length ? (
+                    <p className="empty-copy">等待事件流连接…</p>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          </details>
-        </aside>
+            </details>
+          </aside>
+        ) : null}
       </div>
     </main>
   );

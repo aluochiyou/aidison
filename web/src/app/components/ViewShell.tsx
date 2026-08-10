@@ -34,6 +34,7 @@ interface ViewShellProps {
   onSelectSolutionVersion: (solutionVersionId: string) => void;
   onClearOverlay: () => void;
   onRefresh: () => void;
+  developerMode: boolean;
 }
 
 const NAV_ITEMS: {
@@ -132,6 +133,7 @@ export function ViewShell({
   onSelectSolutionVersion,
   onClearOverlay,
   onRefresh,
+  developerMode,
 }: ViewShellProps) {
   // compute focused module for drill-down
   const focusedModule = useMemo(
@@ -168,7 +170,14 @@ export function ViewShell({
       case "shopping":
         return <ShoppingView snapshot={snapshot} />;
       case "integration-health":
-        return <IntegrationHealthCard />;
+        return developerMode ? (
+          <IntegrationHealthCard />
+        ) : (
+          <ResearchEvidenceView
+            snapshot={snapshot}
+            onSelectModule={onSelectModule}
+          />
+        );
       default:
         return (
           <ResearchEvidenceView
@@ -191,7 +200,9 @@ export function ViewShell({
           <small>VIEWS</small>
         </div>
         <ul>
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.filter(
+            (item) => developerMode || item.view !== "integration-health"
+          ).map((item) => (
             <li key={item.view}>
               <button
                 className={`view-nav-item ${

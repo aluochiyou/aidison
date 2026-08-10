@@ -189,6 +189,194 @@
   }
 }
 
+/* ============================================================
+   V3 Player-facing Minecraft skin
+   Ordinary users manipulate a workbench, not an orchestration dashboard.
+   ============================================================ */
+:root {
+  --pixel-ink: #241a12;
+  --pixel-dirt: #6d4325;
+  --pixel-wood: #a66a37;
+  --pixel-sand: #dfbd7d;
+  --pixel-grass: #5e8d43;
+  --pixel-sky: #b9ddef;
+}
+
+html,
+body {
+  background-color: var(--pixel-sky);
+  background-image: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.22) 1px,
+      transparent 1px
+    ),
+    linear-gradient(rgba(255, 255, 255, 0.22) 1px, transparent 1px);
+  background-size: 18px 18px;
+  font-family: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+}
+
+button,
+input,
+textarea,
+select,
+.view-overlay-panel,
+[role="dialog"] {
+  border-radius: 0 !important;
+}
+
+.launch-shell,
+.console-shell {
+  min-height: 100vh;
+}
+
+.launch-shell {
+  background: transparent;
+}
+
+.launch-copy,
+.launch-specimen,
+.console-header,
+.module-board,
+.audit-board,
+.action-block,
+.solution-board,
+.view-nav,
+.view-content > section {
+  border-radius: 0;
+  border-color: var(--pixel-ink);
+  box-shadow: 5px 5px 0 rgba(36, 26, 18, 0.26);
+}
+
+.launch-copy h1,
+.project-title h1,
+.crafting-head-title h2 {
+  font-family: "Arial Black", Impact, sans-serif;
+  letter-spacing: 0.015em;
+  text-shadow: 2px 2px 0 rgba(36, 26, 18, 0.22);
+}
+
+.launch-actions button,
+.console-header button,
+.crafting-workbench button,
+.view-shell button,
+.action-block button,
+.solution-board button {
+  border-radius: 0 !important;
+  border: 2px solid var(--pixel-ink);
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.34),
+    inset -2px -2px 0 rgba(36, 26, 18, 0.2), 3px 3px 0 rgba(36, 26, 18, 0.78);
+}
+
+.launch-actions button:active,
+.console-header button:active,
+.crafting-workbench button:active,
+.view-shell button:active,
+.action-block button:active,
+.solution-board button:active {
+  transform: translate(2px, 2px);
+  box-shadow: inset 2px 2px 0 rgba(36, 26, 18, 0.2);
+}
+
+.developer-mode-toggle {
+  color: #f8edcf;
+  background: #4b5960 !important;
+}
+
+.console-body.is-player {
+  display: block;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 1.2rem;
+}
+
+.console-body.is-player .workbench {
+  min-width: 0;
+}
+
+.crafting-view-switch {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 0.5rem;
+  border: 2px solid #5f3d22;
+  background: #754a2c;
+  color: #f8edcf;
+  font-size: 0.67rem;
+}
+
+.crafting-view-switch > span {
+  margin-right: 0.3rem;
+  font-weight: 700;
+}
+
+.crafting-view-switch button {
+  min-height: 2rem;
+  color: var(--pixel-ink);
+  background: #d8b36f;
+}
+
+.crafting-view-switch button.is-active {
+  color: #fff8e6;
+  background: var(--pixel-grass);
+}
+
+.crafting-table-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 2fr);
+  gap: 0.8rem;
+  align-items: stretch;
+}
+
+.crafting-table-layout .crafting-output {
+  grid-template-columns: 1fr;
+  align-content: start;
+  justify-items: start;
+}
+
+.crafting-table-layout .crafting-output-meta {
+  grid-column: auto;
+  align-items: flex-start;
+}
+
+.crafting-table-layout .crafting-grid {
+  min-height: 250px;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-content: start;
+}
+
+.crafting-block {
+  min-height: 154px;
+  background: #f6e2b7;
+}
+
+.crafting-block:hover:not(:disabled) {
+  background: #fff0ca;
+}
+
+.crafting-products,
+.crafting-boundary,
+.crafting-history,
+.draft-snapshot-bar,
+.crafting-inspector {
+  border-radius: 0;
+  box-shadow: inset 2px 2px 0 rgba(255, 255, 255, 0.22),
+    4px 4px 0 rgba(36, 26, 18, 0.3);
+}
+
+@media (max-width: 900px) {
+  .crafting-table-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .crafting-table-layout .crafting-output,
+  .crafting-table-layout .crafting-output-meta {
+    align-items: center;
+    justify-items: center;
+    text-align: center;
+  }
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -921,7 +1109,11 @@ button {
   gap: 1rem;
   align-items: flex-start;
   padding: 1.1rem 1.2rem;
-  background: linear-gradient(108deg, #f8faf9 0 68%, rgba(184, 95, 53, 0.12) 68%);
+  background: linear-gradient(
+    108deg,
+    #f8faf9 0 68%,
+    rgba(184, 95, 53, 0.12) 68%
+  );
 }
 
 .draft-workbench-heading small,
@@ -990,7 +1182,10 @@ button {
   gap: 0.7rem;
   padding: 1rem 1.2rem;
   background-color: #dce8eb;
-  background-image: linear-gradient(rgba(36, 126, 148, 0.16) 1px, transparent 1px),
+  background-image: linear-gradient(
+      rgba(36, 126, 148, 0.16) 1px,
+      transparent 1px
+    ),
     linear-gradient(90deg, rgba(36, 126, 148, 0.16) 1px, transparent 1px);
   background-size: 14px 14px;
 }
@@ -2238,7 +2433,8 @@ button {
   box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.55),
     inset -3px -3px 0 rgba(16, 27, 42, 0.16), 4px 4px 0 var(--ink);
   cursor: pointer;
-  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+  transition: transform 120ms ease, box-shadow 120ms ease,
+    border-color 120ms ease;
 }
 
 .crafting-graph-node:hover {
@@ -2453,7 +2649,6 @@ button {
   padding-top: 0.25rem;
   border-top: 1px dashed var(--line);
 }
-
 
 /* 模块详情抽屉 */
 .crafting-inspector {
@@ -2797,7 +2992,11 @@ button {
   padding: 1rem;
   border: 2px solid var(--ink);
   color: var(--ink);
-  background: linear-gradient(135deg, rgba(184, 95, 53, 0.06), rgba(184, 95, 53, 0) 55%),
+  background: linear-gradient(
+      135deg,
+      rgba(184, 95, 53, 0.06),
+      rgba(184, 95, 53, 0) 55%
+    ),
     #f8faf9;
   box-shadow: 4px 4px 0 rgba(16, 27, 42, 0.16);
 }
@@ -3168,6 +3367,54 @@ button {
 /* ============================================================
    V3 Pixel Crafting Workbench — 响应式收窄
    ============================================================ */
+.crafting-quickstart {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 0.8rem 1rem;
+  margin: 0.9rem 0;
+  padding: 0.75rem 0.9rem;
+  border: 2px solid var(--pixel-wood, #7b4b27);
+  border-left: 6px solid var(--pixel-grass, #73a82b);
+  background: color-mix(in srgb, var(--pixel-sand, #f3d89b) 52%, white);
+  box-shadow: 3px 3px 0
+    color-mix(in srgb, var(--pixel-ink, #1d2733) 45%, transparent);
+}
+
+.crafting-quickstart strong {
+  color: var(--pixel-ink, #1d2733);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.crafting-quickstart ol {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.crafting-quickstart li {
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.crafting-quickstart b {
+  display: inline-grid;
+  width: 1.15rem;
+  height: 1.15rem;
+  place-items: center;
+  margin-right: 0.25rem;
+  color: white;
+  background: var(--pixel-grass, #73a82b);
+  box-shadow: 2px 2px 0 var(--pixel-ink, #1d2733);
+  font-size: 0.68rem;
+}
+
 @media (max-width: 1150px) {
   .crafting-output {
     grid-template-columns: auto 1fr;
@@ -3187,6 +3434,14 @@ button {
 }
 
 @media (max-width: 820px) {
+  .crafting-quickstart {
+    grid-template-columns: 1fr;
+  }
+
+  .crafting-quickstart ol {
+    display: grid;
+  }
+
   .crafting-workbench {
     padding: 0.7rem;
   }
