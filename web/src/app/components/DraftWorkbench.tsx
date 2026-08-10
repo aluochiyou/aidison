@@ -755,18 +755,18 @@ export function DraftWorkbench({ snapshot, onRefresh }: DraftWorkbenchProps) {
         />
       ) : null}
 
-      {/* 商品占位输出槽 */}
+      {/* 商品输出与采购边界 */}
       <div className="crafting-products">
         <div className="crafting-section-title">
           <PackageSearch className="h-4 w-4" aria-hidden="true" />
           <div>
-            <small>OUTPUT · PRODUCTS（占位）</small>
+            <small>OUTPUT · PRODUCTS</small>
             <strong>商品输出槽</strong>
           </div>
-          <span className="crafting-placeholder-tag">未接入淘宝 · 仅占位</span>
+          <span className="crafting-placeholder-tag">选型投影 · 不自动搜索</span>
         </div>
         <p className="crafting-products-note">
-          以下卡片仅为当前草稿选型的占位投影，不含真实价格、库存或购买动作；正式采购需另行接入并经过明确确认。
+          以下卡片反映当前草稿选型，不含实时价格或库存。实际商品搜索在“Shopping”视图中由你主动发起；淘宝仅提供只读推荐，不会创建购物车、跳转购买、下单或支付。
         </p>
         <div className="crafting-products-grid">
           {snapshot.modules.map((module) => {
@@ -785,7 +785,7 @@ export function DraftWorkbench({ snapshot, onRefresh }: DraftWorkbenchProps) {
                   <small>
                     {candidate
                       ? candidate.description
-                      : "完成选型后这里会显示占位商品。"}
+                      : "完成选型后这里会显示对应的选型投影。"}
                   </small>
                 </div>
                 <span className="product-placeholder-price">¥ —</span>
