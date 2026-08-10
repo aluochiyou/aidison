@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import useSWR from "swr";
 import {
   AlertTriangle,
   Building2,
@@ -58,6 +59,17 @@ type ShoppingPhase =
   | "handing-off";
 
 export function ShoppingView({ snapshot }: ShoppingViewProps) {
+  const { data: integrationHealth, error: integrationHealthError } = useSWR(
+    "integration-health",
+    () => getClient().getIntegrationHealth()
+  );
+  const searchEnabled = Boolean(
+    integrationHealth?.shopping.available && integrationHealth.shopping.search
+  );
+  const supportsHandoff = Boolean(
+    integrationHealth?.shopping.available &&
+      integrationHealth.shopping.handoff_kinds.length
+  );
   // Extract BOM from latest solution
   const activeSolution: SolutionVersion | null = useMemo(() => {
     if (snapshot.project.active_solution_version_id) {
@@ -416,8 +428,9 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
         <div className="shopping-safety-notice">
           <Shield className="h-4 w-4" />
           <small>
-            Shopping 只搜索报价和生成
-            PurchaseProposal。不保存或请求支付信息、地址、email。
+            {supportsHandoff
+              ? "Shopping 可搜索报价并在明确授权后创建 provider handoff。不保存或请求支付信息、地址、email。"
+              : "当前 provider 仅支持只读商品推荐。不会创建 Proposal、购物车、购买跳转、订单或支付。"}
           </small>
         </div>
 
@@ -467,13 +480,14 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
 
         <div className="shopping-actions">
           <Button
-            disabled={selectedBomLines.size === 0 || searching}
+            disabled={selectedBomLines.size === 0 || searching || !searchEnabled}
             onClick={() => void searchOffers()}
           >
             <Search className="h-4 w-4" />
-            {searching ? "搜索中…" : "搜索报价"}
+            {searching ? "搜索中…" : searchEnabled ? "搜索报价" : "搜索当前不可用"}
           </Button>
         </div>
+        {integrationHealthError ? <p className="shopping-error">无法读取商品能力，已安全禁用搜索。</p> : null}
       </div>
     );
   }
@@ -566,7 +580,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                         <div className="offer-meta">
                           <div className="offer-meta-item">
                             <Package className="h-3 w-3" />
-                            <span>库存: {offer.quantity_available}</span>
+                            <span>库存: {offer.availability === "unknown" ? "未知" : offer.quantity_available}</span>
                           </div>
                           <div className="offer-meta-item">
                             <Globe className="h-3 w-3" />
@@ -595,16 +609,12 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                         <ExternalLink className="h-3 w-3" /> 查看清单
                       </a>
 
-                      <Button
-                        size="sm"
-                        disabled={expired}
-                        onClick={() =>
-                          createProposal(offer, bomItem ?? bomItems[0])
-                        }
-                      >
-                        <ShoppingCart className="h-3 w-3" />
-                        从此卖家创建 Proposal
-                      </Button>
+                      {supportsHandoff ? (
+                        <Button size="sm" disabled={expired} onClick={() => createProposal(offer, bomItem ?? bomItems[0])}>
+                          <ShoppingCart className="h-3 w-3" />
+                          从此卖家创建 Proposal
+                        </Button>
+                      ) : <small className="shopping-read-only-note">只读推荐；请在平台页面核对价格、库存与规格。</small>}
                     </article>
                   );
                 })}

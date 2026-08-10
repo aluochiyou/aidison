@@ -784,6 +784,8 @@ export interface IntegrationHealth {
   shopping: {
     provider: string;
     available: boolean;
+    search: boolean;
+    handoff_kinds: string[];
   };
   last_checked_at?: string;
   errors?: IntegrationHealthError[];

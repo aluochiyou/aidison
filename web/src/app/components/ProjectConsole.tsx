@@ -10,7 +10,6 @@ import {
   Check,
   CircleAlert,
   Database,
-  FileCheck2,
   FlaskConical,
   GitBranch,
   RefreshCw,
@@ -22,6 +21,7 @@ import { useEventStream } from "@/app/hooks/useEventStream";
 import { useViewState } from "@/app/hooks/useViewState";
 import { ViewShell } from "@/app/components/ViewShell";
 import { DraftWorkbench } from "@/app/components/DraftWorkbench";
+import { RequirementsRevisionForm } from "@/app/components/RequirementsRevisionForm";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { getClient } from "@/lib/api";
@@ -49,29 +49,6 @@ const STAGES = [
   ["verifying", "验证"],
   ["revising", "修订"],
 ] as const;
-
-const DEFAULT_MODULES = JSON.stringify(
-  [
-    {
-      key: "structure",
-      name: "结构与接口",
-      responsibility: "定义承载结构、空间边界和机械接口",
-      dependency_keys: [],
-      acceptance: ["关键尺寸可验证", "部件可拆换"],
-      open_questions: ["可用材料和加工方式是什么？"],
-    },
-    {
-      key: "power_control",
-      name: "供能与控制",
-      responsibility: "定义供能、控制链路与安全边界",
-      dependency_keys: ["structure"],
-      acceptance: ["功率预算闭合", "失效模式可测试"],
-      open_questions: ["目标负载和续航是多少？"],
-    },
-  ],
-  null,
-  2
-);
 
 interface ProjectConsoleProps {
   initialProject: Project;
@@ -367,74 +344,6 @@ function ModuleCard({
         </ul>
       ) : null}
     </article>
-  );
-}
-
-function RequirementsAction({
-  snapshot,
-  onDone,
-}: {
-  snapshot: ProjectSnapshot;
-  onDone: () => Promise<unknown>;
-}) {
-  const [modulesText, setModulesText] = useState(DEFAULT_MODULES);
-  const [busy, setBusy] = useState(false);
-
-  const approve = async () => {
-    setBusy(true);
-    try {
-      const modules = JSON.parse(modulesText) as Array<Record<string, unknown>>;
-      if (!Array.isArray(modules) || modules.length < 1 || modules.length > 8) {
-        throw new Error("模块必须是包含 1–8 项的 JSON 数组");
-      }
-      await getClient().approveRequirements(
-        snapshot.project.id,
-        snapshot.project.revision,
-        {
-          goal: snapshot.project.goal,
-          hard_constraints: ["Agent 只提交建议，事实写入需要用户确认"],
-          preferences: ["个人可维护，优先选择可购买和可验证的方案"],
-          available_resources: ["Windows 工作站", "常见 DIY 工具"],
-          unknowns: ["具体器件、接口和兼容性需要证据确认"],
-          modules: modules as Parameters<
-            ReturnType<typeof getClient>["approveRequirements"]
-          >[2]["modules"],
-        }
-      );
-      toast.success("需求版本已批准");
-      await onDone();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "需求格式无效");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="action-block">
-      <div className="action-title">
-        <FileCheck2 className="h-5 w-5" />
-        <div>
-          <small>确认需求</small>
-          <h2>批准第一版需求和模块</h2>
-        </div>
-      </div>
-      <p>
-        这里定义通用 DIY 模块，不把核心写成无人机专用。你可以直接修改 JSON。
-      </p>
-      <Textarea
-        className="code-editor"
-        rows={13}
-        value={modulesText}
-        onChange={(event) => setModulesText(event.target.value)}
-      />
-      <Button
-        disabled={busy}
-        onClick={() => void approve()}
-      >
-        {busy ? "正在批准…" : "批准需求版本"}
-      </Button>
-    </div>
   );
 }
 
@@ -893,7 +802,7 @@ function NextAction({
   switch (action.kind) {
     case "clarify_requirements":
       return (
-        <RequirementsAction
+        <RequirementsRevisionForm
           snapshot={snapshot}
           onDone={onDone}
         />
