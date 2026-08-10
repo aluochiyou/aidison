@@ -308,13 +308,13 @@ async def test_taobao_accepts_json_body_with_top_text_javascript_content_type() 
     """TOP may label JSON payloads as text/javascript; parse them only after MIME allowlist."""
 
     mock_response = {
-        "tbk_dg_material_optional_response": {
+        "tbk_dg_material_optional_upgrade_response": {
             "result_list": {
                 "map_data": [
                     {
-                        "num_iid": "1001",
-                        "title": "TOP JSON payload",
-                        "zk_final_price": "9.90",
+                        "item_id": "1001",
+                        "item_basic_info": {"title": "TOP JSON payload"},
+                        "price_promotion_info": {"final_promotion_price": "9.90"},
                     }
                 ]
             }
