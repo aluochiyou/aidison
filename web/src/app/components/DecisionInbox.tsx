@@ -43,8 +43,19 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
   const resolvedDecisions = snapshot.decisions.filter(
     (d) => d.status !== "pending"
   );
+  const approvedPlan = (snapshot.execution_plans ?? [])
+    .filter(
+      (plan) =>
+        plan.status === "approved" &&
+        plan.allowed_coordination_modes.includes("decompose")
+    )
+    .at(-1);
 
   const resolve = async (decision: DecisionRequest, optionId: string) => {
+    if (!approvedPlan) {
+      toast.error("请先批准允许分解执行的执行提案。");
+      return;
+    }
     if (busy) return;
     setBusy(optionId);
     try {
@@ -52,7 +63,8 @@ export function DecisionInbox({ snapshot, onResolved }: DecisionInboxProps) {
         decision.id,
         snapshot.project.revision,
         optionId,
-        decision.basis_hash
+        decision.basis_hash,
+        approvedPlan.id
       );
       toast.success("决策已提交");
       onResolved();

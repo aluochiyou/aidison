@@ -31,6 +31,27 @@ export type ModuleStage =
   | "verifying"
   | "revised";
 
+export type BlueprintStatus = "draft" | "active" | "superseded";
+export type ModuleConfigurationStatus = "active" | "superseded";
+export type AdjustmentBatchStatus = "open" | "flushed";
+export type UserAdjustmentKind =
+  | "select_candidate"
+  | "set_option"
+  | "set_parameter"
+  | "add_custom_candidate";
+export type ExecutionPlanStatus =
+  | "proposed"
+  | "approved"
+  | "rejected"
+  | "superseded";
+export type DraftHistoryKind =
+  | "adjustment"
+  | "lock"
+  | "unlock"
+  | "snapshot_save"
+  | "snapshot_restore";
+export type ProjectReshapeStatus = "proposed" | "applied" | "rejected" | "superseded";
+
 export interface Project {
   id: string;
   name: string;
@@ -38,6 +59,7 @@ export interface Project {
   stage: ProjectStage;
   revision: number;
   active_requirement_revision_id: string | null;
+  active_blueprint_id: string | null;
   active_solution_version_id: string | null;
   created_at: string;
   updated_at: string;
@@ -68,6 +90,125 @@ export interface Module {
   dependency_ids: string[];
   acceptance: string[];
   open_questions: string[];
+}
+
+export interface ProjectBlueprint {
+  id: string;
+  project_id: string;
+  requirement_revision_id: string;
+  version: number;
+  module_ids: string[];
+  dependency_edges: [string, string][];
+  status: BlueprintStatus;
+  applied_reshape_proposal_id: string | null;
+  created_at: string;
+}
+
+export interface ModuleConfiguration {
+  id: string;
+  project_id: string;
+  module_id: string;
+  revision: number;
+  base_snapshot_hash: string | null;
+  options: Record<string, unknown>;
+  status: ModuleConfigurationStatus;
+  superseded_by_id: string | null;
+  created_at: string;
+}
+
+export interface SelectionLock {
+  id: string;
+  project_id: string;
+  module_id: string;
+  candidate_id: string | null;
+  reason: string;
+  active: boolean;
+  locked_at: string;
+  unlocked_at: string | null;
+}
+
+export interface UserAdjustment {
+  id: string;
+  project_id: string;
+  module_id: string;
+  batch_id: string | null;
+  kind: UserAdjustmentKind;
+  target: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface AdjustmentBatch {
+  id: string;
+  project_id: string;
+  adjustment_ids: string[];
+  affected_module_ids: string[];
+  status: AdjustmentBatchStatus;
+  window_opened_at: string;
+  window_closes_at: string | null;
+  flushed_at: string | null;
+  analysis_job_id: string | null;
+}
+
+export interface DraftHistoryEntry {
+  id: string;
+  project_id: string;
+  sequence: number;
+  parent_entry_id: string | null;
+  kind: DraftHistoryKind;
+  adjustment_ids: string[];
+  draft_state_hash: string;
+  created_at: string;
+}
+
+export interface SolutionSnapshot {
+  id: string;
+  project_id: string;
+  label: string;
+  blueprint_id: string | null;
+  module_configuration_hashes: Record<string, string>;
+  created_at: string;
+}
+
+export interface ProposedModule {
+  key: string;
+  name: string;
+  responsibility: string;
+  dependency_keys: string[];
+  acceptance: string[];
+  open_questions: string[];
+}
+
+export interface ProjectReshapeProposal {
+  id: string;
+  project_id: string;
+  basis_blueprint_id: string | null;
+  target_goal: string;
+  summary: string;
+  affected_module_ids: string[];
+  unchanged_module_ids: string[];
+  new_module_keys: string[];
+  new_modules: ProposedModule[];
+  status: ProjectReshapeStatus;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface ExecutionPlanProposal {
+  id: string;
+  project_id: string;
+  basis_hash: string;
+  objective: string;
+  work_summary: string[];
+  allowed_coordination_modes: string[];
+  max_concurrency: number;
+  max_token_budget: number;
+  allowed_tool_classes: string[];
+  allowed_effects: string[];
+  requires_result_approval: boolean;
+  scope_hash: string;
+  status: ExecutionPlanStatus;
+  created_at: string;
+  resolved_at: string | null;
 }
 
 export interface EvidenceBinding {
@@ -349,13 +490,21 @@ export interface ProjectWorkspaceProjectionV1 {
 
 export interface ProjectSnapshot {
   project: Project;
+  blueprints?: ProjectBlueprint[];
   requirements: RequirementRevision[];
   modules: Module[];
+  module_configurations?: ModuleConfiguration[];
+  selection_locks?: SelectionLock[];
+  adjustment_batches?: AdjustmentBatch[];
+  draft_history?: DraftHistoryEntry[];
+  solution_snapshots?: SolutionSnapshot[];
   evidence: EvidenceBinding[];
   candidates: Candidate[];
   compatibility_findings: CompatibilityFinding[];
   decisions: DecisionRequest[];
   solution_proposals: SolutionProposal[];
+  execution_plans?: ExecutionPlanProposal[];
+  reshape_proposals?: ProjectReshapeProposal[];
   solutions: SolutionVersion[];
   observations: Observation[];
   impacts: ImpactAnalysis[];

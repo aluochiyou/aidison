@@ -905,6 +905,334 @@ button {
   font-size: 1.4rem;
 }
 
+.draft-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--ink);
+  background: var(--line);
+  box-shadow: 4px 4px 0 rgba(25, 42, 50, 0.16);
+}
+
+.draft-workbench-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 1.1rem 1.2rem;
+  background: linear-gradient(108deg, #f8faf9 0 68%, rgba(184, 95, 53, 0.12) 68%);
+}
+
+.draft-workbench-heading small,
+.draft-section-label {
+  color: var(--cyan);
+  font: 700 0.62rem "Cascadia Code", monospace;
+  letter-spacing: 0.11em;
+}
+
+.draft-workbench-heading h2 {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  margin: 0.28rem 0 0;
+  font-family: Bahnschrift, "Arial Narrow", sans-serif;
+  font-size: clamp(1.2rem, 2vw, 1.65rem);
+  letter-spacing: -0.025em;
+}
+
+.draft-workbench-heading p {
+  max-width: 600px;
+  margin: 0.45rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.draft-batch-status {
+  align-self: center;
+  color: var(--ink-soft);
+  font: 0.68rem "Cascadia Code", monospace;
+}
+
+.blueprint-strip {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.7rem;
+  align-items: center;
+  padding: 0.72rem 1.2rem;
+  color: #dce8eb;
+  background: var(--ink);
+}
+
+.blueprint-strip > svg {
+  color: #8fc5d2;
+}
+
+.blueprint-strip div {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.blueprint-strip strong {
+  font-size: 0.78rem;
+}
+
+.blueprint-strip span,
+.blueprint-strip code {
+  color: #9fb2b8;
+  font: 0.64rem "Cascadia Code", monospace;
+}
+
+.blueprint-graph {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 0.7rem;
+  padding: 1rem 1.2rem;
+  background-color: #dce8eb;
+  background-image: linear-gradient(rgba(36, 126, 148, 0.16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(36, 126, 148, 0.16) 1px, transparent 1px);
+  background-size: 14px 14px;
+}
+
+.blueprint-node {
+  display: grid;
+  gap: 0.28rem;
+  min-height: 92px;
+  padding: 0.7rem;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  background: #f8faf9;
+  box-shadow: 3px 3px 0 var(--cyan);
+}
+
+.blueprint-node code,
+.draft-module-card code {
+  color: var(--copper);
+  font: 700 0.58rem "Cascadia Code", monospace;
+  letter-spacing: 0.06em;
+}
+
+.blueprint-node strong {
+  overflow-wrap: anywhere;
+  font-size: 0.8rem;
+}
+
+.blueprint-node small {
+  color: var(--ink-soft);
+  font-size: 0.64rem;
+  line-height: 1.35;
+}
+
+.draft-snapshot-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.85fr) minmax(260px, 1.15fr);
+  gap: 0.7rem 1rem;
+  align-items: center;
+  padding: 0.85rem 1.2rem;
+  background: #f1f5f3;
+}
+
+.draft-snapshot-bar p {
+  margin: 0.28rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.67rem;
+  line-height: 1.45;
+}
+
+.draft-snapshot-save {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.draft-snapshot-save input {
+  flex: 1;
+  min-width: 0;
+  height: 2rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 0.72rem;
+}
+
+.draft-snapshot-list {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.draft-snapshot-list button {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  padding: 0.33rem 0.48rem;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  background: var(--sheet);
+  font-size: 0.65rem;
+  cursor: pointer;
+}
+
+.draft-snapshot-list button:hover:not(:disabled) {
+  color: var(--ink);
+  border-color: var(--copper);
+}
+
+.draft-snapshot-list button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.draft-module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 1px;
+  background: var(--line);
+}
+
+.draft-module-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  min-width: 0;
+  padding: 1rem;
+  background: rgba(248, 250, 249, 0.96);
+}
+
+.draft-module-card > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: flex-start;
+}
+
+.draft-module-card h3 {
+  margin: 0.28rem 0 0;
+  font-size: 0.96rem;
+}
+
+.draft-module-card > p {
+  min-height: 2.4em;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+.draft-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+}
+
+.draft-candidates button {
+  display: grid;
+  gap: 0.15rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid var(--line);
+  border-left: 4px solid #aab8bc;
+  color: var(--ink);
+  text-align: left;
+  background: #fff;
+  cursor: pointer;
+}
+
+.draft-candidates button:hover:not(:disabled) {
+  border-color: var(--cyan);
+  background: #edf5f6;
+}
+
+.draft-candidates button.is-selected {
+  border-color: var(--copper);
+  border-left-color: var(--copper);
+  background: #fff4ec;
+}
+
+.draft-candidates button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.draft-candidates strong {
+  overflow-wrap: anywhere;
+  font-size: 0.72rem;
+}
+
+.draft-candidates span,
+.draft-candidates small {
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  line-height: 1.35;
+}
+
+.draft-parameter-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr) auto;
+  gap: 0.38rem;
+}
+
+.draft-parameter-row input {
+  min-width: 0;
+  height: 2rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fff;
+  font: 0.66rem "Cascadia Code", monospace;
+}
+
+.draft-module-card > footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-top: 0.15rem;
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+}
+
+.draft-module-card > footer code {
+  color: var(--ink-soft);
+  font-weight: 400;
+}
+
+.execution-plan-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1rem 1.2rem 1.2rem;
+  background: #edf1ef;
+}
+
+.execution-plan-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  background: var(--sheet);
+}
+
+.execution-plan-card strong {
+  font-size: 0.8rem;
+}
+
+.execution-plan-card p,
+.execution-plan-card small {
+  margin: 0.35rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.execution-plan-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.4rem;
+}
+
 .panel-heading {
   display: flex;
   justify-content: space-between;
@@ -1540,6 +1868,1190 @@ button {
   color: var(--danger);
 }
 
+/* ============================================================
+   V3 Pixel Crafting Workbench (DraftWorkbench)
+   Minecraft 工作台视觉：仅 CSS + lucide 图标，无图片、无依赖。
+   层级：项目输出槽 → 模块方块网格 → 模块详情/选型/参数 → 商品占位。
+   ============================================================ */
+.crafting-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1.1rem;
+  border: 3px solid #241a12;
+  color: #f3ece0;
+  background-color: #2c2015;
+  background-image: repeating-linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.1) 0 2px,
+      transparent 2px 26px
+    ),
+    linear-gradient(180deg, #3a2a1c, #2c2015);
+  box-shadow: 6px 6px 0 rgba(16, 27, 42, 0.28),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.crafting-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 0.2rem 0.2rem 0.7rem;
+  border-bottom: 2px solid rgba(243, 236, 224, 0.14);
+}
+
+.crafting-head .draft-batch-status {
+  color: #c3b8a8;
+}
+
+.crafting-head-title small {
+  color: #ffd08a;
+  font: 700 0.6rem "Cascadia Code", monospace;
+  letter-spacing: 0.16em;
+}
+
+.crafting-head-title h2 {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0.3rem 0 0;
+  color: #f3ece0;
+  font-family: Bahnschrift, "Arial Narrow", sans-serif;
+  font-size: clamp(1.05rem, 1.8vw, 1.5rem);
+  letter-spacing: -0.02em;
+}
+
+.crafting-head-title h2 svg {
+  flex-shrink: 0;
+  color: #ffd08a;
+}
+
+.crafting-head-title p {
+  max-width: 620px;
+  margin: 0.4rem 0 0;
+  color: #c3b8a8;
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+/* 台面：深色木纹，内含输出槽与模块网格 */
+.crafting-table {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 3px solid #6f4a28;
+  background-color: #99653a;
+  background-image: repeating-linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.07) 0 2px,
+      transparent 2px 30px
+    ),
+    linear-gradient(180deg, #b07a45, #99653a 60%, #8a5a32);
+  box-shadow: inset 0 0 0 2px #5f3d22, 0 2px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* 项目输出槽：你在制作的“成品格” */
+.crafting-output {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.9rem 1rem;
+  border: 2px solid #8a5a32;
+  color: var(--ink);
+  background: #e8cf9f;
+  box-shadow: inset 0 0 0 4px rgba(138, 90, 50, 0.35),
+    inset 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.crafting-output-icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 2px dashed var(--ink);
+  color: var(--ink);
+  background: #f2d9a8;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.12);
+}
+
+.crafting-output-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.crafting-output-copy small {
+  color: rgba(16, 27, 42, 0.72);
+  font: 700 0.6rem "Cascadia Code", monospace;
+  letter-spacing: 0.1em;
+}
+
+.crafting-output-copy strong {
+  overflow-wrap: anywhere;
+  font-family: Bahnschrift, "Arial Narrow", sans-serif;
+  font-size: 1.1rem;
+  letter-spacing: -0.02em;
+}
+
+.crafting-output-copy span {
+  color: rgba(16, 27, 42, 0.78);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.crafting-output-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: flex-end;
+}
+
+.crafting-output-meta code {
+  font: 0.6rem "Cascadia Code", monospace;
+}
+
+/* 模块方块网格：仿 3×3 合成格 */
+.crafting-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+  padding: 14px;
+  border: 2px solid #8a5a32;
+  background-color: #cfa86e;
+  background-image: linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 16px 16px, 16px 16px, auto;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.crafting-block-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.crafting-block {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 132px;
+  padding: 0.7rem;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  text-align: left;
+  background: var(--sheet);
+  box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.55),
+    inset -3px -3px 0 rgba(16, 27, 42, 0.16), 4px 4px 0 var(--ink);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease,
+    border-color 120ms ease;
+}
+
+.crafting-block:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.55),
+    inset -3px -3px 0 rgba(16, 27, 42, 0.16), 6px 6px 0 var(--ink);
+}
+
+.crafting-block.is-open {
+  border-color: var(--copper);
+  background: #fff6ef;
+  box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.55),
+    inset -3px -3px 0 rgba(184, 95, 53, 0.12), 4px 4px 0 var(--copper);
+}
+
+.crafting-block-pixel {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  width: fit-content;
+  padding: 6px;
+  border: 2px solid var(--ink);
+  background: #b98f58;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.18);
+}
+
+.crafting-lock-badge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 18px;
+  height: 18px;
+  padding: 2px;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--copper);
+  box-shadow: 0 0 0 2px var(--ink);
+}
+
+.crafting-block-name {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.crafting-block-name code {
+  color: var(--copper);
+  font: 700 0.56rem/1 "Cascadia Code", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.crafting-block-name strong {
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+  line-height: 1.3;
+}
+
+.crafting-block-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  align-items: flex-start;
+}
+
+.crafting-block-selection > span:last-child {
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  line-height: 1.4;
+}
+
+.crafting-block-meta small {
+  color: var(--ink-soft);
+  font: 0.58rem/1.4 "Cascadia Code", monospace;
+}
+
+.crafting-depends {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 0.15rem 0.4rem;
+  border: 1px dashed var(--ink-soft);
+  color: var(--ink-soft);
+  font: 0.56rem/1.3 "Cascadia Code", monospace;
+  background: rgba(16, 27, 42, 0.05);
+}
+
+/* 模块像素方块本体（8×8） */
+.module-pixel {
+  --px: 10px;
+  display: inline-grid;
+  grid-template-columns: repeat(8, var(--px));
+  grid-template-rows: repeat(8, var(--px));
+  gap: 0;
+  vertical-align: middle;
+  line-height: 0;
+  border: 2px solid var(--ink);
+  background: #0f1418;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.14);
+  image-rendering: pixelated;
+}
+
+.pixel-cell {
+  display: block;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.pixel-cell[data-frame="true"] {
+  background: var(--tone-frame, var(--ink));
+}
+
+.pixel-cell[data-filled="true"][data-frame="false"] {
+  background: var(--tone-fill, #6b7684);
+}
+
+.pixel-cell[data-tone="tone-good"] {
+  --tone-frame: #2f6b50;
+  --tone-fill: #5ea07c;
+}
+
+.pixel-cell[data-tone="tone-live"] {
+  --tone-frame: #8a4526;
+  --tone-fill: #cf8354;
+}
+
+.pixel-cell[data-tone="tone-muted"] {
+  --tone-frame: #47535f;
+  --tone-fill: #7c8996;
+}
+
+/* ============================================================
+   React Flow 模块依赖图（像素风格）
+   ============================================================ */
+.crafting-graph {
+  position: relative;
+  width: 100%;
+  height: clamp(340px, 54vh, 540px);
+  border: 2px solid #8a5a32;
+  background-color: #cfa86e;
+  background-image: linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+  background-size: 16px 16px, 16px 16px, auto;
+  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.crafting-graph .react-flow__attribution {
+  display: none;
+}
+
+.crafting-graph .react-flow__pane {
+  cursor: default;
+}
+
+.crafting-graph .react-flow__node-moduleNode {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.crafting-graph .react-flow__node-moduleNode:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.crafting-graph-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 184px;
+  padding: 0.55rem 0.6rem;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  text-align: left;
+  background: var(--sheet);
+  box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.55),
+    inset -3px -3px 0 rgba(16, 27, 42, 0.16), 4px 4px 0 var(--ink);
+  cursor: pointer;
+  transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease;
+}
+
+.crafting-graph-node:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.55),
+    inset -3px -3px 0 rgba(16, 27, 42, 0.16), 6px 6px 0 var(--ink);
+}
+
+.crafting-graph-node.is-open {
+  border-color: var(--copper);
+  background: #fff6ef;
+  box-shadow: inset 3px 3px 0 rgba(255, 255, 255, 0.55),
+    inset -3px -3px 0 rgba(184, 95, 53, 0.12), 4px 4px 0 var(--copper);
+}
+
+.crafting-graph-node-pixel {
+  position: relative;
+  display: grid;
+  place-items: center;
+  align-self: center;
+  width: fit-content;
+  padding: 5px;
+  border: 2px solid var(--ink);
+  background: #b98f58;
+  box-shadow: inset 2px 2px 0 rgba(0, 0, 0, 0.18);
+}
+
+.crafting-graph-node-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.crafting-graph-node-copy code {
+  color: var(--copper);
+  font: 700 0.52rem/1 "Cascadia Code", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.crafting-graph-node-copy strong {
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+  line-height: 1.3;
+}
+
+.crafting-graph-node-copy span {
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.crafting-graph .react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  background: #99653a;
+}
+
+.crafting-graph .react-flow__handle-top {
+  top: -5px;
+}
+
+.crafting-graph .react-flow__handle-bottom {
+  bottom: -5px;
+}
+
+.crafting-graph .react-flow__edge-path {
+  stroke: #4a3120;
+  stroke-width: 2;
+}
+
+.crafting-graph .react-flow__edge:hover .react-flow__edge-path {
+  stroke: var(--copper);
+  stroke-width: 2.5;
+}
+
+.crafting-graph .react-flow__controls {
+  overflow: hidden;
+  border: 2px solid var(--ink);
+  border-radius: 0;
+  box-shadow: 3px 3px 0 rgba(16, 27, 42, 0.25);
+}
+
+.crafting-graph .react-flow__controls-button {
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-bottom: 1px solid var(--ink);
+  border-radius: 0;
+  background: var(--sheet);
+  color: var(--ink);
+}
+
+.crafting-graph .react-flow__controls-button:last-child {
+  border-bottom: 0;
+}
+
+.crafting-graph .react-flow__controls-button:hover {
+  background: #fff6ef;
+}
+
+.crafting-graph .react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.crafting-graph-empty {
+  padding: 1rem;
+}
+
+/* ============================================================
+   RJSF schema 参数表单（像素风格）
+   ============================================================ */
+.rjsf-param-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.rjsf-param-form .form-group {
+  margin: 0;
+}
+
+.rjsf-param-form .field {
+  margin: 0 0 0.45rem;
+}
+
+.rjsf-param-form .field:last-child {
+  margin-bottom: 0;
+}
+
+.rjsf-param-form .control-label,
+.rjsf-param-form legend {
+  display: block;
+  margin: 0 0 0.25rem;
+  color: var(--ink-soft);
+  font: 700 0.6rem "Cascadia Code", monospace;
+}
+
+.rjsf-param-form .form-control {
+  width: 100%;
+  height: 2rem;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 0;
+  color: var(--ink);
+  background: #fff;
+  font: 0.66rem "Cascadia Code", monospace;
+}
+
+.rjsf-param-form textarea.form-control {
+  height: auto;
+  resize: vertical;
+}
+
+.rjsf-param-form select.form-control {
+  height: 2rem;
+  padding: 0.15rem 0.3rem;
+}
+
+.rjsf-param-form .checkbox,
+.rjsf-param-form .field-boolean {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.rjsf-param-form .checkbox label,
+.rjsf-param-form .field-boolean label {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.68rem;
+}
+
+.rjsf-param-form input[type="checkbox"] {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--copper);
+}
+
+.rjsf-param-form .form-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.rjsf-param-form .field-description {
+  margin: 0.2rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.6rem;
+}
+
+.rjsf-param-form .error-detail {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rjsf-param-form .error-detail .text-danger {
+  color: var(--danger);
+  font-size: 0.62rem;
+}
+
+.rjsf-param-form .crafting-param-form-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding-top: 0.25rem;
+  border-top: 1px dashed var(--line);
+}
+
+
+/* 模块详情抽屉 */
+.crafting-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  background: #f6f2ea;
+  box-shadow: 5px 5px 0 rgba(16, 27, 42, 0.18);
+}
+
+.crafting-inspector-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: center;
+}
+
+.crafting-inspector-title {
+  display: flex;
+  gap: 0.7rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.crafting-inspector-title code {
+  color: var(--copper);
+  font: 700 0.58rem "Cascadia Code", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.crafting-inspector-title h4 {
+  margin: 0.15rem 0 0;
+  font-size: 1.05rem;
+}
+
+.crafting-inspector-copy {
+  max-width: 760px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  line-height: 1.6;
+}
+
+.crafting-inspector-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.crafting-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+  padding: 0.85rem;
+  border: 1px solid var(--line);
+  background: #fffdf9;
+}
+
+.crafting-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.crafting-current-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.7rem;
+  border-left: 4px solid var(--safe);
+  background: #eef6f1;
+}
+
+.crafting-current-selection strong {
+  font-size: 0.8rem;
+}
+
+.crafting-current-selection span {
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  line-height: 1.45;
+}
+
+.crafting-current-selection small {
+  color: var(--ink-soft);
+  font: 0.58rem "Cascadia Code", monospace;
+}
+
+.crafting-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.crafting-candidate {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-left: 4px solid #aab8bc;
+  color: var(--ink);
+  text-align: left;
+  background: #fff;
+  cursor: pointer;
+}
+
+.crafting-candidate:hover:not(:disabled) {
+  border-color: var(--cyan);
+  border-left-color: var(--cyan);
+  background: #edf5f6;
+}
+
+.crafting-candidate.is-selected {
+  border-color: var(--copper);
+  border-left-color: var(--copper);
+  background: #fff4ec;
+}
+
+.crafting-candidate:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.crafting-candidate-name {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.crafting-candidate-name strong {
+  flex: 1;
+  overflow-wrap: anywhere;
+  font-size: 0.74rem;
+}
+
+.crafting-candidate-name svg {
+  flex-shrink: 0;
+}
+
+.crafting-candidate > span,
+.crafting-candidate > small {
+  color: var(--ink-soft);
+  font-size: 0.64rem;
+  line-height: 1.4;
+}
+
+.crafting-risk-line {
+  font-family: "Cascadia Code", monospace;
+}
+
+.crafting-lock-note {
+  display: flex;
+  gap: 0.4rem;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px dashed var(--copper);
+  color: var(--copper);
+  font-size: 0.66rem;
+  line-height: 1.5;
+  background: #fff6ef;
+}
+
+.crafting-lock-note svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.crafting-params {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.crafting-param-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr) auto;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.crafting-param-label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.crafting-param-label > span {
+  color: var(--ink-soft);
+  font: 700 0.6rem "Cascadia Code", monospace;
+}
+
+.crafting-param-label input {
+  width: 100%;
+  height: 2rem;
+  min-width: 0;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fff;
+  font: 0.66rem "Cascadia Code", monospace;
+}
+
+.crafting-param-slider {
+  width: 100%;
+  accent-color: var(--copper);
+}
+
+.crafting-param-add {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.6rem;
+  border: 1px dashed var(--line);
+  background: #faf7f0;
+}
+
+.crafting-param-add input {
+  min-width: 0;
+  height: 2rem;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  background: #fff;
+  font: 0.66rem "Cascadia Code", monospace;
+}
+
+.crafting-revisions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: 240px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.crafting-revisions li {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  gap: 0.5rem;
+  align-items: baseline;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 0.62rem;
+}
+
+.crafting-revisions li.is-active {
+  border-color: var(--safe);
+  background: #eef6f1;
+}
+
+.crafting-revisions li > span {
+  color: var(--copper);
+  font: 700 0.6rem "Cascadia Code", monospace;
+}
+
+.crafting-revisions time {
+  color: var(--ink-soft);
+  font: 0.58rem "Cascadia Code", monospace;
+}
+
+.crafting-revisions code {
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+  font: 0.58rem "Cascadia Code", monospace;
+}
+
+.crafting-inspector-foot {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--line);
+  color: var(--ink-soft);
+  font: 0.6rem "Cascadia Code", monospace;
+}
+
+.crafting-inspector-foot code {
+  color: var(--ink-soft);
+}
+
+.crafting-empty {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  line-height: 1.55;
+}
+
+/* 通用小标题（商品/执行边界/历史共用） */
+.crafting-section-title {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  min-width: 0;
+}
+
+.crafting-section-title > svg {
+  flex-shrink: 0;
+  color: var(--copper);
+}
+
+.crafting-section-title > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+  margin-right: auto;
+}
+
+.crafting-section-title small {
+  color: var(--cyan);
+  font: 700 0.58rem "Cascadia Code", monospace;
+  letter-spacing: 0.11em;
+}
+
+.crafting-section-title strong {
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+/* 商品占位输出槽 */
+.crafting-products {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  background: linear-gradient(135deg, rgba(184, 95, 53, 0.06), rgba(184, 95, 53, 0) 55%),
+    #f8faf9;
+  box-shadow: 4px 4px 0 rgba(16, 27, 42, 0.16);
+}
+
+.crafting-placeholder-tag {
+  flex-shrink: 0;
+  padding: 0.25rem 0.5rem;
+  border: 1px dashed var(--copper);
+  color: var(--copper);
+  font: 700 0.58rem "Cascadia Code", monospace;
+  letter-spacing: 0.04em;
+}
+
+.crafting-products-note {
+  max-width: 720px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.68rem;
+  line-height: 1.55;
+}
+
+.crafting-products-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.6rem;
+}
+
+.product-placeholder-card {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px dashed var(--line);
+  border-top: 3px solid #c6d0d3;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.product-placeholder-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  background: #eef2f1;
+  box-shadow: inset 0 0 0 3px #f8faf9;
+}
+
+.product-placeholder-card > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.14rem;
+  min-width: 0;
+}
+
+.product-placeholder-card code {
+  color: var(--copper);
+  font: 700 0.52rem "Cascadia Code", monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.product-placeholder-card strong {
+  overflow-wrap: anywhere;
+  font-size: 0.74rem;
+}
+
+.product-placeholder-card small {
+  color: var(--ink-soft);
+  font-size: 0.62rem;
+  line-height: 1.4;
+}
+
+.product-placeholder-price {
+  flex-shrink: 0;
+  margin-left: auto;
+  color: var(--ink-soft);
+  font: 700 0.72rem "Cascadia Code", monospace;
+}
+
+/* 结构变更边界 */
+.crafting-boundary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  background: #edf1ef;
+  box-shadow: 4px 4px 0 rgba(16, 27, 42, 0.16);
+}
+
+.crafting-boundary-note {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.7rem 0.8rem;
+  border-left: 4px solid var(--danger);
+  background: #fbf5f3;
+}
+
+.crafting-boundary-note > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--danger);
+}
+
+.crafting-boundary-note strong {
+  font-size: 0.76rem;
+}
+
+.crafting-boundary-note p {
+  max-width: 720px;
+  margin: 0.3rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+
+/* 调整历史时间线 */
+.crafting-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0.7rem;
+  padding: 1rem;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  background: #f8faf9;
+  box-shadow: 4px 4px 0 rgba(16, 27, 42, 0.16);
+}
+
+.crafting-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 300px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.crafting-history-list li {
+  display: flex;
+  gap: 0.55rem;
+  align-items: center;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid var(--line);
+  background: #fff;
+  font-size: 0.62rem;
+}
+
+.history-dot {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--ink-soft);
+  border-radius: 50%;
+}
+
+.history-dot.is-adjustment {
+  border-color: var(--cyan);
+  background: var(--cyan);
+}
+
+.history-dot.is-lock {
+  border-color: var(--copper);
+  background: var(--copper);
+}
+
+.history-dot.is-unlock {
+  border-color: var(--copper);
+}
+
+.history-dot.is-snapshot_save {
+  border-color: var(--safe);
+  background: var(--safe);
+}
+
+.history-dot.is-snapshot_restore {
+  border-color: var(--safe);
+}
+
+.history-kind {
+  font-weight: 600;
+}
+
+.crafting-history-list time,
+.crafting-history-list code {
+  color: var(--ink-soft);
+  font: 0.56rem "Cascadia Code", monospace;
+}
+
+.history-hash {
+  margin-left: auto;
+}
+
+/* 操作反馈条 */
+.feedback-chip {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  background: #fff;
+}
+
+.feedback-chip > svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.feedback-chip > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.feedback-chip strong {
+  font-size: 0.72rem;
+}
+
+.feedback-chip span {
+  color: var(--ink-soft);
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+
+.feedback-chip.is-success {
+  border-left-color: var(--safe);
+  color: var(--safe);
+}
+
+.feedback-chip.is-conflict {
+  border-left-color: var(--copper);
+  color: var(--copper);
+}
+
+.feedback-chip.is-forbidden,
+.feedback-chip.is-error {
+  border-left-color: var(--danger);
+  color: var(--danger);
+}
+
+/* 可访问性：键盘焦点 */
+.crafting-block:focus-visible,
+.crafting-candidate:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
 @media (max-width: 1150px) {
   .console-body {
     grid-template-columns: 230px minmax(500px, 1fr);
@@ -1554,6 +3066,10 @@ button {
   .runtime-stack {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  }
+
+  .draft-module-grid {
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   }
 }
 
@@ -1611,6 +3127,32 @@ button {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   }
+
+  .draft-workbench-heading,
+  .execution-plan-card {
+    flex-direction: column;
+  }
+
+  .draft-workbench-heading > .draft-batch-status,
+  .draft-workbench-heading > button {
+    align-self: flex-start;
+  }
+
+  .draft-module-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .draft-snapshot-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .draft-parameter-row {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .draft-parameter-row button {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1620,5 +3162,110 @@ button {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+  }
+}
+
+/* ============================================================
+   V3 Pixel Crafting Workbench — 响应式收窄
+   ============================================================ */
+@media (max-width: 1150px) {
+  .crafting-output {
+    grid-template-columns: auto 1fr;
+  }
+
+  .crafting-output-meta {
+    grid-column: 1 / -1;
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-items: center;
+  }
+
+  .crafting-inspector-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 820px) {
+  .crafting-workbench {
+    padding: 0.7rem;
+  }
+
+  .crafting-head {
+    flex-direction: column;
+  }
+
+  .crafting-head > .draft-batch-status,
+  .crafting-head > button {
+    align-self: flex-start;
+  }
+
+  .crafting-table {
+    padding: 0.5rem;
+  }
+
+  .crafting-output {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .crafting-output-meta {
+    grid-column: auto;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .crafting-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    padding: 10px;
+  }
+
+  .crafting-inspector-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .crafting-param-row,
+  .crafting-param-add {
+    grid-template-columns: 1fr;
+  }
+
+  .crafting-param-row > button,
+  .crafting-param-add > button {
+    justify-self: stretch;
+  }
+
+  .crafting-products-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .crafting-graph {
+    height: clamp(300px, 46vh, 420px);
+  }
+
+  .crafting-graph-node {
+    width: 168px;
+  }
+
+  .rjsf-param-form .crafting-param-form-actions {
+    flex-direction: column-reverse;
+  }
+
+  .rjsf-param-form .crafting-param-form-actions > button {
+    justify-self: stretch;
+    width: 100%;
+  }
+
+  .crafting-section-title {
+    flex-wrap: wrap;
+  }
+
+  .crafting-history-list li {
+    flex-wrap: wrap;
+  }
+
+  .history-hash {
+    margin-left: auto;
   }
 }

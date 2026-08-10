@@ -140,6 +140,123 @@ class AidisonClient {
     });
   }
 
+  async createSelectionLock(
+    projectId: string,
+    moduleId: string,
+    revision: number,
+    body: { candidate_id?: string; reason: string }
+  ) {
+    return this.req<{
+      selection_lock: import("@/app/types/types").SelectionLock;
+      project_revision: number;
+    }>("POST", `/api/projects/${projectId}/modules/${moduleId}/selection-locks`, {
+      body,
+      prefix: "selection-lock",
+      ifMatch: revision,
+    });
+  }
+
+  async unlockSelectionLock(lockId: string, revision: number) {
+    return this.req<{
+      selection_lock: import("@/app/types/types").SelectionLock;
+      project_revision: number;
+    }>("POST", `/api/selection-locks/${lockId}/unlock`, {
+      prefix: "selection-unlock",
+      ifMatch: revision,
+    });
+  }
+
+  async recordUserAdjustment(
+    projectId: string,
+    moduleId: string,
+    revision: number,
+    body: {
+      kind: import("@/app/types/types").UserAdjustmentKind;
+      target: Record<string, unknown>;
+    }
+  ) {
+    return this.req<{
+      adjustment: import("@/app/types/types").UserAdjustment;
+      project_revision: number;
+    }>("POST", `/api/projects/${projectId}/modules/${moduleId}/adjustments`, {
+      body,
+      prefix: "draft-adjustment",
+      ifMatch: revision,
+    });
+  }
+
+  async flushAdjustmentBatch(batchId: string, revision: number) {
+    return this.req<{
+      adjustment_batch: import("@/app/types/types").AdjustmentBatch;
+      project_revision: number;
+    }>("POST", `/api/adjustment-batches/${batchId}/flush`, {
+      prefix: "flush-adjustments",
+      ifMatch: revision,
+    });
+  }
+
+  async saveSolutionSnapshot(projectId: string, revision: number, label: string) {
+    return this.req<{
+      solution_snapshot: import("@/app/types/types").SolutionSnapshot;
+      project_revision: number;
+    }>("POST", `/api/projects/${projectId}/solution-snapshots`, {
+      body: { label },
+      prefix: "save-solution-snapshot",
+      ifMatch: revision,
+    });
+  }
+
+  async restoreSolutionSnapshot(snapshotId: string, revision: number) {
+    return this.req<{
+      solution_snapshot: import("@/app/types/types").SolutionSnapshot;
+      project_revision: number;
+    }>("POST", `/api/solution-snapshots/${snapshotId}/restore`, {
+      prefix: "restore-solution-snapshot",
+      ifMatch: revision,
+    });
+  }
+
+  async resolveExecutionPlan(
+    planId: string,
+    revision: number,
+    decision: "approved" | "rejected",
+    scopeHash: string
+  ) {
+    return this.req<{
+      execution_plan: import("@/app/types/types").ExecutionPlanProposal;
+      project_revision: number;
+    }>("POST", `/api/execution-plans/${planId}/resolve`, {
+      body: { decision, scope_hash: scopeHash },
+      prefix: "resolve-execution-plan",
+      ifMatch: revision,
+    });
+  }
+
+  async proposeDefaultResearchExecutionPlan(projectId: string, revision: number) {
+    return this.req<{
+      execution_plan: import("@/app/types/types").ExecutionPlanProposal;
+      project_revision: number;
+    }>("POST", `/api/projects/${projectId}/execution-plans/research-default`, {
+      prefix: "propose-default-research-plan",
+      ifMatch: revision,
+    });
+  }
+
+  async resolveProjectReshape(
+    proposalId: string,
+    revision: number,
+    decision: "applied" | "rejected"
+  ) {
+    return this.req<{
+      reshape_proposal: import("@/app/types/types").ProjectReshapeProposal;
+      project_revision: number;
+    }>("POST", `/api/reshape-proposals/${proposalId}/resolve`, {
+      body: { decision },
+      prefix: "resolve-project-reshape",
+      ifMatch: revision,
+    });
+  }
+
   async submitResearchProposal(
     projectId: string,
     revision: number,
@@ -158,13 +275,18 @@ class AidisonClient {
     });
   }
 
-  async startResearchRun(projectId: string, revision: number) {
+  async startResearchRun(
+    projectId: string,
+    revision: number,
+    executionPlanId: string
+  ) {
     return this.req<{
       job_id: string;
       status: string;
       basis_hash: string;
       project_revision: number;
     }>("POST", `/api/projects/${projectId}/research-runs`, {
+      body: { execution_plan_id: executionPlanId },
       prefix: "research-run",
       ifMatch: revision,
     });
@@ -174,10 +296,15 @@ class AidisonClient {
     decisionId: string,
     revision: number,
     selectedOptionId: string,
-    basisHash: string
+    basisHash: string,
+    executionPlanId: string
   ) {
     return this.req("POST", `/api/decisions/${decisionId}/resolve`, {
-      body: { selected_option_id: selectedOptionId, basis_hash: basisHash },
+      body: {
+        selected_option_id: selectedOptionId,
+        basis_hash: basisHash,
+        execution_plan_id: executionPlanId,
+      },
       prefix: "resolve",
       ifMatch: revision,
     });
@@ -199,10 +326,15 @@ class AidisonClient {
     projectId: string,
     revision: number,
     statement: string,
-    affectedModuleIds: string[]
+    affectedModuleIds: string[],
+    executionPlanId: string
   ) {
     return this.req("POST", `/api/projects/${projectId}/observations`, {
-      body: { statement, affected_module_ids: affectedModuleIds },
+      body: {
+        statement,
+        affected_module_ids: affectedModuleIds,
+        execution_plan_id: executionPlanId,
+      },
       prefix: "observe",
       ifMatch: revision,
     });

@@ -21,6 +21,7 @@ import {
 import { useEventStream } from "@/app/hooks/useEventStream";
 import { useViewState } from "@/app/hooks/useViewState";
 import { ViewShell } from "@/app/components/ViewShell";
+import { DraftWorkbench } from "@/app/components/DraftWorkbench";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { getClient } from "@/lib/api";
@@ -445,17 +446,44 @@ function ResearchAction({
   onDone: () => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
+  const approvedPlan = (snapshot.execution_plans ?? [])
+    .filter(
+      (plan) =>
+        plan.status === "approved" &&
+        plan.allowed_coordination_modes.includes("decompose")
+    )
+    .at(-1);
   const start = async () => {
+    if (!approvedPlan) {
+      toast.error("请先在“执行边界”中批准一份允许分解研究的执行提案。");
+      return;
+    }
     setBusy(true);
     try {
       await getClient().startResearchRun(
         snapshot.project.id,
-        snapshot.project.revision
+        snapshot.project.revision,
+        approvedPlan.id
       );
       toast.success("有界研究已进入 durable Job 队列");
       await onDone();
     } catch (error) {
       toast.error(displayError(error, "无法启动研究"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const proposePlan = async () => {
+    setBusy(true);
+    try {
+      await getClient().proposeDefaultResearchExecutionPlan(
+        snapshot.project.id,
+        snapshot.project.revision
+      );
+      toast.success("已生成研究执行范围草案，请在工作台确认后启动。");
+      await onDone();
+    } catch (error) {
+      toast.error(displayError(error, "无法生成研究执行范围"));
     } finally {
       setBusy(false);
     }
@@ -476,10 +504,10 @@ function ResearchAction({
       </p>
       <Button
         disabled={busy}
-        onClick={() => void start()}
+        onClick={() => void (approvedPlan ? start() : proposePlan())}
       >
         <Bot className="h-4 w-4" />
-        {busy ? "正在准备…" : "开始查找资料"}
+        {busy ? "正在准备…" : approvedPlan ? "开始查找资料" : "生成待确认执行范围"}
       </Button>
     </div>
   );
@@ -495,15 +523,27 @@ function DecisionAction({
   onDone: () => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState<string | null>(null);
+  const approvedPlan = (snapshot.execution_plans ?? [])
+    .filter(
+      (plan) =>
+        plan.status === "approved" &&
+        plan.allowed_coordination_modes.includes("decompose")
+    )
+    .at(-1);
   const options = decision.options.map(normalizedDecisionOption);
   const choose = async (optionId: string) => {
+    if (!approvedPlan) {
+      toast.error("请先批准一份允许分解执行的执行提案。");
+      return;
+    }
     setBusy(optionId);
     try {
       await getClient().resolveDecision(
         decision.id,
         snapshot.project.revision,
         optionId,
-        decision.basis_hash
+        decision.basis_hash,
+        approvedPlan.id
       );
       toast.success("决策已写入 canonical state");
       await onDone();
@@ -624,14 +664,26 @@ function ObservationAction({
     snapshot.modules[0] ? [snapshot.modules[0].id] : []
   );
   const [busy, setBusy] = useState(false);
+  const approvedPlan = (snapshot.execution_plans ?? [])
+    .filter(
+      (plan) =>
+        plan.status === "approved" &&
+        plan.allowed_coordination_modes.includes("decompose")
+    )
+    .at(-1);
   const submit = async () => {
+    if (!approvedPlan) {
+      toast.error("请先批准一份允许分解执行的执行提案。");
+      return;
+    }
     setBusy(true);
     try {
       await getClient().submitObservation(
         snapshot.project.id,
         snapshot.project.revision,
         statement,
-        selected
+        selected,
+        approvedPlan.id
       );
       setStatement("");
       toast.success("现场观察已记录，durable impact-proposer 已入队");
@@ -1205,6 +1257,7 @@ export function ProjectConsole({
             <span>GOAL</span>
             <p>{project.goal}</p>
           </div>
+          <DraftWorkbench snapshot={snapshot} onRefresh={refresh} />
           <NextAction
             snapshot={snapshot}
             onDone={refresh}

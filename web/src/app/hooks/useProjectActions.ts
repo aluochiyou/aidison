@@ -64,11 +64,18 @@ export function useProjectActions(
       decisionId: string,
       revision: number,
       option: string,
-      basisHash: string
+      basisHash: string,
+      executionPlanId: string
     ) => {
       if (!projectId) throw new Error("no project");
       return wrap("resolve_decision", () =>
-        getClient().resolveDecision(decisionId, revision, option, basisHash)
+        getClient().resolveDecision(
+          decisionId,
+          revision,
+          option,
+          basisHash,
+          executionPlanId
+        )
       );
     },
     [projectId, wrap]
@@ -91,7 +98,8 @@ export function useProjectActions(
     async (
       revision: number,
       statement: string,
-      affectedModuleIds: string[]
+      affectedModuleIds: string[],
+      executionPlanId: string
     ) => {
       if (!projectId) throw new Error("no project");
       return wrap("submit_observation", () =>
@@ -99,7 +107,8 @@ export function useProjectActions(
           projectId,
           revision,
           statement,
-          affectedModuleIds
+          affectedModuleIds,
+          executionPlanId
         )
       );
     },
