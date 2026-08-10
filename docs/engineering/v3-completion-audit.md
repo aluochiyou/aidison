@@ -43,7 +43,7 @@
 | 生产运行库 migration/drift | not_checked | 隔离 `aidison_test` 已验收；不把测试库证据扩写为运行库已升级或无 drift。 |
 | 工具调用级 capability interception | 已实现（Web/GitHub） | 共享 `ToolCapabilityGuard` 在预算 reservation 与 provider dispatch 前同时验证 profile-frozen tool class、allowed effects 和 deadline；两类受控工具均有 fail-closed 单测。后续 adapter 必须复用该 guard。 |
 | A2AExecutionBackend / WorktreeExecutionBackend | 后置 | 尚无真实跨服务或自动改 repo 的产品需求；不能引入第二 runtime。 |
-| 模型调用级 replay | 已接线；实库 recovery not_checked | Research/Solution/Impact child 均在完整 agent invocation 前记录 job-stable `PENDING`，成功后保存 typed proposal artifact；reclaim 读取该 artifact，不构造 model/MCP session 或新增物理模型预算。纯单测与静态检查通过；`TEST_DATABASE_URL` 未启用，无法验证真实 PostgreSQL reclaim。 |
+| 模型调用级 replay | 已接线；真实模型 recovery not_checked | Research/Solution/Impact child 均在完整 agent invocation 前记录 job-stable `PENDING`，成功后保存 typed proposal artifact；reclaim 读取该 artifact，不构造 model/MCP session 或新增物理模型预算。隔离 PostgreSQL integration 已通过；真实模型/provider 的 reclaim 不重复调用仍未作为 live gate 验收。 |
 | 淘宝购买/跳转 | 后置 | V3 仅提供真实只读商品搜索/推荐；无购物车、下单、支付、自动跳转或淘宝 EffectApproval handoff。 |
 
 ## 交接建议
