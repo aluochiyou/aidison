@@ -21,6 +21,7 @@ from aidison.runtime.agent_runs import (
     utc_now,
 )
 from aidison.runtime.identity import (
+    RuntimeBinding,
     UnsupportedRuntimeBinding,
     WorkerRuntimeSupport,
     ensure_worker_supports,
@@ -283,6 +284,16 @@ class AgentRunControl:
         row = await self._locked_active_row(claim)
         if checkpoint.generation != claim.generation:
             raise AgentRunConflictError("checkpoint generation does not match AgentRun claim")
+        if checkpoint.thread_id != row.thread_id:
+            raise AgentRunConflictError("checkpoint thread does not match the AgentRun")
+        binding = RuntimeBinding.model_validate(row.runtime_binding)
+        if (
+            checkpoint.graph_revision != binding.graph_revision
+            or checkpoint.state_schema_version != binding.state_schema_version
+        ):
+            raise AgentRunConflictError(
+                "checkpoint runtime binding does not match the AgentRun"
+            )
         admitted = checkpoint
         if row.lifecycle_event_version > 0:
             if checkpoint.event_cursor != 0 or checkpoint.invocation_recording_keys:

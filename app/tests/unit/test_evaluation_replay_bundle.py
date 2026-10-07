@@ -218,6 +218,47 @@ def test_bundle_is_explicitly_incomplete_when_recorded_output_is_missing() -> No
         )
 
 
+def test_bundle_fails_closed_when_historical_checkpoint_does_not_match_run_binding() -> None:
+    run, events = _event_backed_run()
+    checkpoint = run.admitted_checkpoint
+    assert checkpoint is not None
+    mismatched_checkpoint = checkpoint.model_copy(
+        update={"graph_revision": "unknown-graph-revision"}
+    )
+    checkpointed_run = AgentRun.model_validate(events[2].payload["run"]).model_copy(
+        update={"admitted_checkpoint": mismatched_checkpoint}
+    )
+    mismatched_run = run.model_copy(
+        update={"admitted_checkpoint": mismatched_checkpoint}
+    )
+    mismatched_events = (
+        events[0],
+        events[1],
+        _event(
+            run=checkpointed_run,
+            event_type=AgentRunEventType.CHECKPOINT_ADMITTED,
+            aggregate_version=3,
+            project_seq=3,
+        ),
+        _event(
+            run=mismatched_run,
+            event_type=AgentRunEventType.SUCCEEDED,
+            aggregate_version=4,
+            project_seq=4,
+        ),
+    )
+
+    bundle = build_evaluation_replay_bundle(
+        run=mismatched_run,
+        lifecycle_events=mismatched_events,
+        invocations=(_recording(run),),
+        available_artifact_refs=frozenset({ARTIFACT_REF}),
+    )
+
+    assert bundle.status is ReplayBundleStatus.REPLAY_INCOMPLETE
+    assert bundle.reason_codes == ("checkpoint_runtime_binding_mismatch",)
+
+
 def test_bundle_explains_corrupt_artifact_and_ambiguous_effect_without_retrying() -> None:
     run, events = _event_backed_run()
     corrupt_recording = _recording(run)

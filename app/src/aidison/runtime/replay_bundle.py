@@ -279,6 +279,13 @@ def _incompleteness_reasons(
     if checkpoint is None:
         reasons.append("missing_admitted_checkpoint")
         return reasons
+    if checkpoint.thread_id != run.thread_id:
+        reasons.append("checkpoint_thread_mismatch")
+    if (
+        checkpoint.graph_revision != run.runtime_binding.graph_revision
+        or checkpoint.state_schema_version != run.runtime_binding.state_schema_version
+    ):
+        reasons.append("checkpoint_runtime_binding_mismatch")
     if checkpoint.event_cursor == 0:
         reasons.append("checkpoint_missing_event_cursor")
     checkpoint_event = next(

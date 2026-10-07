@@ -168,6 +168,53 @@ async def test_agent_run_claim_fences_stale_worker_and_persists_admitted_checkpo
 
 
 @pytest.mark.asyncio
+async def test_checkpoint_admission_requires_the_frozen_thread_and_runtime_binding() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Checkpoint binding fence fixture",
+                goal="Reject a checkpoint that belongs to another frozen AgentRun binding",
+                idempotency_key=f"checkpoint-binding-project-{uuid4()}",
+            )
+            control = AgentRunControl(session)
+            created = await control.create(_run(project_id=project.id))
+            claim = await control.claim_next(worker_id="worker-a", lease_seconds=60)
+            assert claim is not None
+
+            with pytest.raises(AgentRunConflictError, match="thread"):
+                await control.admit_checkpoint(
+                    claim=claim,
+                    checkpoint=AdmittedCheckpointRef(
+                        thread_id="another-thread",
+                        checkpoint_id="wrong-thread",
+                        graph_revision="r0",
+                        state_schema_version="state-v1",
+                        generation=claim.generation,
+                    ),
+                )
+            with pytest.raises(AgentRunConflictError, match="runtime binding"):
+                await control.admit_checkpoint(
+                    claim=claim,
+                    checkpoint=AdmittedCheckpointRef(
+                        thread_id=created.thread_id,
+                        checkpoint_id="wrong-runtime",
+                        graph_revision="other-graph",
+                        state_schema_version="other-schema",
+                        generation=claim.generation,
+                    ),
+                )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_agent_run_verified_snapshot_tail_replay_matches_control_relation() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
