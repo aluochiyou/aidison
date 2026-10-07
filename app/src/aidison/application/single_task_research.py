@@ -177,6 +177,22 @@ class SingleTaskResearchPayload(BaseModel):
             raise ValueError(
                 "research recommendation and alternatives must be distinct non-blank options"
             )
+        evidence_identities = tuple(
+            (
+                claim.coverage_key,
+                claim.source_key,
+                claim.quote_text,
+                claim.claim,
+                claim.subject_identity,
+                claim.predicate,
+                claim.applicability,
+                claim.normalization_schema,
+                claim.normalized_value,
+            )
+            for claim in self.evidence_claims
+        )
+        if len(evidence_identities) != len(set(evidence_identities)):
+            raise ValueError("research evidence claims must not repeat the same source assertion")
         return self
 
 

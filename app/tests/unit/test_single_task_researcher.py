@@ -106,6 +106,29 @@ def test_research_payload_keeps_meaningfully_distinct_options() -> None:
     assert payload.recommended_option == "Flight controller A"
 
 
+def test_research_payload_rejects_duplicate_evidence_assertion() -> None:
+    evidence = {
+        "coverage_key": "power.current",
+        "source_key": "manufacturer-spec",
+        "quote_text": "Continuous current: 35A.",
+        "claim": "The controller supports 35A continuous current.",
+        "subject_identity": "controller-a",
+        "predicate": "continuous_current",
+        "applicability": "nominal operation",
+        "normalization_schema": "current-amperes-v1",
+        "normalized_value": "35",
+    }
+
+    with pytest.raises(ValueError, match="evidence claims must not repeat"):
+        SingleTaskResearchPayload(
+            question="Compare controllers",
+            summary="Source-backed comparison.",
+            recommended_option="Controller A",
+            alternatives=("Controller B",),
+            evidence_claims=(evidence, evidence),
+        )
+
+
 @pytest.mark.asyncio
 async def test_research_prompt_exposes_the_full_evidence_claim_contract() -> None:
     model = MagicMock(spec=BaseChatModel)
