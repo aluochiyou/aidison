@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from hashlib import sha256
 from uuid import UUID, uuid4
@@ -143,6 +144,55 @@ async def test_control_request_is_idempotent_and_acknowledged_separately() -> No
             acknowledged = await store.acknowledge(created.id)
             assert acknowledged.status.value == "acknowledged"
             assert acknowledged.acknowledged_at is not None
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_parallel_identical_control_requests_reuse_one_durable_command() -> None:
+    """A retried pause/steering command must not leak a unique-key failure."""
+
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Concurrent AgentRun control fixture",
+                goal="Deduplicate a command retried before its first response returns",
+                idempotency_key=f"project-{uuid4()}",
+            )
+            run = await AgentRunControl(session).create(_run(project.id))
+            request = AgentRunControlRequest(
+                agent_run_id=run.id,
+                kind=ControlRequestKind.RUNTIME_STEERING,
+                basis_hash=run.basis_hash,
+                payload={"instruction": "prioritize independently verified evidence"},
+                idempotency_key=f"control-{uuid4()}",
+            )
+            await session.commit()
+
+        async def persist(value: AgentRunControlRequest) -> AgentRunControlRequest:
+            async with factory() as session:
+                stored = await AgentRunControlRequestStore(session).request(value)
+                await session.commit()
+                return stored
+
+        first, retried = await asyncio.gather(
+            persist(request),
+            persist(request.model_copy(update={"id": uuid4()})),
+        )
+        assert first.id == retried.id
+
+        async with factory() as session:
+            durable = await AgentRunControlRequestStore(session).list_for_run(
+                agent_run_id=run.id
+            )
+            assert durable == (first,)
     finally:
         await engine.dispose()
 

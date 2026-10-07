@@ -5,6 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aidison.infrastructure.agent_runs import AgentRunConflictError
@@ -28,28 +29,44 @@ class AgentRunControlRequestStore:
         )
         if existing is not None:
             restored = self._from_row(existing)
-            if (
-                restored.agent_run_id != value.agent_run_id
-                or restored.kind != value.kind
-                or restored.basis_hash != value.basis_hash
-                or restored.payload != value.payload
-            ):
+            if not self._same_request(restored, value):
                 raise AgentRunConflictError("control request idempotency key has another payload")
             return restored
-        self._session.add(
-            AgentRunControlRequestRow(
-                id=value.id,
-                agent_run_id=value.agent_run_id,
-                kind=value.kind.value,
-                basis_hash=value.basis_hash,
-                payload=value.payload,
-                idempotency_key=value.idempotency_key,
-                status=value.status.value,
-                created_at=value.created_at,
-                acknowledged_at=value.acknowledged_at,
-            )
+        row = AgentRunControlRequestRow(
+            id=value.id,
+            agent_run_id=value.agent_run_id,
+            kind=value.kind.value,
+            basis_hash=value.basis_hash,
+            payload=value.payload,
+            idempotency_key=value.idempotency_key,
+            status=value.status.value,
+            created_at=value.created_at,
+            acknowledged_at=value.acknowledged_at,
         )
-        await self._session.flush()
+        try:
+            # An API client can retry the same command while its first request
+            # is still committing.  The lookup above is intentionally cheap,
+            # but cannot close that race; confine the unique-key conflict to a
+            # savepoint and re-read the immutable command receipt afterwards.
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush([row])
+        except IntegrityError:
+            existing = await self._session.scalar(
+                select(AgentRunControlRequestRow)
+                .where(
+                    AgentRunControlRequestRow.idempotency_key == value.idempotency_key
+                )
+                .with_for_update()
+            )
+            if existing is None:
+                raise
+            restored = self._from_row(existing)
+            if not self._same_request(restored, value):
+                raise AgentRunConflictError(
+                    "control request idempotency key has another payload"
+                ) from None
+            return restored
         return value
 
     async def list_for_run(self, *, agent_run_id: UUID) -> tuple[AgentRunControlRequest, ...]:
@@ -98,4 +115,17 @@ class AgentRunControlRequestStore:
                 "created_at": row.created_at,
                 "acknowledged_at": row.acknowledged_at,
             }
+        )
+
+    @staticmethod
+    def _same_request(
+        left: AgentRunControlRequest,
+        right: AgentRunControlRequest,
+    ) -> bool:
+        return (
+            left.agent_run_id == right.agent_run_id
+            and left.kind == right.kind
+            and left.basis_hash == right.basis_hash
+            and left.payload == right.payload
+            and left.idempotency_key == right.idempotency_key
         )
