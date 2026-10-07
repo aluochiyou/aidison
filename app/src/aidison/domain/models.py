@@ -1039,6 +1039,8 @@ class Candidate(FrozenModel):
         independent supports.
         """
 
+        if not self.name.strip() or not self.description.strip():
+            raise ValueError("candidate name and description must not be blank")
         if len(self.evidence_binding_ids) != len(set(self.evidence_binding_ids)):
             raise ValueError("candidate evidence bindings must be unique")
         try:

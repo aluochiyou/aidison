@@ -264,6 +264,14 @@ def test_candidate_keeps_flexible_attributes_json_safe_and_evidence_unique() -> 
             attributes={"runtime_handle": object()},
         )
 
+    with pytest.raises(ValidationError, match="name and description must not be blank"):
+        Candidate(
+            project_id=uuid4(),
+            module_id=uuid4(),
+            name="   ",
+            description="\t",
+        )
+
 
 def test_needs_test_compatibility_requires_test_instructions() -> None:
     with pytest.raises(ValidationError, match="required_test"):
