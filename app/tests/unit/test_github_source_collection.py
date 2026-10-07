@@ -193,7 +193,7 @@ def test_github_collector_rejects_ambiguous_or_escaping_source_targets(target: s
 
 
 @pytest.mark.asyncio
-async def test_composite_collector_enforces_the_frozen_task_document_budget() -> None:
+async def test_composite_collector_enforces_the_frozen_task_document_budget_fairly() -> None:
     class StaticCollector:
         def __init__(self, sources: tuple[CollectedResearchSource, ...]) -> None:
             self._sources = sources
@@ -229,16 +229,18 @@ async def test_composite_collector_enforces_the_frozen_task_document_budget() ->
                     source("https://example.test/three"),
                 )
             ),  # type: ignore[arg-type]
+            StaticCollector((source("https://example.test/four"),)),  # type: ignore[arg-type]
         )
     ).collect(
         run=object(),  # type: ignore[arg-type]
-        task=SimpleNamespace(collection_policy=SimpleNamespace(max_documents_total=2)),
+        task=SimpleNamespace(collection_policy=SimpleNamespace(max_documents_total=3)),
         question="ignored",
     )
 
     assert [item.source.canonical_locator for item in sources] == [
         "https://example.test/one",
         "https://example.test/two",
+        "https://example.test/four",
     ]
 
 

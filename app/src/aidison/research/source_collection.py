@@ -377,7 +377,7 @@ class CompositeResearchSourceCollector:
         task: TaskEnvelope,
         question: str,
     ) -> tuple[CollectedResearchSource, ...]:
-        collected: list[CollectedResearchSource] = []
+        collected_by_collector: list[list[CollectedResearchSource]] = []
         seen_source_ids: set[str] = set()
         recoverable_failures: list[ResearchSourceCollectionError] = []
         for collector in self._collectors:
@@ -388,13 +388,17 @@ class CompositeResearchSourceCollector:
                     raise
                 recoverable_failures.append(error)
                 continue
+            collector_sources: list[CollectedResearchSource] = []
             for source in sources:
                 source_id = source.source.id
                 assert source_id is not None
                 if source_id in seen_source_ids:
                     continue
                 seen_source_ids.add(source_id)
-                collected.append(source)
+                collector_sources.append(source)
+            if collector_sources:
+                collected_by_collector.append(collector_sources)
+        collected = [source for group in collected_by_collector for source in group]
         if not collected and recoverable_failures:
             raise recoverable_failures[0]
         if collected and recoverable_failures:
@@ -407,21 +411,30 @@ class CompositeResearchSourceCollector:
                 for coverage_key in coverage_keys
                 for error in recoverable_failures
             )
-            collected = [
-                source.model_copy(
-                    update={
-                        "collection_failures": tuple(
-                            sorted(
-                                {
-                                    (failure.coverage_key, failure.reason_code): failure
-                                    for failure in (*source.collection_failures, *visible_failures)
-                                }.values(),
-                                key=lambda failure: (failure.coverage_key, failure.reason_code),
+            collected_by_collector = [
+                [
+                    source.model_copy(
+                        update={
+                            "collection_failures": tuple(
+                                sorted(
+                                    {
+                                        (failure.coverage_key, failure.reason_code): failure
+                                        for failure in (
+                                            *source.collection_failures,
+                                            *visible_failures,
+                                        )
+                                    }.values(),
+                                    key=lambda failure: (
+                                        failure.coverage_key,
+                                        failure.reason_code,
+                                    ),
+                                )
                             )
-                        )
-                    }
-                )
-                for source in collected
+                        }
+                    )
+                    for source in group
+                ]
+                for group in collected_by_collector
             ]
         collection_policy = getattr(task, "collection_policy", None)
         max_documents = (
@@ -429,7 +442,38 @@ class CompositeResearchSourceCollector:
             if collection_policy is not None
             else None
         )
-        return tuple(collected if max_documents is None else collected[:max_documents])
+        if max_documents is None:
+            return tuple(source for group in collected_by_collector for source in group)
+        return _fairly_bounded_collector_sources(
+            collected_by_collector,
+            max_documents=max_documents,
+        )
+
+
+def _fairly_bounded_collector_sources(
+    collected_by_collector: Sequence[Sequence[CollectedResearchSource]],
+    *,
+    max_documents: int,
+) -> tuple[CollectedResearchSource, ...]:
+    """Allocate a task's shared source budget across enabled source adapters.
+
+    Each collector keeps its own relevance/ranking policy. The composite only
+    prevents static local or repository inputs from consuming the entire task
+    budget before an independent enabled source collector receives one slot.
+    """
+
+    remaining = [list(group) for group in collected_by_collector]
+    selected: list[CollectedResearchSource] = []
+    while len(selected) < max_documents:
+        made_progress = False
+        for group in remaining:
+            if not group or len(selected) >= max_documents:
+                continue
+            selected.append(group.pop(0))
+            made_progress = True
+        if not made_progress:
+            break
+    return tuple(selected)
 
 
 class TavilySearchResearchSourceCollector:
