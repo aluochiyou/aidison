@@ -510,8 +510,18 @@ async def test_cancelled_claim_never_dispatches_a_new_research_call(tmp_path: Pa
             True,
         ),
         (
+            _UnavailableSourceCollector("github_network_failure"),
+            "github_network_failure",
+            True,
+        ),
+        (
             _UnavailableSourceCollector("tavily_authentication_failed"),
             "tavily_authentication_failed",
+            False,
+        ),
+        (
+            _UnavailableSourceCollector("github_authentication_failed"),
+            "github_authentication_failed",
             False,
         ),
     ),

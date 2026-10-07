@@ -45,6 +45,13 @@ def test_repeated_unresolved_gap_has_a_user_steering_failure_summary() -> None:
     assert "调整研究范围、来源策略或项目约束" in summary
 
 
+def test_github_source_failure_has_a_specific_user_visible_failure_summary() -> None:
+    summary = _research_failure_summary("github_source_not_found", None)
+
+    assert "GitHub" in summary
+    assert "不存在" in summary
+
+
 def test_run_duration_is_measured_from_the_first_worker_claim_not_queue_time() -> None:
     basis_hash = _hash("run-duration")
     first_claim_at = datetime(2026, 9, 12, 10, tzinfo=UTC)

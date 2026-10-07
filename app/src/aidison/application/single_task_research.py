@@ -244,6 +244,8 @@ def _is_recoverable_source_gap(reason_code: str) -> bool:
         "no_trusted_research_sources",
         "tavily_network_failure",
         "tavily_provider_unavailable",
+        "github_network_failure",
+        "github_provider_unavailable",
     }
 
 
