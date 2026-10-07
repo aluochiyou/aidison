@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aidison.infrastructure.orm import AgentRunDecisionRow
@@ -36,10 +37,7 @@ class AgentRunDecisionStore:
         )
         if existing is not None:
             restored = self._from_row(existing)
-            if (
-                restored.proposal_manifest_ref != proposal.artifact_ref
-                or restored.proposal_manifest_hash != proposal.manifest_hash
-            ):
+            if not self._matches_proposal(restored, proposal):
                 raise AgentRunDecisionConflictError(
                     "AgentRun already has another proposal decision"
                 )
@@ -63,8 +61,29 @@ class AgentRunDecisionStore:
             event_version=1,
             created_at=decision.created_at,
         )
-        self._session.add(row)
-        await self._session.flush()
+        try:
+            # The one-decision-per-Run constraint is the durable user-review
+            # boundary. Two graph resumes can both observe no row before one
+            # of them commits, so isolate the insert race and return the
+            # already-prepared equivalent review instead of leaking a unique
+            # constraint through the application layer.
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush([row])
+        except IntegrityError:
+            existing = await self._session.scalar(
+                select(AgentRunDecisionRow)
+                .where(AgentRunDecisionRow.agent_run_id == run.id)
+                .with_for_update()
+            )
+            if existing is None:
+                raise
+            restored = self._from_row(existing)
+            if not self._matches_proposal(restored, proposal):
+                raise AgentRunDecisionConflictError(
+                    "AgentRun already has another proposal decision"
+                ) from None
+            return restored
         await self._append_event(
             decision=decision,
             aggregate_version=1,
@@ -160,4 +179,14 @@ class AgentRunDecisionStore:
             answer=row.answer,
             created_at=row.created_at,
             resolved_at=row.resolved_at,
+        )
+
+    @staticmethod
+    def _matches_proposal(
+        decision: AgentRunDecision,
+        proposal: ProposalManifest,
+    ) -> bool:
+        return (
+            decision.proposal_manifest_ref == proposal.artifact_ref
+            and decision.proposal_manifest_hash == proposal.manifest_hash
         )

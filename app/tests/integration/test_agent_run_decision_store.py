@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from hashlib import sha256
 from uuid import UUID, uuid4
@@ -104,6 +105,61 @@ async def test_proposal_review_is_durable_event_backed_and_single_verdict() -> N
             )
             assert [event.aggregate_version for event in events] == [1, 2]
             assert replay_agent_run_decision(list(events)).agent_run_decision == resolved
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_parallel_equivalent_proposal_reviews_reuse_one_decision() -> None:
+    """Concurrent resume paths must converge on one human review inbox item."""
+
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_decisions CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Concurrent AgentRun decision fixture",
+                goal="A retried proposal consolidation must reuse the same human review",
+                idempotency_key=f"decision-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            proposal = ProposalManifest(
+                run_id=run.id,
+                basis_hash=run.basis_hash,
+                artifact_ref=f"artifact+sha256://{_hash('parallel-proposal')}/manifest.json",
+                manifest_hash=_hash("parallel-proposal"),
+            )
+            await session.commit()
+
+        async def prepare(value: ProposalManifest):
+            async with factory() as session:
+                decision = await AgentRunDecisionStore(session).prepare(
+                    run=run,
+                    proposal=value,
+                )
+                await session.commit()
+                return decision
+
+        first, retried = await asyncio.gather(
+            prepare(proposal),
+            prepare(proposal.model_copy(update={"id": uuid4()})),
+        )
+        assert first == retried
+
+        async with factory() as session:
+            events = await PostgresDomainStore(session).list_aggregate_events(
+                project.id,
+                aggregate_type="agent_run_decision",
+                aggregate_id=first.id,
+            )
+            assert [event.aggregate_version for event in events] == [1]
     finally:
         await engine.dispose()
 
