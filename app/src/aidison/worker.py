@@ -447,8 +447,9 @@ def _research_source_collector(
         )
     if not collectors:
         return NoopResearchSourceCollector()
-    if len(collectors) == 1:
-        return collectors[0]
+    # The composite owns the Run-frozen total document budget. Returning a
+    # single configured adapter directly would let multiple configured local or
+    # GitHub files bypass ``max_documents_total``.
     return CompositeResearchSourceCollector(collectors)
 
 

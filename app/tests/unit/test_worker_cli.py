@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -8,7 +9,6 @@ from pydantic import ValidationError
 import aidison.worker as worker_module
 from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
-    LocalFileResearchSourceCollector,
     NoopResearchSourceCollector,
 )
 from aidison.worker import (
@@ -183,7 +183,35 @@ def test_research_source_collector_requires_complete_local_source_config(tmp_pat
                 ),
                 client=client,
             )
-            assert isinstance(collector, LocalFileResearchSourceCollector)
+            assert isinstance(collector, CompositeResearchSourceCollector)
+
+    asyncio.run(exercise())
+
+
+def test_single_configured_source_adapter_still_honors_frozen_document_budget(
+    tmp_path: Path,
+) -> None:
+    async def exercise() -> None:
+        (tmp_path / "one.md").write_text("# One", encoding="utf-8")
+        (tmp_path / "two.md").write_text("# Two", encoding="utf-8")
+        async with httpx.AsyncClient() as client:
+            collector = _research_source_collector(
+                settings=WorkerSettings(
+                    _env_file=None,
+                    local_source_root=tmp_path,
+                    local_source_targets="one.md,two.md",
+                ),
+                client=client,
+            )
+            sources = await collector.collect(
+                run=object(),  # type: ignore[arg-type]
+                task=SimpleNamespace(
+                    coverage_keys=(),
+                    collection_policy=SimpleNamespace(max_documents_total=1),
+                ),
+                question="ignored",
+            )
+        assert [source.normalized_document for source in sources] == ["# One"]
 
     asyncio.run(exercise())
 
