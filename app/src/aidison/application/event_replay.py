@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from aidison.domain.events import (
     EventIntegrityError,
     ExecutionPlanReplaySnapshot,
@@ -25,6 +28,7 @@ from aidison.infrastructure.agent_decisions import AgentRunDecisionStore
 from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.infrastructure.agent_run_effects import AgentRunEffectLedger
 from aidison.infrastructure.agent_runs import AgentRunControl
+from aidison.infrastructure.orm import ExecutionPlanProposalRow
 from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.agent_result_events import (
@@ -60,6 +64,31 @@ from aidison.runtime.agent_runs import AgentRun
 
 class ProjectionMismatchError(EventIntegrityError):
     """Event replay and the canonical relation table describe different state."""
+
+
+class ProjectionRepairConflictError(ProjectionMismatchError):
+    """A repair preview became stale, or the relation row cannot be repaired safely."""
+
+
+@dataclass(frozen=True)
+class ExecutionPlanProjectionRepairPreview:
+    """Read-only comparison a human or maintenance command must approve explicitly."""
+
+    project_id: UUID
+    execution_plan_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class ExecutionPlanProjectionRepairResult:
+    """The preview plus an explicit indication of whether a relation row changed."""
+
+    preview: ExecutionPlanProjectionRepairPreview
+    applied: bool
 
 
 @dataclass(frozen=True)
@@ -176,6 +205,151 @@ class ExecutionPlanShadowProjectionService:
 def _execution_plan_proposal_hash(proposal: ExecutionPlanProposal) -> str:
     """Use relation-shaped state so it is comparable with replayed proposal state."""
     return canonical_payload_hash(proposal.model_dump(mode="json"))
+
+
+class ExecutionPlanProjectionRepairService:
+    """Explicitly repair one ExecutionPlan read-model row from its event stream.
+
+    This is intentionally a maintenance boundary, not a normal request path.
+    It never mutates ``domain_events`` or creates a new business event.  The
+    relation remains the normal online read model; this service only restores
+    it after an operator has examined a preview and supplied its exact current
+    relation hash back as an optimistic precondition.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+    ) -> ExecutionPlanProjectionRepairPreview:
+        """Rebuild the target projection without acquiring a write lock or mutating data."""
+
+        events = await self._events(project_id=project_id, execution_plan_id=execution_plan_id)
+        state = replay_execution_plan(events)
+        row = await self._session.get(ExecutionPlanProposalRow, execution_plan_id)
+        current_hash = _execution_plan_relation_row_hash(row) if row is not None else None
+        target_hash = _execution_plan_relation_hash(state.proposal)
+        return ExecutionPlanProjectionRepairPreview(
+            project_id=project_id,
+            execution_plan_id=execution_plan_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> ExecutionPlanProjectionRepairResult:
+        """Apply a reviewed repair under lock, or return its locked dry-run result.
+
+        Missing rows are not auto-created.  Their absence can indicate a failed
+        original command rather than a damaged projection, so they require a
+        separately audited restoration path.
+        """
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:execution-plan:{execution_plan_id}"},
+        )
+        row = await self._session.scalar(
+            select(ExecutionPlanProposalRow)
+            .where(
+                ExecutionPlanProposalRow.id == execution_plan_id,
+                ExecutionPlanProposalRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "execution-plan relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _execution_plan_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "execution-plan relation changed after repair preview; request a new preview"
+            )
+
+        events = await self._events(project_id=project_id, execution_plan_id=execution_plan_id)
+        state = replay_execution_plan(events)
+        target = state.proposal
+        target_hash = _execution_plan_relation_hash(target)
+        preview = ExecutionPlanProjectionRepairPreview(
+            project_id=project_id,
+            execution_plan_id=execution_plan_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return ExecutionPlanProjectionRepairResult(preview=preview, applied=False)
+
+        row.status = target.status.value
+        row.basis_hash = target.basis_hash
+        row.scope_hash = target.scope_hash or ""
+        row.payload = target.model_dump(mode="json")
+        await self._session.flush()
+        return ExecutionPlanProjectionRepairResult(preview=preview, applied=True)
+
+    async def _events(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+    ) -> list[StoredDomainEvent]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="execution_plan",
+                aggregate_id=execution_plan_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("execution-plan event stream is missing")
+        return events
+
+
+def _execution_plan_relation_row_hash(row: ExecutionPlanProposalRow) -> str:
+    """Hash every physical projection column so typed-column corruption is repairable too."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "project_id": str(row.project_id),
+            "status": row.status,
+            "basis_hash": row.basis_hash,
+            "scope_hash": row.scope_hash,
+            "payload": row.payload,
+        }
+    )
+
+
+def _execution_plan_relation_hash(proposal: ExecutionPlanProposal) -> str:
+    """Hash the exact physical-row shape expected from replayed plan state."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(proposal.id),
+            "project_id": str(proposal.project_id),
+            "status": proposal.status.value,
+            "basis_hash": proposal.basis_hash,
+            "scope_hash": proposal.scope_hash or "",
+            "payload": proposal.model_dump(mode="json"),
+        }
+    )
 
 
 @dataclass(frozen=True)
