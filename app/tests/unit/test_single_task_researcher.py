@@ -10,7 +10,10 @@ import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
 
-from aidison.application.single_task_research import _research_result_status
+from aidison.application.single_task_research import (
+    SingleTaskResearchPayload,
+    _research_result_status,
+)
 from aidison.providers.model_gateway import (
     ModelInvocationRequest,
     ModelTarget,
@@ -68,6 +71,39 @@ def test_research_result_status_is_partial_until_every_authorized_coverage_key_h
         admitted_coverage_keys=("power.current", "power.voltage"),
         unresolved_refs=("artifact+sha256://" + "a" * 64 + "/" + str(uuid4()),),
     ) is ResearchResultStatus.PARTIAL
+
+
+@pytest.mark.parametrize(
+    "recommended_option,alternatives",
+    (
+        ("Flight controller A", ("Flight controller A",)),
+        ("Flight Controller A", ("  flight   controller a  ",)),
+        ("Flight controller A", ("Flight controller B", "FLIGHT CONTROLLER B")),
+        (" ", ("Flight controller B",)),
+    ),
+)
+def test_research_payload_rejects_duplicate_or_blank_user_choice(
+    recommended_option: str,
+    alternatives: tuple[str, ...],
+) -> None:
+    with pytest.raises(ValueError, match="distinct non-blank options"):
+        SingleTaskResearchPayload(
+            question="Compare flight controllers",
+            summary="Source-backed comparison.",
+            recommended_option=recommended_option,
+            alternatives=alternatives,
+        )
+
+
+def test_research_payload_keeps_meaningfully_distinct_options() -> None:
+    payload = SingleTaskResearchPayload(
+        question="Compare flight controllers",
+        summary="Source-backed comparison.",
+        recommended_option="Flight controller A",
+        alternatives=("Flight controller B",),
+    )
+
+    assert payload.recommended_option == "Flight controller A"
 
 
 @pytest.mark.asyncio

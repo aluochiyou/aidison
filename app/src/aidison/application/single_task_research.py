@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aidison.application.service import ProjectApplication
@@ -158,6 +158,26 @@ class SingleTaskResearchPayload(BaseModel):
     recommended_option: str = Field(min_length=1, max_length=2_000)
     alternatives: tuple[str, ...] = Field(min_length=1, max_length=8)
     evidence_claims: tuple[ResearchEvidenceClaim, ...] = Field(default=(), max_length=64)
+
+    @model_validator(mode="after")
+    def presents_distinct_decision_options(self) -> SingleTaskResearchPayload:
+        """Reject a model response that only looks like it gives the user a choice.
+
+        The proposal reducer turns these labels into durable Candidate and
+        DecisionOption records. Letting a recommendation reappear as an
+        alternative would make the later approval screen structurally valid
+        but semantically meaningless. This boundary is deliberately
+        deterministic rather than prompt-only, and tolerates only cosmetic
+        whitespace/case differences when detecting a duplicate.
+        """
+
+        option_labels = (self.recommended_option, *self.alternatives)
+        normalized = tuple(" ".join(label.split()).casefold() for label in option_labels)
+        if not all(normalized) or len(normalized) != len(set(normalized)):
+            raise ValueError(
+                "research recommendation and alternatives must be distinct non-blank options"
+            )
+        return self
 
 
 class SingleTaskResearchExecution(BaseModel):
