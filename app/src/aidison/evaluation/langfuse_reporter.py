@@ -73,6 +73,16 @@ class LangfuseEvaluationReporter:
         manifest_hash = (
             report.fixture_manifest.content_hash if report.fixture_manifest is not None else None
         )
+        fixture_set_key = (
+            report.fixture_manifest.fixture_set_key
+            if report.fixture_manifest is not None
+            else None
+        )
+        fixture_set_revision = (
+            report.fixture_manifest.fixture_set_revision
+            if report.fixture_manifest is not None
+            else None
+        )
         with client.start_as_current_observation(
             trace_context={"trace_id": trace_id},
             name="aidison-evaluation",
@@ -81,6 +91,8 @@ class LangfuseEvaluationReporter:
                 "mode": report.mode.value,
                 "schema_version": report.schema_version,
                 "runner_version": report.runner_version,
+                "fixture_set_key": fixture_set_key,
+                "fixture_set_revision": fixture_set_revision,
                 "fixture_manifest_hash": manifest_hash,
             },
             output=report.summary.model_dump(mode="json"),
@@ -88,6 +100,8 @@ class LangfuseEvaluationReporter:
                 "project": self._project_name,
                 "layers": [layer.value for layer in report.layers_covered],
                 "case_count": len(report.cases),
+                "fixture_set_key": fixture_set_key,
+                "fixture_set_revision": fixture_set_revision,
             },
             version=report.runner_version,
         ):
