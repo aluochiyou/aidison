@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy import select
@@ -17,11 +18,32 @@ from aidison.runtime.control_requests import (
 )
 
 
+@dataclass(frozen=True)
+class AgentRunControlRequestWrite:
+    """One idempotent command receipt for callers that also emit an event."""
+
+    request: AgentRunControlRequest
+    created: bool
+
+
 class AgentRunControlRequestStore:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
     async def request(self, value: AgentRunControlRequest) -> AgentRunControlRequest:
+        """Persist a control command and return its canonical durable request."""
+        return (await self.request_with_receipt(value)).request
+
+    async def request_with_receipt(
+        self,
+        value: AgentRunControlRequest,
+    ) -> AgentRunControlRequestWrite:
+        """Return whether this transaction created the durable command.
+
+        Command endpoints use ``created`` to append one durable product event
+        exactly once. A replay of the same idempotency key may reuse the row,
+        but must not advance the project's event cursor a second time.
+        """
         existing = await self._session.scalar(
             select(AgentRunControlRequestRow).where(
                 AgentRunControlRequestRow.idempotency_key == value.idempotency_key
@@ -31,7 +53,7 @@ class AgentRunControlRequestStore:
             restored = self._from_row(existing)
             if not self._same_request(restored, value):
                 raise AgentRunConflictError("control request idempotency key has another payload")
-            return restored
+            return AgentRunControlRequestWrite(request=restored, created=False)
         row = AgentRunControlRequestRow(
             id=value.id,
             agent_run_id=value.agent_run_id,
@@ -66,8 +88,8 @@ class AgentRunControlRequestStore:
                 raise AgentRunConflictError(
                     "control request idempotency key has another payload"
                 ) from None
-            return restored
-        return value
+            return AgentRunControlRequestWrite(request=restored, created=False)
+        return AgentRunControlRequestWrite(request=value, created=True)
 
     async def list_for_run(self, *, agent_run_id: UUID) -> tuple[AgentRunControlRequest, ...]:
         rows = list(

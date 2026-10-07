@@ -137,8 +137,14 @@ async def test_control_request_is_idempotent_and_acknowledged_separately() -> No
                 idempotency_key=f"control-{uuid4()}",
             )
             store = AgentRunControlRequestStore(session)
-            created = await store.request(request)
-            replayed = await store.request(request.model_copy(update={"id": uuid4()}))
+            created_receipt = await store.request_with_receipt(request)
+            replayed_receipt = await store.request_with_receipt(
+                request.model_copy(update={"id": uuid4()})
+            )
+            created = created_receipt.request
+            replayed = replayed_receipt.request
+            assert created_receipt.created is True
+            assert replayed_receipt.created is False
             assert replayed.id == created.id
             assert (await store.list_for_run(agent_run_id=run.id)) == (created,)
             acknowledged = await store.acknowledge(created.id)
@@ -235,10 +241,24 @@ async def test_control_commands_are_versioned_visible_and_cancel_is_event_idempo
                     "basis_hash": run.basis_hash,
                     "instruction": "prioritize independently verified evidence",
                 },
-                headers={"Idempotency-Key": f"steer-{uuid4()}", "If-Match": '"1"'},
+                headers=headers,
             )
             assert requested.status_code == 200, requested.text
             assert requested.json()["control_request"]["status"] == "requested"
+            repeated_request = await client.post(
+                f"/api/projects/{project.id}/agent-runs/{run.id}/controls",
+                json={
+                    "kind": "runtime_steering",
+                    "basis_hash": run.basis_hash,
+                    "instruction": "prioritize independently verified evidence",
+                },
+                headers=headers,
+            )
+            assert repeated_request.status_code == 200, repeated_request.text
+            assert (
+                repeated_request.json()["control_request"]["id"]
+                == requested.json()["control_request"]["id"]
+            )
 
             first_cancel = await client.post(
                 f"/api/projects/{project.id}/agent-runs/{run.id}/cancel",
@@ -266,6 +286,12 @@ async def test_control_commands_are_versioned_visible_and_cancel_is_event_idempo
                 event for event in events.json() if event["type"] == "agent_run.cancelled"
             ]
             assert len(cancellation_events) == 1
+            control_events = [
+                event
+                for event in events.json()
+                if event["type"] == "agent_run.control_requested"
+            ]
+            assert len(control_events) == 1
     finally:
         await engine.dispose()
 

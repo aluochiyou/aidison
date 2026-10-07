@@ -2152,7 +2152,7 @@ def create_app(
             payload = {"instruction": body.instruction or ""}
         elif kind is ControlRequestKind.BASIS_STEERING:
             payload = {"change_request_ref": body.change_request_ref or ""}
-        request = await AgentRunControlRequestStore(session).request(
+        request_receipt = await AgentRunControlRequestStore(session).request_with_receipt(
             AgentRunControlRequest(
                 agent_run_id=run.id,
                 kind=kind,
@@ -2161,18 +2161,22 @@ def create_app(
                 idempotency_key=idempotency_key,
             )
         )
-        await store.append_event(
-            project_id,
-            "agent_run.control_requested",
-            {
-                "agent_run_id": str(run.id),
-                "control_request_id": str(request.id),
-                "kind": kind.value,
-            },
-        )
+        if request_receipt.created:
+            await store.append_event(
+                project_id,
+                "agent_run.control_requested",
+                {
+                    "agent_run_id": str(run.id),
+                    "control_request_id": str(request_receipt.request.id),
+                    "kind": kind.value,
+                },
+            )
         await session.commit()
         response.headers["ETag"] = f'"{revision}"'
-        return {"control_request": request, "project_revision": revision}
+        return {
+            "control_request": request_receipt.request,
+            "project_revision": revision,
+        }
 
     @api.post("/api/projects/{project_id}/agent-runs/{run_id}/resume")
     async def resume_paused_agent_run(
