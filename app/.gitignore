@@ -1,0 +1,29 @@
+# Runtime secrets and Python build state
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Frontend build state
+web/node_modules/
+web/.next/
+web/dist/
+web/coverage/
+
+# Rebuildable local runtime and browser artifacts
+artifacts/data/
+artifacts/live-probes/
+postgres-data/
+.playwright-cli/
+playwright-report/
+test-results/
+*.log
+.DS_Store
+Thumbs.db

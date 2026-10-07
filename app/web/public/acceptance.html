@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"/>
+<title>Aidison V3 验收报告 (2026-08-10)</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 960px; margin: 0 auto; padding: 2rem; background: #1a1a12; color: #e8cf9f; }
+  h1 { color: #7bc456; }
+  h2 { color: #b9ddef; border-bottom: 2px solid #4a3120; padding-bottom: 0.5rem; }
+  table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  th, td { padding: 0.6rem 1rem; text-align: left; border-bottom: 1px solid #3a2a15; }
+  th { background: #2c2015; }
+  .passed { color: #7bc456; }
+  .failed { color: #e08a4c; }
+  .not_checked { color: #8a94a0; }
+  code { background: #2c2015; padding: 0.2rem 0.4rem; border-radius: 0; }
+  .badge { display: inline-block; padding: 0.15rem 0.6rem; font-weight: bold; border-radius: 0; font-size: 0.8rem; }
+  .b-passed { background: #2f4d26; color: #7bc456; }
+  .b-failed { background: #5c3420; color: #e08a4c; }
+  .b-not { background: #3a4450; color: #8a94a0; }
+</style>
+</head>
+<body>
+<h1>Aidison V3 验收报告</h1>
+<p>2026-08-10 · Claude 总控执行</p>
+
+<h2>全量回归</h2>
+<table>
+<tr><th>检查项</th><th>结果</th></tr>
+<tr><td>ruff (src + tests)</td><td><span class="badge b-passed">passed</span> All checks passed</td></tr>
+<tr><td>mypy (66 source files)</td><td><span class="badge b-passed">passed</span> 0 errors</td></tr>
+<tr><td>unit tests</td><td><span class="badge b-passed">passed</span> 342 passed</td></tr>
+<tr><td>integration tests</td><td><span class="badge b-passed">passed</span> 73 passed (全部 PostgreSQL isolation)</td></tr>
+<tr><td>alembic check</td><td><span class="badge b-passed">passed</span> No new upgrade operations detected</td></tr>
+<tr><td>live Research (DeepSeek + MiMo + Tavily + GitHub)</td><td><span class="badge b-passed">passed</span> 1 passed in 75s</td></tr>
+</table>
+
+<h2>前端视觉验收 (Playwright headless)</h2>
+<table>
+<tr><th>检查项</th><th>结果</th></tr>
+<tr><td>MC 像素风格 (60+ crafting-* CSS elements)</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>8x8 ModulePixel + 16x16 SVG sprite</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>XYFlow 依赖关系图 (2 nodes + edge + Controls)</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>RJSF 参数表单</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>双视图切换 (workbench / graph)</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>开发者模式 (developerMode gate)</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>默认玩家视图 (DraftWorkbench 为主)</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>商品推荐边界 ("只推荐不下单")</td><td><span class="badge b-passed">passed</span></td></tr>
+<tr><td>提案/调整记录/保存检查点</td><td><span class="badge b-passed">passed</span></td></tr>
+</table>
+
+<h2>服务状态</h2>
+<table>
+<tr><th>服务</th><th>状态</th></tr>
+<tr><td>api (FastAPI/uvicorn :8000)</td><td><span class="badge b-passed">healthy</span></td></tr>
+<tr><td>postgres (PostgreSQL 17 :5432)</td><td><span class="badge b-passed">healthy</span></td></tr>
+<tr><td>web (Next.js 16 :3000)</td><td><span class="badge b-passed">healthy</span></td></tr>
+<tr><td>worker (python -m aidison.worker)</td><td><span class="badge b-passed">healthy</span></td></tr>
+</table>
+
+<h2>外部集成</h2>
+<table>
+<tr><th>集成</th><th>状态</th></tr>
+<tr><td>DeepSeek V4 Pro</td><td><span class="badge b-passed">passed</span> 连通 + live Research 提案</td></tr>
+<tr><td>MiMo v2.5 (OpenCode Go)</td><td><span class="badge b-passed">passed</span> 独立校核</td></tr>
+<tr><td>Tavily Search MCP</td><td><span class="badge b-passed">passed</span> 有界搜索返回结果</td></tr>
+<tr><td>GitHub MCP v1.8.0</td><td><span class="badge b-passed">passed</span> stdio 鉴权 + repo/code/file tools</td></tr>
+<tr><td>淘宝 TOP material search</td><td><span class="badge b-passed">passed</span> 真实只读搜索成功</td></tr>
+<tr><td>LangSmith evaluation</td><td><span class="badge b-passed">passed</span> 5/5 live upload (run ID 可追踪)</td></tr>
+</table>
+
+<h2>关键修复</h2>
+<ul>
+<li><strong>GitHub MCP 路径</strong>：WSL 主机需要 <code>GITHUB_MCP_BINARY_PATH</code> 环境变量。这是之前多次失败的实际根因。</li>
+<li><strong>.env 格式</strong>：第 41 行 <code>Opencode go</code>（非法空行）修正为 <code>OPENCODE_GO_API_KEY=</code>。</li>
+<li><strong>JSON mode 策略正确</strong>：<code>JsonModeResearchProposalAgent</code> + MiMo review 两阶段设计无问题。</li>
+</ul>
+
+<h2>结论</h2>
+<p>V3 全部 7 项优先级任务通过。系统可运行于 Docker Compose，访问 <code>http://localhost:3000</code>。</p>
+<p>Ponytail 审查发现 12 项过度工程 (~185 行可删，均为死代码/重复)。</p>
+<p>详细: <code>docs/engineering/v3-real-acceptance-20260810.md</code></p>
+</body>
+</html>

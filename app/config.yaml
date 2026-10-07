@@ -1,0 +1,57 @@
+# Non-secret application defaults. Keep API keys and database credentials in .env.
+
+model:
+  provider: deepseek
+  deepseek_base_url: https://api.deepseek.com
+  deepseek_model: deepseek-v4-pro
+  # Routine conversational routing stays non-thinking. Module discovery,
+  # research strategy planning, and evidence research explicitly opt into
+  # thinking mode in their bounded, JSON-only calls.
+  deepseek_thinking: disabled
+  # OpenCode Go supplies Aidison's independent MiMo verification/replication
+  # profile. Its secret remains in OPENCODE_API_KEY (or legacy Opencode_API_KEY).
+  opencode_go_base_url: https://opencode.ai/zen/go/v1
+  opencode_go_model: mimo-v2.5
+
+research:
+  mcp_url: https://mcp.tavily.com/mcp
+  search_depth: advanced
+  timeout_seconds: 10
+
+database:
+  echo_sql: false
+
+runtime:
+  artifact_root: artifacts/data
+  concurrency: 3
+  # Per-worker model dispatch gate. Each physical research call is also
+  # reserved and settled against the user-approved AgentRun Token budget.
+  model_max_concurrency: 2
+  research_model_reserved_tokens: 4000
+  research_model_timeout_seconds: 120
+  lease_seconds: 60
+  poll_seconds: 0.5
+  durable_recheck_seconds: 30
+
+draft:
+  # Consecutive DIY adjustments remain append-only; this only coalesces their
+  # follow-up analysis trigger into one bounded batch.
+  adjustment_batch_window_seconds: 2.0
+
+shopping:
+  effect_approval_ttl_seconds: 900
+  # Runtime shopping provider selection (nonsecret): "none" (no provider) or
+  # "taobao" (search-only).  Provider secrets come from the environment.
+  provider: taobao
+
+taobao:
+  # Non-secret search-only defaults.  Secrets come from TAOBAO_APP_KEY and
+  # TAOBAO_APP_SECRET in the environment only.  Taobao is search-only: it
+  # never creates carts, orders, payments, or product-redirect handoffs.
+  adzone_id: "116303850357"
+  search_timeout_seconds: 5.0
+  max_search_results: 20
+conversation:
+  max_turns: 20
+  max_tokens_per_turn: 2000
+  model_temperature: 0.0

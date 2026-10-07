@@ -1,0 +1,62 @@
+[project]
+name = "aidison"
+version = "0.1.0"
+description = "A local-first DIY engineering agent with durable, evidence-backed decisions."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "alembic>=1.16,<2",
+  "asyncpg>=0.30,<1",
+  "fastapi>=0.116,<1",
+  "httpx>=0.28,<1",
+  "langchain-mcp-adapters==0.3.1",
+  "langchain-openai>=1.1,<2",
+  "langfuse>=4.7,<5",
+  "langgraph>=1.2,<2",
+  "langgraph-checkpoint-postgres>=3.1,<4",
+  "mcp>=1.24,<2",
+  "psycopg[binary,pool]>=3.3,<4",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "pyyaml>=6,<7",
+  "sqlalchemy[asyncio]>=2.0,<3",
+  "trafilatura>=2.2,<3",
+  "uvicorn[standard]>=0.35,<1",
+]
+
+[dependency-groups]
+dev = [
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "pytest-cov>=6.2,<7",
+  "ruff>=0.12,<1",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aidison"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "--strict-markers --strict-config --import-mode=importlib"
+markers = [
+  "integration: requires PostgreSQL or another external service",
+  "live: performs a real provider or network request",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["aidison"]
