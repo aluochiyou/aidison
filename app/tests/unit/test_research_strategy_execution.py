@@ -52,6 +52,13 @@ def test_github_source_failure_has_a_specific_user_visible_failure_summary() -> 
     assert "不存在" in summary
 
 
+def test_local_source_failure_has_a_specific_user_visible_failure_summary() -> None:
+    summary = _research_failure_summary("local_source_not_found", None)
+
+    assert "本地资料" in summary
+    assert "不存在" in summary
+
+
 def test_run_duration_is_measured_from_the_first_worker_claim_not_queue_time() -> None:
     basis_hash = _hash("run-duration")
     first_claim_at = datetime(2026, 9, 12, 10, tzinfo=UTC)

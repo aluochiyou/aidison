@@ -7,11 +7,13 @@ from pydantic import ValidationError
 
 from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
+    LocalFileResearchSourceCollector,
     NoopResearchSourceCollector,
 )
 from aidison.worker import (
     WorkerSettings,
     _github_source_targets,
+    _local_source_targets,
     _parser,
     _research_source_collector,
     _run_worker_pool,
@@ -128,6 +130,37 @@ def test_research_source_collector_requires_complete_github_authority_config() -
     asyncio.run(exercise())
 
 
+def test_research_source_collector_requires_complete_local_source_config(tmp_path: Path) -> None:
+    async def exercise() -> None:
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(ValueError, match="requires AIDISON_LOCAL_SOURCE_ROOT"):
+                _research_source_collector(
+                    settings=WorkerSettings(
+                        _env_file=None,
+                        local_source_targets="specs/flight-control.md",
+                    ),
+                    client=client,
+                )
+            with pytest.raises(ValueError, match="requires AIDISON_LOCAL_SOURCE_TARGETS"):
+                _research_source_collector(
+                    settings=WorkerSettings(_env_file=None, local_source_root=tmp_path),
+                    client=client,
+                )
+
+            (tmp_path / "spec.md").write_text("# Spec", encoding="utf-8")
+            collector = _research_source_collector(
+                settings=WorkerSettings(
+                    _env_file=None,
+                    local_source_root=tmp_path,
+                    local_source_targets="spec.md",
+                ),
+                client=client,
+            )
+            assert isinstance(collector, LocalFileResearchSourceCollector)
+
+    asyncio.run(exercise())
+
+
 def test_research_source_collector_combines_authorized_tavily_and_github_readers() -> None:
     async def exercise() -> None:
         async with httpx.AsyncClient() as client:
@@ -153,3 +186,13 @@ def test_github_source_targets_accept_comma_or_line_delimited_allowlists() -> No
     )
     with pytest.raises(ValueError, match="must not repeat"):
         _github_source_targets("lab/a@main:one.md,lab/a@main:one.md")
+
+
+def test_local_source_targets_accept_comma_or_line_delimited_allowlists() -> None:
+    assert _local_source_targets("specs/a.md, specs/b.md\nmanuals/c.txt") == (
+        "specs/a.md",
+        "specs/b.md",
+        "manuals/c.txt",
+    )
+    with pytest.raises(ValueError, match="must not repeat"):
+        _local_source_targets("specs/a.md,specs/a.md")

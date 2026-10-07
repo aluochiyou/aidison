@@ -50,6 +50,7 @@ from aidison.research.researcher import (
 from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
     GitHubRepositorySourceCollector,
+    LocalFileResearchSourceCollector,
     NoopResearchSourceCollector,
     ResearchSourceCollector,
     TavilySearchResearchSourceCollector,
@@ -120,6 +121,14 @@ class WorkerSettings(AidisonSettings):
         default=None,
         validation_alias="TAVILY_MAX_QUERIES",
         ge=1,
+    )
+    local_source_root: Path | None = Field(
+        default=None,
+        validation_alias="AIDISON_LOCAL_SOURCE_ROOT",
+    )
+    local_source_targets: str = Field(
+        default="",
+        validation_alias="AIDISON_LOCAL_SOURCE_TARGETS",
     )
     github_api_token: SecretStr | None = Field(
         default=None,
@@ -391,6 +400,18 @@ def _research_source_collector(
     """
 
     collectors: list[ResearchSourceCollector] = []
+    local_targets = _local_source_targets(settings.local_source_targets)
+    if settings.local_source_root is None and local_targets:
+        raise ValueError("AIDISON_LOCAL_SOURCE_TARGETS requires AIDISON_LOCAL_SOURCE_ROOT")
+    if settings.local_source_root is not None and not local_targets:
+        raise ValueError("AIDISON_LOCAL_SOURCE_ROOT requires AIDISON_LOCAL_SOURCE_TARGETS")
+    if settings.local_source_root is not None:
+        collectors.append(
+            LocalFileResearchSourceCollector(
+                source_root=settings.local_source_root,
+                source_targets=local_targets,
+            )
+        )
     github_targets = _github_source_targets(settings.github_source_targets)
     if settings.github_api_token is None and github_targets:
         raise ValueError("AIDISON_GITHUB_SOURCE_TARGETS requires AIDISON_GITHUB_API_TOKEN")
@@ -431,6 +452,20 @@ def _github_source_targets(value: str) -> tuple[str, ...]:
     )
     if len(set(targets)) != len(targets):
         raise ValueError("AIDISON_GITHUB_SOURCE_TARGETS must not repeat a target")
+    return targets
+
+
+def _local_source_targets(value: str) -> tuple[str, ...]:
+    """Parse configured local source paths; path safety is enforced by the collector."""
+
+    targets = tuple(
+        target.strip()
+        for item in value.splitlines()
+        for target in item.split(",")
+        if target.strip()
+    )
+    if len(set(targets)) != len(targets):
+        raise ValueError("AIDISON_LOCAL_SOURCE_TARGETS must not repeat a target")
     return targets
 
 

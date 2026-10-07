@@ -8,14 +8,16 @@ quoted span proposed by the model.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import Protocol
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -109,6 +111,107 @@ class TavilySourceCollectionError(ResearchSourceCollectionError):
 
 class GitHubSourceCollectionError(ResearchSourceCollectionError):
     """A classified failure at the trusted GitHub Contents API boundary."""
+
+
+class LocalFileSourceCollectionError(ResearchSourceCollectionError):
+    """A classified failure at the explicit local-source read boundary."""
+
+
+class LocalFileResearchSourceCollector:
+    """Read text files from one configured directory and exact relative allowlist.
+
+    This is a local-first input adapter, not a host filesystem tool. The model
+    never supplies a path: every target is deployment configuration, resolved
+    below ``source_root`` and checked again immediately before every read.
+    """
+
+    def __init__(
+        self,
+        *,
+        source_root: Path,
+        source_targets: Sequence[str],
+        max_document_characters: int = 32_000,
+    ) -> None:
+        if not source_targets:
+            raise ValueError("local source targets must not be empty")
+        if not 1 <= max_document_characters <= 96_000:
+            raise ValueError("local source document limit must be between 1 and 96000")
+        root = source_root.resolve()
+        if not root.is_dir():
+            raise ValueError("local source root must be an existing directory")
+        self._root = root
+        self._targets = tuple(self._parse_target(value) for value in source_targets)
+        if len(set(self._targets)) != len(self._targets):
+            raise ValueError("local source targets must be unique")
+        self._max_document_characters = max_document_characters
+        self._max_document_bytes = max_document_characters * 4
+
+    async def collect(
+        self,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+    ) -> tuple[CollectedResearchSource, ...]:
+        del run, task, question
+        observed_at = datetime.now(UTC)
+        sources: list[CollectedResearchSource] = []
+        for target in self._targets:
+            sources.append(await self._read_target(target=target, observed_at=observed_at))
+        return tuple(sources)
+
+    @staticmethod
+    def _parse_target(value: str) -> str:
+        target = value.strip().replace("\\", "/")
+        if not target or target.startswith("/") or "//" in target:
+            raise ValueError("local source target must be a non-empty relative file path")
+        parts = target.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ValueError("local source target path must stay inside its source root")
+        return target
+
+    async def _read_target(
+        self,
+        *,
+        target: str,
+        observed_at: datetime,
+    ) -> CollectedResearchSource:
+        path = (self._root / target).resolve()
+        if self._root not in path.parents or not path.is_file():
+            raise LocalFileSourceCollectionError("local_source_not_found")
+        try:
+            size = path.stat().st_size
+        except OSError as error:
+            raise LocalFileSourceCollectionError("local_source_read_failed") from error
+        if size > self._max_document_bytes:
+            raise LocalFileSourceCollectionError("local_document_too_large")
+        try:
+            content = await asyncio.to_thread(path.read_bytes)
+        except OSError as error:
+            raise LocalFileSourceCollectionError("local_source_read_failed") from error
+        if len(content) > self._max_document_bytes:
+            raise LocalFileSourceCollectionError("local_document_too_large")
+        try:
+            document = content.decode("utf-8").strip()[: self._max_document_characters]
+        except UnicodeDecodeError as error:
+            raise LocalFileSourceCollectionError("local_source_invalid_text") from error
+        if not document:
+            raise LocalFileSourceCollectionError("local_source_invalid_text")
+        canonical_locator = f"aidison://project-file/{quote(target, safe='/._-')}"
+        return CollectedResearchSource(
+            key=f"local-{sha256(canonical_locator.encode()).hexdigest()[:20]}",
+            source=SourceIdentity(
+                kind=SourceKind.PROJECT_FILE,
+                provider="local-file-v1",
+                canonical_locator=canonical_locator,
+            ),
+            normalized_document=document,
+            media_type=_document_media_type(target),
+            representation="normalized-local-file-v1",
+            parser_revision="local-file-v1",
+            observed_at=observed_at,
+            coverage_source_kinds=("evidence",),
+        )
 
 
 class GitHubRepositorySourceCollector:
@@ -251,7 +354,7 @@ class GitHubRepositorySourceCollector:
                 canonical_locator=canonical_locator,
             ),
             normalized_document=document,
-            media_type=_github_media_type(path),
+            media_type=_document_media_type(path),
             representation="normalized-github-contents-v1",
             parser_revision="github-contents-v1",
             observed_at=observed_at,
@@ -749,7 +852,7 @@ def _github_http_failure_code(response: httpx.Response) -> str:
     return "github_request_rejected"
 
 
-def _github_media_type(path: str) -> str:
+def _document_media_type(path: str) -> str:
     suffix = path.rsplit(".", maxsplit=1)[-1].lower() if "." in path else ""
     return {
         "md": "text/markdown",
@@ -781,6 +884,8 @@ __all__ = [
     "CompositeResearchSourceCollector",
     "GitHubRepositorySourceCollector",
     "GitHubSourceCollectionError",
+    "LocalFileResearchSourceCollector",
+    "LocalFileSourceCollectionError",
     "is_recoverable_source_collection_failure",
     "NoopResearchSourceCollector",
     "ResearchSourceCollectionError",
