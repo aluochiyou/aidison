@@ -5,7 +5,7 @@ import asyncio
 import logging
 import os
 import socket
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID
@@ -78,7 +78,7 @@ class WorkerSettings(AidisonSettings):
     concurrency: int = Field(
         default=3,
         validation_alias="AIDISON_WORKER_CONCURRENCY",
-        ge=3,
+        ge=1,
         le=32,
     )
     lease_seconds: int = Field(
@@ -265,15 +265,12 @@ async def run_solution_worker(settings: WorkerSettings, *, once: bool = False) -
         if once:
             await worker.run_once()
             return
-        while True:
-            try:
-                outcome = await worker.run_once()
-            except Exception:
-                logger.exception("Solution AgentRun execution failed")
-                await asyncio.sleep(settings.poll_seconds)
-                continue
-            if outcome is None:
-                await asyncio.sleep(settings.poll_seconds)
+        await _run_worker_pool(
+            concurrency=settings.concurrency,
+            poll_seconds=settings.poll_seconds,
+            runtime_name="solution",
+            run_once=worker.run_once,
+        )
     finally:
         runtime_tracer.flush()
         await checkpoints.close()
@@ -353,15 +350,12 @@ async def run_research_worker(
             if once:
                 await worker.run_once(run_id=run_id)
                 return
-            while True:
-                try:
-                    outcome = await worker.run_once()
-                except Exception:
-                    logger.exception("Research AgentRun execution failed")
-                    await asyncio.sleep(settings.poll_seconds)
-                    continue
-                if outcome is None:
-                    await asyncio.sleep(settings.poll_seconds)
+            await _run_worker_pool(
+                concurrency=settings.concurrency,
+                poll_seconds=settings.poll_seconds,
+                runtime_name="research",
+                run_once=worker.run_once,
+            )
     finally:
         runtime_tracer.flush()
         await checkpoints.close()
@@ -419,15 +413,12 @@ async def run_impact_worker(settings: WorkerSettings, *, once: bool = False) -> 
         if once:
             await worker.run_once()
             return
-        while True:
-            try:
-                outcome = await worker.run_once()
-            except Exception:
-                logger.exception("Impact AgentRun execution failed")
-                await asyncio.sleep(settings.poll_seconds)
-                continue
-            if outcome is None:
-                await asyncio.sleep(settings.poll_seconds)
+        await _run_worker_pool(
+            concurrency=settings.concurrency,
+            poll_seconds=settings.poll_seconds,
+            runtime_name="impact",
+            run_once=worker.run_once,
+        )
     finally:
         runtime_tracer.flush()
         await checkpoints.close()
@@ -440,6 +431,42 @@ def _checkpoint_settings(database: DatabaseSettings) -> CheckpointSettings:
     return CheckpointSettings(
         database_url=os.getenv("AIDISON_CHECKPOINT_DATABASE_URL", database.database_url)
     )
+
+
+async def _run_worker_pool(
+    *,
+    concurrency: int,
+    poll_seconds: float,
+    runtime_name: str,
+    run_once: Callable[[], Awaitable[object | None]],
+) -> None:
+    """Run bounded, local coroutine lanes without introducing another worker process.
+
+    Each lane obtains its own durable lease through ``run_once``.  A no-work
+    result backs off before the next claim; a failed Run only delays its own
+    lane, allowing the remaining local capacity to keep processing independent
+    projects.  ``asyncio`` cancellation is deliberately propagated so service
+    shutdown does not leave background tasks detached.
+    """
+
+    async def lane() -> None:
+        while True:
+            try:
+                outcome = await run_once()
+            except Exception:
+                logger.exception("%s AgentRun execution failed", runtime_name)
+                await asyncio.sleep(poll_seconds)
+                continue
+            if outcome is None:
+                await asyncio.sleep(poll_seconds)
+
+    tasks = tuple(asyncio.create_task(lane()) for _ in range(concurrency))
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -1,9 +1,10 @@
+import asyncio
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from aidison.worker import WorkerSettings, _parser
+from aidison.worker import WorkerSettings, _parser, _run_worker_pool
 
 
 def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -27,9 +28,40 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.worker_id
 
 
-def test_worker_rejects_concurrency_that_can_deadlock_parent_wave() -> None:
-    with pytest.raises(ValidationError, match="greater than or equal to 3"):
-        WorkerSettings(_env_file=None, concurrency=2)
+def test_worker_allows_one_local_coroutine_lane_and_rejects_zero() -> None:
+    assert WorkerSettings(_env_file=None, concurrency=1).concurrency == 1
+    with pytest.raises(ValidationError, match="greater than or equal to 1"):
+        WorkerSettings(_env_file=None, concurrency=0)
+
+
+def test_worker_pool_starts_the_configured_number_of_local_lanes() -> None:
+    async def exercise() -> int:
+        started = 0
+        all_started = asyncio.Event()
+        never = asyncio.Event()
+
+        async def run_once() -> None:
+            nonlocal started
+            started += 1
+            if started == 3:
+                all_started.set()
+            await never.wait()
+
+        pool = asyncio.create_task(
+            _run_worker_pool(
+                concurrency=3,
+                poll_seconds=0.01,
+                runtime_name="fixture",
+                run_once=run_once,
+            )
+        )
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        pool.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await pool
+        return started
+
+    assert asyncio.run(exercise()) == 3
 
 
 @pytest.mark.parametrize(
