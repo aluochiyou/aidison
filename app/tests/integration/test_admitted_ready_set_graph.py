@@ -439,3 +439,59 @@ async def test_postgres_checkpoint_resume_reuses_completed_leaf_task_after_peer_
                 sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema_name))
             )
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_graph_ignores_accepted_result_from_another_task_graph_revision() -> None:
+    """A gap/verifier admission must not make an initial graph look partial.
+
+    The scheduler only receives one immutable task graph at a time, while the
+    durable Run ledger is intentionally broader and retains every accepted
+    result.  The terminal check must use the same graph-local subset as
+    dependency resolution.
+    """
+
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_results CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Ready graph foreign admission fixture",
+                goal="Keep task graph completion scoped to its own immutable leaves",
+                idempotency_key=f"ready-graph-foreign-admission-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            await session.commit()
+
+        first = _task(run=run, key="first")
+        second = _task(run=run, key="second")
+        gap_task = _task(run=run, key="gap-revision-two")
+        executor = _AcceptingExecutor(session_factory=factory, run=run)
+        await executor.execute(task=gap_task)
+        graph = build_admitted_ready_set_graph(
+            checkpointer=InMemorySaver(),
+            session_factory=factory,
+            executor=executor,
+        )
+
+        state = await graph.ainvoke(
+            {
+                "tasks": tuple(item.model_dump(mode="json") for item in (first, second)),
+                "available_capacity": 2,
+            },
+            {"configurable": {"thread_id": str(run.id)}},
+        )
+
+        assert state["terminal_outcome"] == "complete"
+        assert {UUID(item) for item in state["admitted_task_ids"]} == {first.id, second.id}
+        assert executor.executed.count(gap_task.id) == 1
+        assert set(executor.executed) == {gap_task.id, first.id, second.id}
+    finally:
+        await engine.dispose()

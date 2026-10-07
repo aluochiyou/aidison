@@ -109,7 +109,17 @@ def build_admitted_ready_set_graph(
                 available_capacity=state["available_capacity"],
                 in_flight_task_ids=attempted,
             )
-            admitted = await AgentResultStore(session).admitted_task_ids(run_id=tasks[0].run_id)
+            # A Run may already contain accepted gap or verifier leaves that
+            # belong to another immutable graph revision.  They are durable
+            # Control history, but cannot satisfy or complete this graph.
+            known_task_ids = {item.id for item in tasks}
+            admitted = tuple(
+                task_id
+                for task_id in await AgentResultStore(session).admitted_task_ids(
+                    run_id=tasks[0].run_id
+                )
+                if task_id in known_task_ids
+            )
         if not projection.task_ids:
             outcome = "complete" if len(admitted) == len(tasks) else "partial"
             return {
