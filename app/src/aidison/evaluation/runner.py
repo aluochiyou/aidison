@@ -199,8 +199,8 @@ async def run_evaluation(
         layers_covered=tuple(sorted({case.layer for case in selected}, key=str)),
     )
     if mode is EvaluationMode.LIVE and reporter is not None and reporter.enabled:
-        reporter.report(report)
-        report = report.model_copy(update={"reporter": reporter.name})
+        if reporter.report(report):
+            report = report.model_copy(update={"reporter": reporter.name})
     return report
 
 

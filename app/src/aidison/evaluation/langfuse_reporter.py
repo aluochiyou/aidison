@@ -46,15 +46,16 @@ class LangfuseEvaluationReporter:
             and self._secret_key.strip()
         )
 
-    def report(self, report: EvaluationReport) -> None:
+    def report(self, report: EvaluationReport) -> bool:
         if not self.enabled:
-            return
+            return False
         try:
             self._send(report)
         except Exception:
             # The local report is authoritative. Observability failure must not
             # change scores, publication gates or the evaluation exit status.
-            return
+            return False
+        return True
 
     def _send(self, report: EvaluationReport) -> None:
         client = self._client

@@ -189,7 +189,7 @@ def test_disabled_reporter_never_constructs_a_client() -> None:
     )
 
     assert reporter.enabled is False
-    reporter.report(_report())
+    assert reporter.report(_report()) is False
     assert factory.calls == []
 
 
@@ -200,7 +200,7 @@ def test_client_construction_is_lazy() -> None:
     assert reporter.enabled is True
     assert factory.calls == []
 
-    reporter.report(_report())
+    assert reporter.report(_report()) is True
 
     assert factory.calls == [
         {
@@ -217,7 +217,7 @@ def test_report_creates_one_evaluator_trace_and_one_score_per_metric() -> None:
     report = _report()
     factory = FakeClientFactory()
 
-    _reporter(factory).report(report)
+    assert _reporter(factory).report(report) is True
 
     client = factory.clients[0]
     assert len(client.observation_calls) == 1
@@ -245,8 +245,8 @@ def test_score_ids_are_stable_when_the_same_report_is_exported_again() -> None:
     first_factory = FakeClientFactory()
     second_factory = FakeClientFactory()
 
-    _reporter(first_factory).report(report)
-    _reporter(second_factory).report(report)
+    assert _reporter(first_factory).report(report) is True
+    assert _reporter(second_factory).report(report) is True
 
     first_ids = [score["score_id"] for score in first_factory.clients[0].score_calls]
     second_ids = [score["score_id"] for score in second_factory.clients[0].score_calls]
@@ -265,7 +265,7 @@ def test_export_failure_never_changes_or_raises_from_local_report(
     report = _report()
     original = report.model_dump(mode="json")
 
-    _reporter(FakeClientFactory(failure_point=failure_point)).report(report)
+    assert _reporter(FakeClientFactory(failure_point=failure_point)).report(report) is False
 
     assert report.model_dump(mode="json") == original
 
@@ -279,7 +279,7 @@ def test_report_payload_and_settings_dump_never_expose_secret() -> None:
         langfuse_secret_key=SecretStr(SECRET_KEY),
     )
 
-    _reporter(factory).report(report)
+    assert _reporter(factory).report(report) is True
 
     report_payload = json.dumps(report.model_dump(mode="json"), sort_keys=True)
     settings_payload = json.dumps(settings.model_dump(mode="json"), sort_keys=True)

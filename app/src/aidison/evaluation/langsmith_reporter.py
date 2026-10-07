@@ -44,14 +44,15 @@ class LangSmithEvaluationReporter:
     def enabled(self) -> bool:
         return bool(self._api_key and self._project_name.strip())
 
-    def report(self, report: EvaluationReport) -> None:
+    def report(self, report: EvaluationReport) -> bool:
         if not self.enabled:
-            return
+            return False
         try:
             self._send(report)
         except Exception:
             # Fail-closed: evaluation results must never be lost to observability.
-            return
+            return False
+        return True
 
     def _send(self, report: EvaluationReport) -> None:
         client = (

@@ -106,7 +106,7 @@ def test_fake_client_records_run_and_feedback_without_network() -> None:
         client_factory=factory,
     )
     assert reporter.enabled is True
-    reporter.report(report)
+    assert reporter.report(report) is True
 
     assert len(created) == 1
     client = created[0]
@@ -141,7 +141,7 @@ def test_reporting_failure_is_swallowed_fail_closed() -> None:
         api_key=REAL_KEY,
         client_factory=lambda api_key, api_url: BrokenClient(),
     )
-    reporter.report(report)  # must not raise
+    assert reporter.report(report) is False
 
 
 def test_disabled_reporter_never_touches_the_client() -> None:
@@ -157,7 +157,7 @@ def test_disabled_reporter_never_touches_the_client() -> None:
         client_factory=lambda api_key, api_url: ExplodingClient(),
     )
     assert reporter.enabled is False
-    reporter.report(report)
+    assert reporter.report(report) is False
 
 
 def test_noop_reporter_is_disabled_sink() -> None:
@@ -165,4 +165,4 @@ def test_noop_reporter_is_disabled_sink() -> None:
     assert reporter.enabled is False
     assert reporter.name == "none"
     report = asyncio.run(run_evaluation())
-    reporter.report(report)  # no-op
+    assert reporter.report(report) is False

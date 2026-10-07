@@ -111,7 +111,7 @@ def test_offline_mode_never_contacts_a_reporter() -> None:
         def enabled(self) -> bool:
             return True
 
-        def report(self, report: EvaluationReport) -> None:
+        def report(self, report: EvaluationReport) -> bool:
             raise AssertionError("reporter must not be called in offline mode")
 
     report = asyncio.run(
@@ -131,8 +131,9 @@ def test_live_mode_calls_enabled_reporter_and_marks_report() -> None:
         def enabled(self) -> bool:
             return True
 
-        def report(self, report: EvaluationReport) -> None:
+        def report(self, report: EvaluationReport) -> bool:
             calls.append(report)
+            return True
 
     report = asyncio.run(
         run_evaluation(
@@ -143,6 +144,30 @@ def test_live_mode_calls_enabled_reporter_and_marks_report() -> None:
     )
     assert len(calls) == 1
     assert report.reporter == "langsmith"
+
+
+def test_live_mode_keeps_reporter_unset_when_delivery_fails() -> None:
+    class UnavailableReporter:
+        name = "langfuse"
+
+        @property
+        def enabled(self) -> bool:
+            return True
+
+        def report(self, report: EvaluationReport) -> bool:
+            del report
+            return False
+
+    report = asyncio.run(
+        run_evaluation(
+            case_keys=("red-action-blocked",),
+            mode=EvaluationMode.LIVE,
+            reporter=UnavailableReporter(),
+        )
+    )
+
+    assert report.summary.all_passed
+    assert report.reporter == "none"
 
 
 def _result_input() -> dict[str, object]:
