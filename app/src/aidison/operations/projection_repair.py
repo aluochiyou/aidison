@@ -24,7 +24,11 @@ import sys
 from dataclasses import dataclass
 from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from aidison.application.event_replay import (
+    AgentRunProjectionRepairPreview,
+    AgentRunProjectionRepairService,
     ExecutionPlanProjectionRepairPreview,
     ExecutionPlanProjectionRepairService,
     ProjectionRepairConflictError,
@@ -36,14 +40,13 @@ from aidison.infrastructure.database import DatabaseSettings, create_engine, cre
 class ProjectionRepairCommandReport:
     """JSON-safe result of a preview or a reviewed repair application."""
 
-    preview: ExecutionPlanProjectionRepairPreview
+    preview: ExecutionPlanProjectionRepairPreview | AgentRunProjectionRepairPreview
     applied: bool
 
     def as_dict(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "schema_version": "execution-plan-projection-repair.v1",
             "project_id": str(self.preview.project_id),
-            "execution_plan_id": str(self.preview.execution_plan_id),
             "event_cursor": self.preview.event_cursor,
             "event_count": self.preview.event_count,
             "current_relation_hash": self.preview.current_relation_hash,
@@ -51,6 +54,13 @@ class ProjectionRepairCommandReport:
             "repair_required": self.preview.repair_required,
             "applied": self.applied,
         }
+        if isinstance(self.preview, ExecutionPlanProjectionRepairPreview):
+            payload["aggregate_type"] = "execution_plan"
+            payload["execution_plan_id"] = str(self.preview.execution_plan_id)
+        else:
+            payload["aggregate_type"] = "agent_run"
+            payload["agent_run_id"] = str(self.preview.agent_run_id)
+        return payload
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -59,7 +69,9 @@ def _parser() -> argparse.ArgumentParser:
         description="Preview or explicitly repair one ExecutionPlan relation from domain events.",
     )
     parser.add_argument("--project-id", required=True, type=UUID)
-    parser.add_argument("--execution-plan-id", required=True, type=UUID)
+    aggregate = parser.add_mutually_exclusive_group(required=True)
+    aggregate.add_argument("--execution-plan-id", type=UUID)
+    aggregate.add_argument("--agent-run-id", type=UUID)
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -112,31 +124,61 @@ async def _run(args: argparse.Namespace) -> ProjectionRepairCommandReport:
     factory = create_session_factory(engine)
     try:
         async with factory() as session:
-            service = ExecutionPlanProjectionRepairService(session)
-            if not args.apply:
-                preview = await service.preview(
-                    project_id=args.project_id,
-                    execution_plan_id=args.execution_plan_id,
-                )
-                await session.rollback()
-                return ProjectionRepairCommandReport(preview=preview, applied=False)
-
-            result = await service.apply(
-                project_id=args.project_id,
-                execution_plan_id=args.execution_plan_id,
-                expected_current_relation_hash=args.expected_current_relation_hash,
-                dry_run=False,
-            )
-            if result.applied:
+            if args.execution_plan_id is not None:
+                report = await _run_execution_plan_repair(session, args)
+            else:
+                report = await _run_agent_run_repair(session, args)
+            if report.applied:
                 await session.commit()
             else:
                 await session.rollback()
-            return ProjectionRepairCommandReport(
-                preview=result.preview,
-                applied=result.applied,
-            )
+            return report
     finally:
         await engine.dispose()
+
+
+async def _run_execution_plan_repair(
+    session: AsyncSession,
+    args: argparse.Namespace,
+) -> ProjectionRepairCommandReport:
+    """Run the selected plan mode inside the caller-owned transaction."""
+
+    service = ExecutionPlanProjectionRepairService(session)
+    if not args.apply:
+        preview = await service.preview(
+            project_id=args.project_id,
+            execution_plan_id=args.execution_plan_id,
+        )
+        return ProjectionRepairCommandReport(preview=preview, applied=False)
+    result = await service.apply(
+        project_id=args.project_id,
+        execution_plan_id=args.execution_plan_id,
+        expected_current_relation_hash=args.expected_current_relation_hash,
+        dry_run=False,
+    )
+    return ProjectionRepairCommandReport(preview=result.preview, applied=result.applied)
+
+
+async def _run_agent_run_repair(
+    session: AsyncSession,
+    args: argparse.Namespace,
+) -> ProjectionRepairCommandReport:
+    """Run the selected inactive-AgentRun mode inside the caller transaction."""
+
+    service = AgentRunProjectionRepairService(session)
+    if not args.apply:
+        preview = await service.preview(
+            project_id=args.project_id,
+            agent_run_id=args.agent_run_id,
+        )
+        return ProjectionRepairCommandReport(preview=preview, applied=False)
+    result = await service.apply(
+        project_id=args.project_id,
+        agent_run_id=args.agent_run_id,
+        expected_current_relation_hash=args.expected_current_relation_hash,
+        dry_run=False,
+    )
+    return ProjectionRepairCommandReport(preview=result.preview, applied=result.applied)
 
 
 if __name__ == "__main__":

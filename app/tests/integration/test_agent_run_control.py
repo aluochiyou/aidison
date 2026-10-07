@@ -15,7 +15,11 @@ from aidison.application.agent_run_replay import (
     AgentRunReplayBundleService,
     ReplayCheckpointVerifierUnavailableError,
 )
-from aidison.application.event_replay import AgentRunShadowProjectionService
+from aidison.application.event_replay import (
+    AgentRunProjectionRepairService,
+    AgentRunShadowProjectionService,
+    ProjectionRepairConflictError,
+)
 from aidison.application.langgraph_execution import LangGraphCheckpointBridge
 from aidison.application.langgraph_worker import ClaimedGraphRun, LangGraphOrchestrationWorker
 from aidison.application.service import ProjectApplication
@@ -233,6 +237,127 @@ async def test_agent_run_verified_snapshot_tail_replay_matches_control_relation(
             assert verification.snapshot_tail_hash == verification.full_replay_hash
             assert verification.event_count == 3
             assert verification.tail_event_count == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_agent_run_projection_repair_restores_inactive_control_row_only() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+
+        async with factory() as session:
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Inactive AgentRun repair fixture",
+                goal="Restore a damaged completed control row from lifecycle events",
+                idempotency_key=f"agent-run-repair-project-{uuid4()}",
+            )
+            control = AgentRunControl(session)
+            created = await control.create(_run(project_id=project.id))
+            await control.record_queued_event(
+                run_id=created.id,
+                event_type=AgentRunEventType.RESEARCH_QUEUED,
+                context={},
+                artifact_refs=(),
+            )
+            claim = await control.claim_next(worker_id="worker-a", lease_seconds=60)
+            assert claim is not None
+            expected = await control.complete(claim=claim, status=AgentRunStatus.SUCCEEDED)
+            await session.commit()
+
+        async with factory() as session:
+            row = await session.get(AgentRunRow, created.id)
+            assert row is not None
+            row.current_generation = 99
+            row.lifecycle_event_version = 99
+            await session.commit()
+
+        async with factory() as session:
+            repair = AgentRunProjectionRepairService(session)
+            preview = await repair.preview(project_id=project.id, agent_run_id=created.id)
+            assert preview.repair_required
+            assert preview.current_relation_hash is not None
+            dry_run = await repair.apply(
+                project_id=project.id,
+                agent_run_id=created.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+            )
+            assert dry_run.applied is False
+            applied = await repair.apply(
+                project_id=project.id,
+                agent_run_id=created.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+                dry_run=False,
+            )
+            assert applied.applied is True
+            await session.commit()
+
+        async with factory() as session:
+            restored = await AgentRunControl(session).get(created.id)
+            events = await PostgresDomainStore(session).list_aggregate_events(
+                project.id,
+                aggregate_type="agent_run",
+                aggregate_id=created.id,
+            )
+            verification = await AgentRunShadowProjectionService(
+                PostgresDomainStore(session),
+                EventReplaySnapshotRepository(session),
+                AgentRunControl(session),
+            ).verify(project_id=project.id, agent_run_id=created.id)
+
+            assert restored == expected
+            assert len(events) == 3
+            assert verification.snapshot_matches_full_replay
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_agent_run_projection_repair_refuses_an_active_worker_lease() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Active AgentRun repair refusal",
+                goal="Never overwrite an active worker lease from lifecycle replay",
+                idempotency_key=f"agent-run-active-repair-project-{uuid4()}",
+            )
+            control = AgentRunControl(session)
+            created = await control.create(_run(project_id=project.id))
+            await control.record_queued_event(
+                run_id=created.id,
+                event_type=AgentRunEventType.RESEARCH_QUEUED,
+                context={},
+                artifact_refs=(),
+            )
+            claim = await control.claim_next(worker_id="worker-a", lease_seconds=60)
+            assert claim is not None
+            await session.commit()
+
+        async with factory() as session:
+            repair = AgentRunProjectionRepairService(session)
+            preview = await repair.preview(project_id=project.id, agent_run_id=created.id)
+            assert preview.current_relation_hash is not None
+            with pytest.raises(ProjectionRepairConflictError, match="active AgentRun"):
+                await repair.apply(
+                    project_id=project.id,
+                    agent_run_id=created.id,
+                    expected_current_relation_hash=preview.current_relation_hash,
+                    dry_run=False,
+                )
     finally:
         await engine.dispose()
 

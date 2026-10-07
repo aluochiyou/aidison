@@ -6,7 +6,10 @@ from uuid import uuid4
 import pytest
 from pytest import CaptureFixture, MonkeyPatch
 
-from aidison.application.event_replay import ExecutionPlanProjectionRepairPreview
+from aidison.application.event_replay import (
+    AgentRunProjectionRepairPreview,
+    ExecutionPlanProjectionRepairPreview,
+)
 from aidison.operations import projection_repair
 
 
@@ -115,3 +118,37 @@ def test_apply_cli_passes_the_reviewed_hash_to_the_command_boundary(
         == 0
     )
     assert captured == {"apply": True, "expected_current_relation_hash": "current"}
+
+
+def test_agent_run_preview_uses_the_same_explicit_maintenance_boundary(
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    project_id = uuid4()
+    agent_run_id = uuid4()
+    preview = AgentRunProjectionRepairPreview(
+        project_id=project_id,
+        agent_run_id=agent_run_id,
+        event_cursor=21,
+        event_count=4,
+        current_relation_hash="current",
+        replayed_relation_hash="replayed",
+        repair_required=True,
+    )
+
+    async def fake_run(args: Namespace) -> projection_repair.ProjectionRepairCommandReport:
+        assert args.execution_plan_id is None
+        assert args.agent_run_id == agent_run_id
+        return projection_repair.ProjectionRepairCommandReport(preview=preview, applied=False)
+
+    monkeypatch.setattr(projection_repair, "_run", fake_run)
+
+    assert (
+        projection_repair.main(
+            ["--project-id", str(project_id), "--agent-run-id", str(agent_run_id)]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert '"aggregate_type": "agent_run"' in output
+    assert f'"agent_run_id": "{agent_run_id}"' in output

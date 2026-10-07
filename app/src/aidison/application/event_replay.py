@@ -1,13 +1,14 @@
-"""Shadow verification for event-backed relational projections.
+"""Shadow verification and guarded repair for event-backed relational projections.
 
-The first delivery slice covers execution plans only.  It keeps the existing
-relation table as the production read model while exercising the exact replay
-path needed for a later repair tool.
+Relational rows remain the online read models.  This module rebuilds their
+event-backed subsets without treating snapshots as a second source of truth,
+and exposes explicit maintenance-only repair services for selected aggregates.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -28,7 +29,7 @@ from aidison.infrastructure.agent_decisions import AgentRunDecisionStore
 from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.infrastructure.agent_run_effects import AgentRunEffectLedger
 from aidison.infrastructure.agent_runs import AgentRunControl
-from aidison.infrastructure.orm import ExecutionPlanProposalRow
+from aidison.infrastructure.orm import AgentRunRow, ExecutionPlanProposalRow
 from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.agent_result_events import (
@@ -59,7 +60,7 @@ from aidison.runtime.agent_run_events import (
     replay_agent_run,
     replay_agent_run_from_snapshot,
 )
-from aidison.runtime.agent_runs import AgentRun
+from aidison.runtime.agent_runs import AgentRun, AgentRunStatus
 
 
 class ProjectionMismatchError(EventIntegrityError):
@@ -88,6 +89,27 @@ class ExecutionPlanProjectionRepairResult:
     """The preview plus an explicit indication of whether a relation row changed."""
 
     preview: ExecutionPlanProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentRunProjectionRepairPreview:
+    """Read-only comparison for an inactive AgentRun control projection."""
+
+    project_id: UUID
+    agent_run_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentRunProjectionRepairResult:
+    """The reviewed inactive-run repair result; event history remains untouched."""
+
+    preview: AgentRunProjectionRepairPreview
     applied: bool
 
 
@@ -350,6 +372,240 @@ def _execution_plan_relation_hash(proposal: ExecutionPlanProposal) -> str:
             "payload": proposal.model_dump(mode="json"),
         }
     )
+
+
+class AgentRunProjectionRepairService:
+    """Repair an inactive AgentRun read model only from its lifecycle stream.
+
+    A running row carries an active worker lease that is deliberately outside
+    the lifecycle ``AgentRun`` contract.  Therefore a repair never infers or
+    replaces a live lease: it refuses both a currently-running row and a
+    lifecycle stream that rebuilds to ``running``.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+    ) -> AgentRunProjectionRepairPreview:
+        """Compare one lifecycle-derived relation without locking or mutating it."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+        )
+        row = await self._session.get(AgentRunRow, agent_run_id)
+        current_hash = _agent_run_relation_row_hash(row) if row is not None else None
+        target_hash = _agent_run_relation_hash(
+            run=state.agent_run,
+            lifecycle_event_version=state.aggregate_version,
+        )
+        return AgentRunProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentRunProjectionRepairResult:
+        """Apply one reviewed inactive-run repair under a row and advisory lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run:{agent_run_id}"},
+        )
+        row = await self._session.scalar(
+            select(AgentRunRow)
+            .where(
+                AgentRunRow.id == agent_run_id,
+                AgentRunRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _agent_run_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+        )
+        target = state.agent_run
+        if row.status == AgentRunStatus.RUNNING.value or target.status is AgentRunStatus.RUNNING:
+            raise ProjectionRepairConflictError(
+                "active AgentRun relations require an explicit worker recovery flow"
+            )
+        target_hash = _agent_run_relation_hash(
+            run=target,
+            lifecycle_event_version=state.aggregate_version,
+        )
+        preview = AgentRunProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentRunProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_inactive_agent_run_relation(
+            row,
+            run=target,
+            lifecycle_event_version=state.aggregate_version,
+        )
+        await self._session.flush()
+        return AgentRunProjectionRepairResult(preview=preview, applied=True)
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+    ) -> tuple[AgentRunReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run",
+                aggregate_id=agent_run_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun event stream is missing")
+        return replay_agent_run(events), events
+
+
+def _agent_run_relation_row_hash(row: AgentRunRow) -> str:
+    """Hash all physical AgentRun relation fields, including its lease columns."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "project_id": str(row.project_id),
+            "kind": row.kind,
+            "idempotency_key": row.idempotency_key,
+            "basis_hash": row.basis_hash,
+            "basis_project_revision": row.basis_project_revision,
+            "runtime_binding": row.runtime_binding,
+            "thread_id": row.thread_id,
+            "run_contract_ref": row.run_contract_ref,
+            "coverage_contract_ref": row.coverage_contract_ref,
+            "status": row.status,
+            "current_generation": row.current_generation,
+            "lifecycle_event_version": row.lifecycle_event_version,
+            "lease_owner": row.lease_owner,
+            "lease_token": str(row.lease_token) if row.lease_token is not None else None,
+            "lease_expires_at": _relation_timestamp(row.lease_expires_at),
+            "admitted_checkpoint": row.admitted_checkpoint,
+            "cancel_requested": row.cancel_requested,
+            "created_at": _relation_timestamp(row.created_at),
+            "started_at": _relation_timestamp(row.started_at),
+            "updated_at": _relation_timestamp(row.updated_at),
+            "completed_at": _relation_timestamp(row.completed_at),
+        }
+    )
+
+
+def _agent_run_relation_hash(
+    *,
+    run: AgentRun,
+    lifecycle_event_version: int,
+) -> str:
+    """Hash the physical inactive-row shape expected from lifecycle replay."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(run.id),
+            "project_id": str(run.project_id),
+            "kind": run.kind.value,
+            "idempotency_key": run.idempotency_key,
+            "basis_hash": run.basis_hash,
+            "basis_project_revision": run.basis_project_revision,
+            "runtime_binding": run.runtime_binding.model_dump(mode="json"),
+            "thread_id": run.thread_id,
+            "run_contract_ref": run.run_contract_ref,
+            "coverage_contract_ref": run.coverage_contract_ref,
+            "status": run.status.value,
+            "current_generation": run.current_generation,
+            "lifecycle_event_version": lifecycle_event_version,
+            "lease_owner": None,
+            "lease_token": None,
+            "lease_expires_at": None,
+            "admitted_checkpoint": (
+                run.admitted_checkpoint.model_dump(mode="json")
+                if run.admitted_checkpoint is not None
+                else None
+            ),
+            "cancel_requested": run.cancel_requested,
+            "created_at": _relation_timestamp(run.created_at),
+            "started_at": _relation_timestamp(run.started_at),
+            "updated_at": _relation_timestamp(run.updated_at),
+            "completed_at": _relation_timestamp(run.completed_at),
+        }
+    )
+
+
+def _restore_inactive_agent_run_relation(
+    row: AgentRunRow,
+    *,
+    run: AgentRun,
+    lifecycle_event_version: int,
+) -> None:
+    """Restore only an inactive row from its complete lifecycle projection."""
+
+    row.kind = run.kind.value
+    row.idempotency_key = run.idempotency_key
+    row.basis_hash = run.basis_hash
+    row.basis_project_revision = run.basis_project_revision
+    row.runtime_binding = run.runtime_binding.model_dump(mode="json")
+    row.thread_id = run.thread_id
+    row.run_contract_ref = run.run_contract_ref
+    row.coverage_contract_ref = run.coverage_contract_ref
+    row.status = run.status.value
+    row.current_generation = run.current_generation
+    row.lifecycle_event_version = lifecycle_event_version
+    row.lease_owner = None
+    row.lease_token = None
+    row.lease_expires_at = None
+    row.admitted_checkpoint = (
+        run.admitted_checkpoint.model_dump(mode="json")
+        if run.admitted_checkpoint is not None
+        else None
+    )
+    row.cancel_requested = run.cancel_requested
+    row.created_at = run.created_at
+    row.started_at = run.started_at
+    row.updated_at = run.updated_at
+    row.completed_at = run.completed_at
+
+
+def _relation_timestamp(value: datetime | None) -> str | None:
+    """Give database and event-side timestamps one stable relation-hash format."""
+
+    return value.isoformat() if value is not None else None
 
 
 @dataclass(frozen=True)
