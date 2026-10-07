@@ -14,6 +14,7 @@ from aidison.domain.models import (
     AdjustmentBatch,
     AdjustmentBatchStatus,
     BlueprintStatus,
+    Candidate,
     CompatibilityFinding,
     CompatibilityStatus,
     DecisionOption,
@@ -230,6 +231,38 @@ def test_unknown_compatibility_stays_explicit() -> None:
     )
 
     assert finding.status is CompatibilityStatus.UNKNOWN
+
+
+def test_candidate_keeps_flexible_attributes_json_safe_and_evidence_unique() -> None:
+    candidate = Candidate(
+        project_id=uuid4(),
+        module_id=uuid4(),
+        name="ESC A",
+        description="A bounded controller candidate.",
+        attributes={"continuous_current_a": 35, "supports_telemetry": True},
+        evidence_binding_ids=(uuid4(),),
+    )
+
+    assert candidate.attributes["continuous_current_a"] == 35
+
+    evidence_id = uuid4()
+    with pytest.raises(ValidationError, match="evidence bindings must be unique"):
+        Candidate(
+            project_id=uuid4(),
+            module_id=uuid4(),
+            name="Duplicate source",
+            description="The same source must not count twice.",
+            evidence_binding_ids=(evidence_id, evidence_id),
+        )
+
+    with pytest.raises(ValidationError, match="attributes must be JSON-serializable"):
+        Candidate(
+            project_id=uuid4(),
+            module_id=uuid4(),
+            name="Unpersistable property",
+            description="A runtime object is not a candidate fact.",
+            attributes={"runtime_handle": object()},
+        )
 
 
 def test_needs_test_compatibility_requires_test_instructions() -> None:

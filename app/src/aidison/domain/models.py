@@ -1027,6 +1027,34 @@ class Candidate(FrozenModel):
     evidence_binding_ids: tuple[UUID, ...] = ()
     risks: tuple[str, ...] = ()
 
+    @model_validator(mode="after")
+    def is_a_bounded_persistable_candidate(self) -> Candidate:
+        """Keep flexible component properties safe for a JSONB fact record.
+
+        Candidate attributes deliberately remain domain-specific: an ESC and a
+        flight controller cannot share one rigid table schema. They still must
+        be deterministic, bounded JSON before a model-derived value is allowed
+        to cross the domain-write boundary. Evidence bindings are identities,
+        not weights, so a duplicate cannot make one source look like multiple
+        independent supports.
+        """
+
+        if len(self.evidence_binding_ids) != len(set(self.evidence_binding_ids)):
+            raise ValueError("candidate evidence bindings must be unique")
+        try:
+            encoded_attributes = json.dumps(
+                self.attributes,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            ).encode("utf-8")
+        except (TypeError, ValueError) as error:
+            raise ValueError("candidate attributes must be JSON-serializable") from error
+        if len(encoded_attributes) > 32_000:
+            raise ValueError("candidate attributes exceed the 32000-byte limit")
+        return self
+
 
 class DecisionOption(FrozenModel):
     option_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
