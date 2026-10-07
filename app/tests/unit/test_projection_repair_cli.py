@@ -78,7 +78,9 @@ def test_preview_cli_dispatches_a_read_only_operation(
     )
 
     assert captured == {"apply": False, "expected_current_relation_hash": ""}
-    assert '"applied": false' in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert '"applied": false' in output
+    assert '"schema_version": "projection-repair.v1"' in output
 
 
 def test_apply_cli_passes_the_reviewed_hash_to_the_command_boundary(

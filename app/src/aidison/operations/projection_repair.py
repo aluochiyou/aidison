@@ -51,7 +51,7 @@ class ProjectionRepairCommandReport:
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
-            "schema_version": "execution-plan-projection-repair.v1",
+            "schema_version": "projection-repair.v1",
             "project_id": str(self.preview.project_id),
             "event_cursor": self.preview.event_cursor,
             "event_count": self.preview.event_count,
@@ -75,7 +75,7 @@ class ProjectionRepairCommandReport:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m aidison.operations.projection_repair",
-        description="Preview or explicitly repair one ExecutionPlan relation from domain events.",
+        description="Preview or explicitly repair one event-backed relation projection.",
     )
     parser.add_argument("--project-id", required=True, type=UUID)
     aggregate = parser.add_mutually_exclusive_group(required=True)
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             json.dumps(
                 {
-                    "schema_version": "execution-plan-projection-repair.v1",
+                    "schema_version": "projection-repair.v1",
                     "ok": False,
                     "error": str(exc),
                 },
