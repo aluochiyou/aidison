@@ -174,6 +174,32 @@ def test_runtime_trace_isolates_parallel_run_trace_ids() -> None:
     }
 
 
+def test_resumed_graph_execution_stays_on_the_original_agent_run_trace() -> None:
+    client = _FakeLangfuse()
+    tracer = _tracer(client)
+
+    for graph_name, callback_run_id in (
+        ("single_task_research", UUID("00000000-0000-0000-0000-0000000000d4")),
+        ("admitted_ready_set", UUID("00000000-0000-0000-0000-0000000000e5")),
+    ):
+        callback = LangGraphRuntimeCallback(
+            tracer=tracer,
+            correlation=TelemetryCorrelation(project_id=UUID(int=1), run_id=RUN_A),
+            graph_name=graph_name,
+            graph_revision="research/v1",
+        )
+        callback.on_chain_start({}, {}, run_id=callback_run_id)
+        callback.on_chain_end({}, run_id=callback_run_id)
+        callback.close()
+
+    assert len(client.calls) == 2
+    assert {item["trace_context"]["trace_id"] for item in client.calls} == {RUN_A.hex}
+    assert {item["metadata"]["aidison.graph_name"] for item in client.calls} == {
+        "single_task_research",
+        "admitted_ready_set",
+    }
+
+
 def test_runtime_exporter_failure_never_changes_product_execution() -> None:
     tracer = LangfuseRuntimeTracer(
         project="aidison-runtime",
