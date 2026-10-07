@@ -503,6 +503,58 @@ async def test_task_cannot_admit_two_distinct_results_after_retry() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parallel_identical_result_recording_is_idempotent() -> None:
+    """A duplicate producer retry must not turn a unique-key race into a 500."""
+
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_results CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Concurrent result-recording fixture",
+                goal="An identical producer retry must safely reuse the first durable result",
+                idempotency_key=f"concurrent-result-recording-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            task = _task(run=run, key="concurrent-result-recording")
+            result = _result(run=run, task=task, value="same-retry")
+            await session.commit()
+
+        async def record() -> ResultEnvelope:
+            async with factory() as session:
+                value = await AgentResultStore(session).record_result(result)
+                await session.commit()
+                return value
+
+        left, right = await asyncio.gather(record(), record())
+        assert left == result
+        assert right == result
+
+        async with factory() as session:
+            rows = (
+                await session.scalars(
+                    select(AgentRunResultRow).where(AgentRunResultRow.id == result.id)
+                )
+            ).all()
+            events = await PostgresDomainStore(session).list_aggregate_events(
+                project.id,
+                aggregate_type="agent_run_result",
+                aggregate_id=result.id,
+            )
+            assert len(rows) == 1
+            assert [event.aggregate_version for event in events] == [1]
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_parallel_duplicate_admissions_serialize_per_task_without_deadlocking() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:

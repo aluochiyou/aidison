@@ -7,6 +7,7 @@ from hashlib import sha256
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aidison.infrastructure.orm import AgentRunResultAdmissionRow, AgentRunResultRow, AgentRunRow
@@ -54,8 +55,41 @@ class AgentResultStore:
             event_version=1,
             payload=result.model_dump(mode="json"),
         )
-        self._session.add(row)
-        await self._session.flush()
+        try:
+            # ``id`` and the immutable (Run, Task, manifest) identity are both
+            # database-enforced.  The initial lookup above cannot by itself
+            # make an idempotent producer retry safe: a concurrent writer may
+            # insert the same ResultEnvelope after that lookup but before this
+            # flush.  Keep the caller's larger result+admission transaction
+            # intact by rolling back only this insert savepoint, then return
+            # the already-durable identical result.
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush([row])
+        except IntegrityError:
+            existing = await self._session.scalar(
+                select(AgentRunResultRow)
+                .where(AgentRunResultRow.id == result.id)
+                .with_for_update()
+            )
+            if existing is not None:
+                if existing.payload != result.model_dump(mode="json"):
+                    raise AgentResultConflictError(
+                        "ResultEnvelope id has another payload"
+                    ) from None
+                return ResultEnvelope.model_validate(existing.payload)
+            same_manifest = await self._session.scalar(
+                select(AgentRunResultRow).where(
+                    AgentRunResultRow.agent_run_id == result.run_id,
+                    AgentRunResultRow.task_id == result.task_id,
+                    AgentRunResultRow.manifest_hash == result.manifest_hash,
+                )
+            )
+            if same_manifest is not None:
+                raise AgentResultConflictError(
+                    "ResultEnvelope task manifest is already stored under another id"
+                ) from None
+            raise
         payload: dict[str, object] = {"result": result.model_dump(mode="json")}
         await self._append_event(
             project_id=run.project_id,
