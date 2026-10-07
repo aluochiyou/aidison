@@ -41,6 +41,12 @@ from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.artifacts import ArtifactIntegrityError, ContentAddressedArtifactStore
 from aidison.infrastructure.database import session_scope
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.observability import (
+    DisabledRuntimeTracer,
+    LangGraphRuntimeCallback,
+    RuntimeTracer,
+    TelemetryCorrelation,
+)
 from aidison.providers.model_gateway import ProviderFailureClass
 from aidison.research.adaptive_planning import (
     AdaptivePlanAction,
@@ -138,12 +144,24 @@ class ResearchRunExecutor:
         checkpointer: BaseCheckpointSaver[Any],
         researcher: SingleTaskResearcher,
         source_collector: ResearchSourceCollector | None = None,
+        runtime_tracer: RuntimeTracer | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._artifact_root = artifact_root
         self._checkpointer = checkpointer
         self._researcher = researcher
         self._source_collector = source_collector or NoopResearchSourceCollector()
+        self._runtime_tracer = runtime_tracer or DisabledRuntimeTracer()
+
+    def _graph_callback(self, *, run: AgentRun, graph_name: str) -> LangGraphRuntimeCallback:
+        """Bind callback spans to one durable AgentRun, never GraphState content."""
+
+        return LangGraphRuntimeCallback(
+            tracer=self._runtime_tracer,
+            correlation=TelemetryCorrelation(project_id=run.project_id, run_id=run.id),
+            graph_name=graph_name,
+            graph_revision=run.runtime_binding.graph_revision,
+        )
 
     async def execute_claim(self, *, run: AgentRun, claim: AgentRunClaim) -> ResearchRunExecution:
         if run.kind is not AgentRunKind.RESEARCH:
@@ -323,10 +341,16 @@ class ResearchRunExecutor:
                     *(f"{item.key}: {item.question}" for item in coverage.keys),
                 )
             )
-            state = await graph.ainvoke(
-                {"run_id": str(run.id), "question": question},
-                thread_config(thread_id=run.thread_id),
-            )
+            callback = self._graph_callback(run=run, graph_name="single_task_research")
+            config: dict[str, Any] = thread_config(thread_id=run.thread_id)
+            config["callbacks"] = [callback]
+            try:
+                state = await graph.ainvoke(
+                    {"run_id": str(run.id), "question": question},
+                    config,
+                )
+            finally:
+                callback.close()
         except AgentRunCancelled:
             return ResearchRunExecution(readiness="cancelled", agent_decision=None)
         except AgentRunPaused:
@@ -467,14 +491,20 @@ class ResearchRunExecutor:
                     objective=coverage.objective,
                 ),
             )
-            state = await graph.ainvoke(
-                {
-                    "tasks": tuple(item.model_dump(mode="json") for item in tasks),
-                    "available_capacity": min(max_concurrency, len(tasks)),
-                    "max_waves": None,
-                },
-                thread_config(thread_id=run.thread_id),
-            )
+            callback = self._graph_callback(run=run, graph_name="admitted_ready_set")
+            config: dict[str, Any] = thread_config(thread_id=run.thread_id)
+            config["callbacks"] = [callback]
+            try:
+                state = await graph.ainvoke(
+                    {
+                        "tasks": tuple(item.model_dump(mode="json") for item in tasks),
+                        "available_capacity": min(max_concurrency, len(tasks)),
+                        "max_waves": None,
+                    },
+                    config,
+                )
+            finally:
+                callback.close()
         except AgentRunCancelled:
             return ResearchRunExecution(readiness="cancelled", agent_decision=None)
         except AgentRunPaused:

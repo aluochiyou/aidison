@@ -30,6 +30,10 @@ from aidison.config import AidisonSettings
 from aidison.impact.analyst import JsonModeImpactAnalyst
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
 from aidison.infrastructure.model_budget_port import PostgresModelAttemptBudgetPort
+from aidison.observability import (
+    RuntimeTracingSettings,
+    build_runtime_tracer,
+)
 from aidison.providers.gateway import ProviderSettings, build_chat_model, build_model_target
 from aidison.providers.model_gateway import (
     ModelGateway,
@@ -288,6 +292,7 @@ async def run_research_worker(
     engine = create_engine(database)
     session_factory = create_session_factory(engine)
     checkpoints = CheckpointRuntime(_checkpoint_settings(database))
+    runtime_tracer = build_runtime_tracer(RuntimeTracingSettings())
     try:
         async with httpx.AsyncClient(timeout=settings.tavily_timeout_seconds) as source_client:
             source_collector = _research_source_collector(
@@ -325,6 +330,7 @@ async def run_research_worker(
                     timeout_seconds=settings.research_model_timeout_seconds,
                 ),
                 source_collector=source_collector,
+                runtime_tracer=runtime_tracer,
             )
             worker = ResearchLangGraphWorker(
                 orchestration_worker=LangGraphOrchestrationWorker(
@@ -354,6 +360,7 @@ async def run_research_worker(
                 if outcome is None:
                     await asyncio.sleep(settings.poll_seconds)
     finally:
+        runtime_tracer.flush()
         await checkpoints.close()
         await engine.dispose()
 

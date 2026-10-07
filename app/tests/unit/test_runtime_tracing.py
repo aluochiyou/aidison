@@ -14,6 +14,7 @@ from aidison.observability import TelemetryCorrelation
 from aidison.observability.runtime_tracing import (
     DisabledRuntimeTracer,
     LangfuseRuntimeTracer,
+    LangGraphRuntimeCallback,
     RuntimeTracer,
     RuntimeTracingSettings,
     build_runtime_tracer,
@@ -112,6 +113,43 @@ def test_runtime_trace_rejects_prompt_like_attributes_without_calling_exporter()
         pass
 
     assert client.calls == []
+
+
+def test_langgraph_callback_ignores_graph_inputs_outputs_and_uses_agent_run_trace() -> None:
+    client = _FakeLangfuse()
+    tracer = _tracer(client)
+    callback = LangGraphRuntimeCallback(
+        tracer=tracer,
+        correlation=TelemetryCorrelation(run_id=RUN_A, task_id="power.research"),
+        graph_name="admitted_ready_set",
+        graph_revision="research/v1",
+    )
+    callback_run_id = UUID("00000000-0000-0000-0000-0000000000c3")
+
+    callback.on_chain_start(
+        {"name": "private-node"},
+        {"raw_prompt": "must never leave the process"},
+        run_id=callback_run_id,
+    )
+    callback.on_chain_end(
+        {"raw_response": "must never leave the process"},
+        run_id=callback_run_id,
+    )
+
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    assert call["trace_context"] == {"trace_id": RUN_A.hex}
+    assert "input" not in call and "output" not in call
+    assert call["metadata"] == {
+        "aidison.project": "runtime",
+        "aidison.component": "runtime",
+        "aidison.run_id": str(RUN_A),
+        "aidison.task_id": "power.research",
+        "aidison.invocation_id": str(callback_run_id),
+        "aidison.event": "chain_started",
+        "aidison.graph_name": "admitted_ready_set",
+        "aidison.graph_revision": "research/v1",
+    }
 
 
 def test_runtime_trace_isolates_parallel_run_trace_ids() -> None:

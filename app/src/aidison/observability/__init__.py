@@ -14,6 +14,7 @@ from aidison.observability.contracts import (
 from aidison.observability.runtime_tracing import (
     DisabledRuntimeTracer,
     LangfuseRuntimeTracer,
+    LangGraphRuntimeCallback,
     RuntimeTracer,
     RuntimeTracingSettings,
     build_runtime_tracer,
@@ -30,6 +31,7 @@ __all__ = [
     "TelemetryCorrelation",
     "append_durable_product_event",
     "DisabledRuntimeTracer",
+    "LangGraphRuntimeCallback",
     "LangfuseRuntimeTracer",
     "RuntimeTracer",
     "RuntimeTracingSettings",

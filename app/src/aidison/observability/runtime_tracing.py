@@ -12,9 +12,11 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from contextvars import ContextVar, Token
+from threading import RLock
 from typing import Any, Literal, Protocol
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
+from langchain_core.callbacks import BaseCallbackHandler
 from pydantic import AliasChoices, Field, SecretStr
 
 from aidison.config import AidisonSettings
@@ -249,6 +251,125 @@ class LangfuseRuntimeTracer:
         return self._client
 
 
+class LangGraphRuntimeCallback(BaseCallbackHandler):
+    """Emit one safe span per LangGraph callback without reading graph payloads.
+
+    Callback ``inputs`` and ``outputs`` may contain prompts, web content, model
+    text, or private checkpoint state.  They are intentionally ignored.  The
+    AgentRun identity is injected by the product runtime, not inferred from a
+    LangChain callback identifier.
+    """
+
+    raise_error = False
+
+    def __init__(
+        self,
+        *,
+        tracer: RuntimeTracer,
+        correlation: TelemetryCorrelation,
+        graph_name: str,
+        graph_revision: str,
+    ) -> None:
+        if correlation.run_id is None:
+            raise ValueError("LangGraph runtime callback requires an AgentRun correlation")
+        self._tracer = tracer
+        self._correlation = correlation
+        self._graph_name = graph_name
+        self._graph_revision = graph_revision
+        self._spans: dict[UUID, AbstractContextManager[None]] = {}
+        self._lock = RLock()
+
+    def on_chain_start(
+        self,
+        serialized: dict[str, Any],
+        inputs: dict[str, Any],
+        *,
+        run_id: UUID,
+        parent_run_id: UUID | None = None,
+        **kwargs: Any,
+    ) -> None:
+        del serialized, inputs, parent_run_id, kwargs
+        correlation = self._correlation.model_copy(update={"invocation_id": run_id})
+        scope = self._tracer.span(
+            name="aidison.langgraph.node",
+            correlation=correlation,
+            kind="chain",
+            attributes={
+                "aidison.event": "chain_started",
+                "aidison.graph_name": self._graph_name,
+                "aidison.graph_revision": self._graph_revision,
+            },
+        )
+        try:
+            scope.__enter__()
+            with self._lock:
+                previous = self._spans.pop(run_id, None)
+                self._spans[run_id] = scope
+            if previous is not None:
+                previous.__exit__(None, None, None)
+        except Exception:
+            return None
+
+    def on_chain_end(
+        self,
+        outputs: dict[str, Any],
+        *,
+        run_id: UUID,
+        parent_run_id: UUID | None = None,
+        **kwargs: Any,
+    ) -> None:
+        del outputs, parent_run_id, kwargs
+        self._close_span(run_id)
+
+    def on_chain_error(
+        self,
+        error: BaseException,
+        *,
+        run_id: UUID,
+        parent_run_id: UUID | None = None,
+        **kwargs: Any,
+    ) -> None:
+        del parent_run_id, kwargs
+        self._close_span(run_id, error=error)
+        try:
+            with self._tracer.span(
+                name="aidison.langgraph.node_error",
+                correlation=self._correlation.model_copy(update={"invocation_id": run_id}),
+                kind="chain",
+                attributes={
+                    "aidison.event": "chain_failed",
+                    "aidison.graph_name": self._graph_name,
+                    "aidison.graph_revision": self._graph_revision,
+                    "error.class": type(error).__name__,
+                },
+            ):
+                pass
+        except Exception:
+            return None
+
+    def close(self) -> None:
+        """Close orphaned SDK scopes after a graph-level crash or cancellation."""
+
+        with self._lock:
+            pending = tuple(self._spans.values())
+            self._spans.clear()
+        for scope in pending:
+            try:
+                scope.__exit__(None, None, None)
+            except Exception:
+                continue
+
+    def _close_span(self, run_id: UUID, error: BaseException | None = None) -> None:
+        with self._lock:
+            scope = self._spans.pop(run_id, None)
+        if scope is None:
+            return
+        try:
+            scope.__exit__(type(error) if error is not None else None, error, None)
+        except Exception:
+            return None
+
+
 def build_runtime_tracer(settings: RuntimeTracingSettings) -> RuntimeTracer:
     """Create no exporter until tracing is explicitly and completely configured."""
 
@@ -317,6 +438,7 @@ def _default_client(**kwargs: Any) -> Any:
 
 __all__ = [
     "DisabledRuntimeTracer",
+    "LangGraphRuntimeCallback",
     "LangfuseRuntimeTracer",
     "RuntimeTracer",
     "RuntimeTracingSettings",
