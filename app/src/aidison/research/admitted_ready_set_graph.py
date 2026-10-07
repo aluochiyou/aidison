@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from typing_extensions import TypedDict
 
 from aidison.application.admitted_ready_set import AdmittedReadySetApplication
+from aidison.application.single_task_research import AgentRunPaused
 from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.research.langgraph_contracts import ProposalManifest, TaskEnvelope
 
@@ -142,6 +143,7 @@ def build_admitted_ready_set_graph(
         by_id = {item.id: item for item in _tasks(state)}
         settled = {UUID(item) for item in state.get("attempted_task_ids", ())}
         active: dict[Any, UUID] = {}
+        pause_error: AgentRunPaused | None = None
 
         async def fill_available_capacity() -> None:
             available_capacity = state["available_capacity"] - len(active)
@@ -166,11 +168,24 @@ def build_admitted_ready_set_graph(
             )
             for future in done:
                 task_id = active.pop(future)
-                completed_task_id = await future
+                try:
+                    completed_task_id = await future
+                except AgentRunPaused as error:
+                    # A pause only blocks leaves that have not reached their
+                    # external-dispatch safe point. Do not cancel an already
+                    # dispatched sibling: it may be settling an invocation or
+                    # durably admitting a result. Drain this active wave, but
+                    # do not fill more capacity, then return the pause to the
+                    # AgentRun control plane.
+                    pause_error = error
+                    continue
                 if completed_task_id != str(task_id):
                     raise RuntimeError("LangGraph task returned an unexpected task id")
                 settled.add(task_id)
-            await fill_available_capacity()
+            if pause_error is None:
+                await fill_available_capacity()
+        if pause_error is not None:
+            raise pause_error
         return {
             "attempted_task_ids": tuple(str(item) for item in sorted(settled, key=str)),
             "wave_count": state.get("wave_count", 0) + 1,

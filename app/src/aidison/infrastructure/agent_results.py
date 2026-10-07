@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from datetime import datetime
+from hashlib import sha256
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aidison.infrastructure.orm import AgentRunResultAdmissionRow, AgentRunResultRow, AgentRunRow
@@ -117,15 +118,24 @@ class AgentResultStore:
             return AdmissionRecord.model_validate(existing.payload)
 
         # A task may produce several immutable Results while a provider call is
-        # retried or an earlier one is rejected.  It may, however, contribute
-        # only one accepted Result to a Run's dependency projection.  Lock the
-        # parent Run before querying so two concurrent admission transactions
-        # cannot both observe an empty accepted set and promote different
-        # Results for the same stable task identity.
+        # retried or an earlier one is rejected. It may, however, contribute
+        # only one accepted Result to a Run's dependency projection. A
+        # transaction-scoped advisory lock serializes only that stable
+        # (Run, Task) pair. Locking the parent AgentRun row here is unsafe:
+        # concurrent Result inserts hold FK key-share locks on that row, so an
+        # upgrade to ``FOR UPDATE`` can deadlock the entire parallel wave.
+        await self._session.execute(
+            select(
+                func.pg_advisory_xact_lock(
+                    _task_admission_lock_key(
+                        run_id=admission.run_id,
+                        task_id=result.task_id,
+                    )
+                )
+            )
+        )
         run = await self._session.scalar(
-            select(AgentRunRow)
-            .where(AgentRunRow.id == admission.run_id)
-            .with_for_update()
+            select(AgentRunRow).where(AgentRunRow.id == admission.run_id)
         )
         if run is None:
             raise AgentResultConflictError("AdmissionRecord references a missing AgentRun")
@@ -287,3 +297,15 @@ def _result_artifact_refs(
     # The event envelope carries a bounded index only; the complete reference
     # lists remain in the hashed payload and immutable ResultEnvelope.
     return tuple(dict.fromkeys(refs))[:64]
+
+
+def _task_admission_lock_key(*, run_id: UUID, task_id: UUID) -> int:
+    """Return one stable PostgreSQL advisory-lock key for a task admission.
+
+    A 64-bit collision can only serialize two unrelated task admissions; it
+    cannot make either one visible as accepted. The explicit SHA-256 input
+    avoids depending on Python's randomized ``hash()`` implementation.
+    """
+
+    digest = sha256(f"{run_id}:{task_id}".encode("ascii")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)

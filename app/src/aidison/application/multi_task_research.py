@@ -10,6 +10,7 @@ from uuid import UUID, uuid4
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aidison.application.single_task_research import (
+    AgentRunPaused,
     SingleTaskResearchExecutor,
     SingleTaskResearchPayload,
     WorkstreamMemoryReuseUnavailable,
@@ -121,16 +122,27 @@ class MultiTaskResearchLeafExecutor(ReadyTaskExecutor):
         # to acknowledge the same control request before their provider call.
         self._control_lock = asyncio.Lock()
         self._steering_instructions: tuple[str, ...] = ()
+        self._pause_error: AgentRunPaused | None = None
 
     async def execute(self, *, task: TaskEnvelope) -> None:
         question = self._questions_by_task_id.get(task.id)
         if question is None:
             raise ValueError("multi-task research task has no bounded question")
         async with self._control_lock:
-            latest_instructions = await self._leaf_executor.consume_pre_dispatch_controls(
-                run=self._run,
-                claim=self._claim,
-            )
+            if self._pause_error is not None:
+                raise self._pause_error
+            try:
+                latest_instructions = await self._leaf_executor.consume_pre_dispatch_controls(
+                    run=self._run,
+                    claim=self._claim,
+                )
+            except AgentRunPaused as error:
+                # Later leaves queued behind this lock have not crossed their
+                # provider-dispatch safe point. Once the durable pause request
+                # is acknowledged, keep a generation-local latch so they do
+                # not mistake the now-acknowledged request for a no-op.
+                self._pause_error = error
+                raise
             # A run-local instruction applies to every leaf that has not yet
             # reached its physical-dispatch safe point.  Keeping this small
             # in-memory projection is safe: the durable control rows are read

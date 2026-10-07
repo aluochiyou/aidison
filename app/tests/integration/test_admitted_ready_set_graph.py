@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aidison.application.service import ProjectApplication
+from aidison.application.single_task_research import AgentRunPaused
 from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
@@ -146,6 +147,30 @@ class _FlakyAcceptingExecutor(_AcceptingExecutor):
             await asyncio.sleep(0.06)
             raise RuntimeError("planned leaf failure")
         await super().execute(task=task)
+
+
+class _PauseAfterStartedPeerExecutor(_AcceptingExecutor):
+    """One leaf pauses while an already-dispatched peer settles normally."""
+
+    def __init__(self, *, session_factory: async_sessionmaker[AsyncSession], run: AgentRun) -> None:
+        super().__init__(session_factory=session_factory, run=run)
+        self._slow_started = asyncio.Event()
+        self._release_slow = asyncio.Event()
+        self.slow_completed = asyncio.Event()
+
+    async def execute(self, *, task: TaskEnvelope) -> None:
+        if task.task_key == "pause":
+            await self._slow_started.wait()
+            self._release_slow.set()
+            raise AgentRunPaused("pause acknowledged before this leaf dispatched")
+        if task.task_key == "slow":
+            self._slow_started.set()
+            await self._release_slow.wait()
+            await asyncio.sleep(0.05)
+            await super().execute(task=task)
+            self.slow_completed.set()
+            return
+        raise AssertionError(f"unexpected task dispatched after pause: {task.task_key}")
 
 
 class _TimelineAcceptingExecutor(_AcceptingExecutor):
@@ -493,5 +518,53 @@ async def test_graph_ignores_accepted_result_from_another_task_graph_revision() 
         assert {UUID(item) for item in state["admitted_task_ids"]} == {first.id, second.id}
         assert executor.executed.count(gap_task.id) == 1
         assert set(executor.executed) == {gap_task.id, first.id, second.id}
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_pause_drains_in_flight_leaf_without_dispatching_more_work() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_results CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Ready graph pause drain fixture",
+                goal="Drain safely dispatched work before a multi-task pause returns",
+                idempotency_key=f"ready-graph-pause-drain-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            await session.commit()
+
+        pause = _task(run=run, key="pause")
+        slow = _task(run=run, key="slow")
+        deferred = _task(run=run, key="z-deferred")
+        executor = _PauseAfterStartedPeerExecutor(session_factory=factory, run=run)
+        graph = build_admitted_ready_set_graph(
+            checkpointer=InMemorySaver(),
+            session_factory=factory,
+            executor=executor,
+        )
+
+        with pytest.raises(AgentRunPaused, match="pause acknowledged"):
+            await graph.ainvoke(
+                {
+                    "tasks": tuple(
+                        item.model_dump(mode="json") for item in (pause, slow, deferred)
+                    ),
+                    "available_capacity": 2,
+                },
+                {"configurable": {"thread_id": str(run.id)}},
+            )
+
+        assert executor.slow_completed.is_set()
+        assert executor.executed == [slow.id]
     finally:
         await engine.dispose()

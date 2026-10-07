@@ -50,6 +50,22 @@ class _PausedLeafExecutor(_RecordingLeafExecutor):
         raise AgentRunPaused("pause acknowledged at the leaf dispatch safe point")
 
 
+class _PauseThenRecordLeafExecutor(_RecordingLeafExecutor):
+    def __init__(self) -> None:
+        super().__init__()
+        self._paused = False
+
+    async def consume_pre_dispatch_controls(
+        self, *, run: object, claim: object
+    ) -> tuple[str, ...]:
+        del run, claim
+        self.control_calls += 1
+        if not self._paused:
+            self._paused = True
+            raise AgentRunPaused("pause acknowledged at the first leaf dispatch safe point")
+        return ()
+
+
 class _MemoryLeafExecutor(_RecordingLeafExecutor):
     def __init__(self, *, reuse_available: bool = True) -> None:
         super().__init__()
@@ -148,6 +164,32 @@ async def test_multi_task_leaf_stops_before_external_work_when_pause_is_acknowle
     with pytest.raises(AgentRunPaused, match="pause acknowledged"):
         await executor.execute(task=task)
 
+    assert recorder.executions == []
+
+
+@pytest.mark.asyncio
+async def test_multi_task_leaf_latches_pause_for_other_queued_leaves() -> None:
+    run = SimpleNamespace(id=uuid4())
+    claim = SimpleNamespace(generation=1, lease_token=uuid4())
+    recorder = _PauseThenRecordLeafExecutor()
+    first = _task(run_id=run.id, key="first")
+    second = _task(run_id=run.id, key="second")
+    executor = MultiTaskResearchLeafExecutor(
+        leaf_executor=recorder,  # type: ignore[arg-type]
+        run=run,  # type: ignore[arg-type]
+        claim=claim,  # type: ignore[arg-type]
+        questions_by_task_id={first.id: "first", second.id: "second"},
+        model_token_caps_by_task_id={},
+    )
+
+    outcomes = await asyncio.gather(
+        executor.execute(task=first),
+        executor.execute(task=second),
+        return_exceptions=True,
+    )
+
+    assert all(isinstance(item, AgentRunPaused) for item in outcomes)
+    assert recorder.control_calls == 1
     assert recorder.executions == []
 
 

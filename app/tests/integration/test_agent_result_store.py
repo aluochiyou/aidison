@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from hashlib import sha256
 from uuid import UUID, uuid4
@@ -497,5 +498,62 @@ async def test_task_cannot_admit_two_distinct_results_after_retry() -> None:
             assert tuple(item.id for item in await store.admitted_results(run_id=run.id)) == (
                 first.id,
             )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_parallel_duplicate_admissions_serialize_per_task_without_deadlocking() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_results CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Concurrent single-task admission fixture",
+                goal="Serialize duplicate admission without blocking another task wave",
+                idempotency_key=f"concurrent-task-admission-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            task = _task(run=run, key="concurrent-retry-target")
+            first = _result(run=run, task=task, value="concurrent-first")
+            second = _result(run=run, task=task, value="concurrent-second")
+            store = AgentResultStore(session)
+            await store.record_result(first)
+            await store.record_result(second)
+            await session.commit()
+
+        async def admit(result: ResultEnvelope) -> AdmissionRecord:
+            async with factory() as session:
+                admission = AdmissionRecord(
+                    run_id=run.id,
+                    result_id=result.id,
+                    result_manifest_hash=result.manifest_hash,
+                    disposition=AdmissionDisposition.ACCEPTED,
+                    reason_codes=("runtime_fenced", "schema_valid"),
+                    admitted_ref=f"admitted://result/{result.id}",
+                )
+                value = await AgentResultStore(session).admit(admission)
+                await session.commit()
+                return value
+
+        outcomes = await asyncio.gather(
+            admit(first),
+            admit(second),
+            return_exceptions=True,
+        )
+
+        assert sum(isinstance(item, AdmissionRecord) for item in outcomes) == 1
+        assert sum(isinstance(item, AgentResultConflictError) for item in outcomes) == 1
+        async with factory() as session:
+            accepted = await AgentResultStore(session).admitted_results(run_id=run.id)
+            assert len(accepted) == 1
+            assert accepted[0].task_id == task.id
     finally:
         await engine.dispose()
