@@ -243,7 +243,7 @@ class GitHubRepositorySourceCollector:
 
 
 class CompositeResearchSourceCollector:
-    """Combine independently configured read-only collectors without duplicate input."""
+    """Combine readers without hiding a recoverable configured-source outage."""
 
     def __init__(self, collectors: Sequence[ResearchSourceCollector]) -> None:
         if not collectors:
@@ -259,14 +259,50 @@ class CompositeResearchSourceCollector:
     ) -> tuple[CollectedResearchSource, ...]:
         collected: list[CollectedResearchSource] = []
         seen_source_ids: set[str] = set()
+        recoverable_failures: list[ResearchSourceCollectionError] = []
         for collector in self._collectors:
-            for source in await collector.collect(run=run, task=task, question=question):
+            try:
+                sources = await collector.collect(run=run, task=task, question=question)
+            except ResearchSourceCollectionError as error:
+                if not is_recoverable_source_collection_failure(error.reason_code):
+                    raise
+                recoverable_failures.append(error)
+                continue
+            for source in sources:
                 source_id = source.source.id
                 assert source_id is not None
                 if source_id in seen_source_ids:
                     continue
                 seen_source_ids.add(source_id)
                 collected.append(source)
+        if not collected and recoverable_failures:
+            raise recoverable_failures[0]
+        if collected and recoverable_failures:
+            coverage_keys = tuple(sorted(set(getattr(task, "coverage_keys", ()))))
+            visible_failures = tuple(
+                ResearchSourceCollectionFailure(
+                    coverage_key=coverage_key,
+                    reason_code=error.reason_code,
+                )
+                for coverage_key in coverage_keys
+                for error in recoverable_failures
+            )
+            collected = [
+                source.model_copy(
+                    update={
+                        "collection_failures": tuple(
+                            sorted(
+                                {
+                                    (failure.coverage_key, failure.reason_code): failure
+                                    for failure in (*source.collection_failures, *visible_failures)
+                                }.values(),
+                                key=lambda failure: (failure.coverage_key, failure.reason_code),
+                            )
+                        )
+                    }
+                )
+                for source in collected
+            ]
         collection_policy = getattr(task, "collection_policy", None)
         max_documents = (
             collection_policy.max_documents_total
@@ -707,9 +743,20 @@ def _github_media_type(path: str) -> str:
 
 
 def _is_recoverable_query_failure(reason_code: str) -> bool:
-    """Whether one failed Coverage Key may defer to the gap loop safely."""
+    """Backward-compatible alias for provider-query recovery classification."""
 
-    return reason_code in {"tavily_network_failure", "tavily_provider_unavailable"}
+    return is_recoverable_source_collection_failure(reason_code)
+
+
+def is_recoverable_source_collection_failure(reason_code: str) -> bool:
+    """Whether a physical source outage may become a bounded coverage gap."""
+
+    return reason_code in {
+        "github_network_failure",
+        "github_provider_unavailable",
+        "tavily_network_failure",
+        "tavily_provider_unavailable",
+    }
 
 
 __all__ = [
@@ -717,6 +764,7 @@ __all__ = [
     "CompositeResearchSourceCollector",
     "GitHubRepositorySourceCollector",
     "GitHubSourceCollectionError",
+    "is_recoverable_source_collection_failure",
     "NoopResearchSourceCollector",
     "ResearchSourceCollectionError",
     "ResearchSourceCollector",

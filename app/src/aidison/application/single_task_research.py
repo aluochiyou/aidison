@@ -59,6 +59,7 @@ from aidison.research.source_collection import (
     NoopResearchSourceCollector,
     ResearchSourceCollectionError,
     ResearchSourceCollector,
+    is_recoverable_source_collection_failure,
 )
 from aidison.research.source_observations import (
     ObservationOutcome,
@@ -240,13 +241,9 @@ def _research_result_status(
 def _is_recoverable_source_gap(reason_code: str) -> bool:
     """Classify source failures that may safely defer to bounded gap planning."""
 
-    return reason_code in {
-        "no_trusted_research_sources",
-        "tavily_network_failure",
-        "tavily_provider_unavailable",
-        "github_network_failure",
-        "github_provider_unavailable",
-    }
+    return reason_code == "no_trusted_research_sources" or is_recoverable_source_collection_failure(
+        reason_code
+    )
 
 
 class SingleTaskResearchExecutor:

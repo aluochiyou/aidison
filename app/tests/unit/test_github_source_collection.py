@@ -12,6 +12,7 @@ from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
     GitHubRepositorySourceCollector,
     GitHubSourceCollectionError,
+    ResearchSourceCollectionError,
 )
 from aidison.research.source_observations import SourceIdentity, SourceKind
 
@@ -206,3 +207,74 @@ async def test_composite_collector_enforces_the_frozen_task_document_budget() ->
         "https://example.test/one",
         "https://example.test/two",
     ]
+
+
+@pytest.mark.asyncio
+async def test_composite_collector_preserves_available_sources_and_records_outage() -> None:
+    class StaticCollector:
+        async def collect(
+            self, *, run: object, task: object, question: str
+        ) -> tuple[CollectedResearchSource, ...]:
+            del run, task, question
+            return (
+                CollectedResearchSource(
+                    key="fixture-source",
+                    source=SourceIdentity(
+                        kind=SourceKind.WEB,
+                        provider="fixture",
+                        canonical_locator="https://example.test/specification",
+                    ),
+                    normalized_document="# Specification",
+                    media_type="text/markdown",
+                    representation="normalized-fixture-v1",
+                    parser_revision="fixture-v1",
+                    observed_at=datetime.now(UTC),
+                    coverage_source_kinds=("evidence",),
+                ),
+            )
+
+    class TemporarilyUnavailableCollector:
+        async def collect(
+            self, *, run: object, task: object, question: str
+        ) -> tuple[CollectedResearchSource, ...]:
+            del run, task, question
+            raise ResearchSourceCollectionError("github_provider_unavailable")
+
+    sources = await CompositeResearchSourceCollector(
+        (
+            StaticCollector(),  # type: ignore[arg-type]
+            TemporarilyUnavailableCollector(),  # type: ignore[arg-type]
+        )
+    ).collect(
+        run=object(),  # type: ignore[arg-type]
+        task=SimpleNamespace(
+            coverage_keys=("control.interface", "control.safety"),
+            collection_policy=SimpleNamespace(max_documents_total=3),
+        ),
+        question="ignored",
+    )
+
+    assert len(sources) == 1
+    assert [item.model_dump(mode="json") for item in sources[0].collection_failures] == [
+        {"coverage_key": "control.interface", "reason_code": "github_provider_unavailable"},
+        {"coverage_key": "control.safety", "reason_code": "github_provider_unavailable"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_composite_collector_does_not_hide_nonrecoverable_source_failure() -> None:
+    class ForbiddenCollector:
+        async def collect(
+            self, *, run: object, task: object, question: str
+        ) -> tuple[CollectedResearchSource, ...]:
+            del run, task, question
+            raise ResearchSourceCollectionError("github_authentication_failed")
+
+    with pytest.raises(ResearchSourceCollectionError, match="github_authentication_failed"):
+        await CompositeResearchSourceCollector(
+            (ForbiddenCollector(),)  # type: ignore[arg-type]
+        ).collect(
+            run=object(),  # type: ignore[arg-type]
+            task=SimpleNamespace(coverage_keys=(), collection_policy=None),
+            question="ignored",
+        )
