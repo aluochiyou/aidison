@@ -198,7 +198,7 @@ class GitHubRepositorySourceCollector:
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
             raise GitHubSourceCollectionError(
-                _github_http_failure_code(error.response.status_code)
+                _github_http_failure_code(error.response)
             ) from error
         except httpx.RequestError as error:
             raise GitHubSourceCollectionError("github_network_failure") from error
@@ -676,8 +676,16 @@ def _tavily_http_failure_code(status_code: int) -> str:
     return "tavily_request_rejected"
 
 
-def _github_http_failure_code(status_code: int) -> str:
+def _github_http_failure_code(response: httpx.Response) -> str:
+    """Classify GitHub's overloaded HTTP 403 without inspecting response prose."""
+
+    status_code = response.status_code
     if status_code in {401, 403}:
+        # GitHub documents both forbidden credentials and exhausted primary or
+        # secondary limits as 403.  The remaining header is machine-readable;
+        # never infer semantics from provider message text.
+        if response.headers.get("x-ratelimit-remaining") == "0":
+            return "github_quota_exhausted"
         return "github_authentication_failed"
     if status_code == 404:
         return "github_source_not_found"

@@ -88,6 +88,31 @@ async def test_github_collector_blocks_authentication_failure_instead_of_falling
 
 
 @pytest.mark.asyncio
+async def test_github_collector_distinguishes_rate_limit_from_forbidden_credentials() -> None:
+    async def responder(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            403,
+            headers={"X-RateLimit-Remaining": "0"},
+            json={"message": "API rate limit exceeded"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+        collector = GitHubRepositorySourceCollector(
+            api_token="github-test-token",
+            source_targets=("aidison-lab/flight-docs@main:specs/interface.md",),
+            client=client,
+        )
+        with pytest.raises(GitHubSourceCollectionError) as raised:
+            await collector.collect(
+                run=object(),  # type: ignore[arg-type]
+                task=object(),  # type: ignore[arg-type]
+                question="ignored",
+            )
+
+    assert raised.value.reason_code == "github_quota_exhausted"
+
+
+@pytest.mark.asyncio
 async def test_github_collector_rejects_non_utf8_or_malformed_content() -> None:
     async def responder(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
