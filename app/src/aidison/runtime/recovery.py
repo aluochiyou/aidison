@@ -74,6 +74,7 @@ def plan_recovery(value: RecoveryRequest) -> RecoveryDecision:
     if (
         checkpoint is not None
         and binding == value.requested_binding
+        and checkpoint.thread_id == value.run.thread_id
         and checkpoint.graph_revision == binding.graph_revision
         and checkpoint.state_schema_version == binding.state_schema_version
     ):

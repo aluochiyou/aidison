@@ -70,6 +70,33 @@ def test_incompatible_state_creates_successor_without_copying_checkpoint_or_priv
     assert "checkpoint" not in decision.successor.transfer_manifest.model_dump_json()
 
 
+def test_checkpoint_from_another_thread_creates_a_successor_run() -> None:
+    source = _run().model_copy(
+        update={
+            "admitted_checkpoint": AdmittedCheckpointRef(
+                thread_id="another-run-thread",
+                checkpoint_id="checkpoint-1",
+                graph_revision="research-v1",
+                state_schema_version="research-state-v1",
+                generation=1,
+            )
+        }
+    )
+
+    decision = plan_recovery(
+        RecoveryRequest(
+            run=source,
+            requested_binding=_binding(),
+            admitted_result_refs=("admitted://r/1",),
+        )
+    )
+
+    assert decision.action is RecoveryAction.SUCCESSOR_RUN
+    assert decision.resume_checkpoint is None
+    assert decision.successor is not None
+    assert decision.successor.transfer_manifest.predecessor_run_id == source.id
+
+
 def test_unadmitted_material_cannot_enter_successor_transfer() -> None:
     source = _run()
     decision = plan_recovery(
