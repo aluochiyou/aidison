@@ -11,6 +11,13 @@ from aidison.observability.contracts import (
     TelemetryCorrelation,
     append_durable_product_event,
 )
+from aidison.observability.runtime_tracing import (
+    DisabledRuntimeTracer,
+    LangfuseRuntimeTracer,
+    RuntimeTracer,
+    RuntimeTracingSettings,
+    build_runtime_tracer,
+)
 
 __all__ = [
     "DurableProductEvent",
@@ -22,4 +29,9 @@ __all__ = [
     "StructuredLogRecord",
     "TelemetryCorrelation",
     "append_durable_product_event",
+    "DisabledRuntimeTracer",
+    "LangfuseRuntimeTracer",
+    "RuntimeTracer",
+    "RuntimeTracingSettings",
+    "build_runtime_tracer",
 ]

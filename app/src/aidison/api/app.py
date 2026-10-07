@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -138,6 +139,12 @@ from aidison.infrastructure.orm import (
     ImpactAnalysisRow,
 )
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.observability import (
+    RuntimeTracer,
+    RuntimeTracingSettings,
+    TelemetryCorrelation,
+    build_runtime_tracer,
+)
 from aidison.providers.shopping import ShoppingConfigError, ShoppingProvider
 from aidison.providers.taobao import TaobaoAffiliateAdapter, TaobaoSettings
 from aidison.research.consolidation import SufficiencyPolicy
@@ -746,11 +753,20 @@ def create_app(
     module_discovery_model_factory: Callable[[], BaseChatModel] | None = None,
     research_strategy_model_factory: Callable[[], BaseChatModel] | None = None,
     research_strategy_planner_factory: Callable[[], ResearchStrategyPlanner] | None = None,
+    runtime_tracer: RuntimeTracer | None = None,
     enable_legacy_purchase_writes: bool = False,
 ) -> FastAPI:
-    api = FastAPI(title="Aidison API", version="0.1.0")
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            cast(RuntimeTracer, app.state.runtime_tracer).flush()
+
+    api = FastAPI(title="Aidison API", version="0.1.0", lifespan=_lifespan)
     api.state.session_factory = session_factory or create_session_factory()
     api.state.shopping_provider = shopping_provider
+    api.state.runtime_tracer = runtime_tracer or build_runtime_tracer(RuntimeTracingSettings())
     # Keep API and worker on the same durable artifact volume in deployment.
     # The explicit argument remains the test/in-process override.
     api.state.artifact_root = artifact_root or Path(
@@ -799,7 +815,13 @@ def create_app(
         request_id = f"req-{uuid4()}"
         token = set_request_correlation_id(request_id)
         try:
-            response = await call_next(request)
+            tracer = cast(RuntimeTracer, request.app.state.runtime_tracer)
+            with tracer.span(
+                name="aidison.api.request",
+                correlation=TelemetryCorrelation(request_id=request_id),
+                attributes={"http.method": request.method},
+            ):
+                response = await call_next(request)
             response.headers.setdefault("X-Request-ID", request_id)
             return response
         finally:

@@ -13,9 +13,13 @@ from enum import StrEnum
 from typing import Protocol
 from uuid import UUID
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from aidison.evaluation.contracts import FrozenModel
+
+class FrozenModel(BaseModel):
+    """Local immutable model base to keep observability below evaluation imports."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
 
 
 class DurableProductEventType(StrEnum):
