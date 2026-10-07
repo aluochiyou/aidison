@@ -7,7 +7,10 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
-from aidison.application.event_replay import AgentRunDecisionShadowProjectionService
+from aidison.application.event_replay import (
+    AgentRunDecisionProjectionRepairService,
+    AgentRunDecisionShadowProjectionService,
+)
 from aidison.application.service import ProjectApplication
 from aidison.infrastructure.agent_decisions import (
     AgentRunDecisionConflictError,
@@ -15,6 +18,7 @@ from aidison.infrastructure.agent_decisions import (
 )
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
+from aidison.infrastructure.orm import AgentRunDecisionRow
 from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.research.decision_contracts import AgentRunDecisionStatus
@@ -177,5 +181,92 @@ async def test_decision_verified_snapshot_tail_replay_matches_relation() -> None
             assert verification.snapshot_tail_hash == verification.full_replay_hash
             assert verification.event_count == 2
             assert verification.tail_event_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_decision_projection_repair_restores_existing_human_verdict_row() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_decisions CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+
+        async with factory() as session:
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="AgentRun decision repair fixture",
+                goal="Restore an existing human proposal verdict from its event stream",
+                idempotency_key=f"decision-repair-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            proposal = ProposalManifest(
+                run_id=run.id,
+                basis_hash=run.basis_hash,
+                artifact_ref=f"artifact+sha256://{_hash('repair-proposal')}/manifest.json",
+                manifest_hash=_hash("repair-proposal"),
+            )
+            store = AgentRunDecisionStore(session)
+            prepared = await store.prepare(run=run, proposal=proposal)
+            resolved = await store.resolve(
+                decision_id=prepared.id,
+                basis_hash=run.basis_hash,
+                answer=AgentRunDecisionStatus.APPROVED,
+            )
+            await session.commit()
+
+        async with factory() as session:
+            row = await session.get(AgentRunDecisionRow, resolved.id)
+            assert row is not None
+            row.status = AgentRunDecisionStatus.REJECTED.value
+            row.answer = AgentRunDecisionStatus.REJECTED.value
+            row.event_version = 99
+            await session.commit()
+
+        async with factory() as session:
+            repair = AgentRunDecisionProjectionRepairService(session)
+            preview = await repair.preview(
+                project_id=project.id,
+                agent_run_decision_id=resolved.id,
+            )
+            assert preview.repair_required
+            assert preview.current_relation_hash is not None
+            dry_run = await repair.apply(
+                project_id=project.id,
+                agent_run_decision_id=resolved.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+            )
+            assert dry_run.applied is False
+            applied = await repair.apply(
+                project_id=project.id,
+                agent_run_decision_id=resolved.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+                dry_run=False,
+            )
+            assert applied.applied is True
+            await session.commit()
+
+        async with factory() as session:
+            store = AgentRunDecisionStore(session)
+            events = await PostgresDomainStore(session).list_aggregate_events(
+                project.id,
+                aggregate_type="agent_run_decision",
+                aggregate_id=resolved.id,
+            )
+            verification = await AgentRunDecisionShadowProjectionService(
+                PostgresDomainStore(session),
+                EventReplaySnapshotRepository(session),
+                store,
+            ).verify(project_id=project.id, decision_id=resolved.id)
+
+            assert await store.get(resolved.id) == resolved
+            assert len(events) == 2
+            assert verification.snapshot_matches_full_replay
     finally:
         await engine.dispose()

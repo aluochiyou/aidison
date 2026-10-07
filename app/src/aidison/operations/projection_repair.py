@@ -29,6 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from aidison.application.event_replay import (
     AgentResultProjectionRepairPreview,
     AgentResultProjectionRepairService,
+    AgentRunDecisionProjectionRepairPreview,
+    AgentRunDecisionProjectionRepairService,
     AgentRunProjectionRepairPreview,
     AgentRunProjectionRepairService,
     ExecutionPlanProjectionRepairPreview,
@@ -46,6 +48,7 @@ class ProjectionRepairCommandReport:
         ExecutionPlanProjectionRepairPreview
         | AgentRunProjectionRepairPreview
         | AgentResultProjectionRepairPreview
+        | AgentRunDecisionProjectionRepairPreview
     )
     applied: bool
 
@@ -67,8 +70,12 @@ class ProjectionRepairCommandReport:
             payload["aggregate_type"] = "agent_run"
             payload["agent_run_id"] = str(self.preview.agent_run_id)
         else:
-            payload["aggregate_type"] = "agent_run_result"
-            payload["agent_run_result_id"] = str(self.preview.agent_run_result_id)
+            if isinstance(self.preview, AgentResultProjectionRepairPreview):
+                payload["aggregate_type"] = "agent_run_result"
+                payload["agent_run_result_id"] = str(self.preview.agent_run_result_id)
+                return payload
+            payload["aggregate_type"] = "agent_run_decision"
+            payload["agent_run_decision_id"] = str(self.preview.agent_run_decision_id)
         return payload
 
 
@@ -82,6 +89,7 @@ def _parser() -> argparse.ArgumentParser:
     aggregate.add_argument("--execution-plan-id", type=UUID)
     aggregate.add_argument("--agent-run-id", type=UUID)
     aggregate.add_argument("--agent-run-result-id", type=UUID)
+    aggregate.add_argument("--agent-run-decision-id", type=UUID)
     parser.add_argument(
         "--apply",
         action="store_true",
@@ -138,8 +146,10 @@ async def _run(args: argparse.Namespace) -> ProjectionRepairCommandReport:
                 report = await _run_execution_plan_repair(session, args)
             elif args.agent_run_id is not None:
                 report = await _run_agent_run_repair(session, args)
-            else:
+            elif args.agent_run_result_id is not None:
                 report = await _run_agent_result_repair(session, args)
+            else:
+                report = await _run_agent_decision_repair(session, args)
             if report.applied:
                 await session.commit()
             else:
@@ -209,6 +219,28 @@ async def _run_agent_result_repair(
     result = await service.apply(
         project_id=args.project_id,
         agent_run_result_id=args.agent_run_result_id,
+        expected_current_relation_hash=args.expected_current_relation_hash,
+        dry_run=False,
+    )
+    return ProjectionRepairCommandReport(preview=result.preview, applied=result.applied)
+
+
+async def _run_agent_decision_repair(
+    session: AsyncSession,
+    args: argparse.Namespace,
+) -> ProjectionRepairCommandReport:
+    """Run the selected user-decision repair inside the caller transaction."""
+
+    service = AgentRunDecisionProjectionRepairService(session)
+    if not args.apply:
+        preview = await service.preview(
+            project_id=args.project_id,
+            agent_run_decision_id=args.agent_run_decision_id,
+        )
+        return ProjectionRepairCommandReport(preview=preview, applied=False)
+    result = await service.apply(
+        project_id=args.project_id,
+        agent_run_decision_id=args.agent_run_decision_id,
         expected_current_relation_hash=args.expected_current_relation_hash,
         dry_run=False,
     )

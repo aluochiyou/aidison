@@ -30,6 +30,7 @@ from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.infrastructure.agent_run_effects import AgentRunEffectLedger
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.orm import (
+    AgentRunDecisionRow,
     AgentRunResultAdmissionRow,
     AgentRunResultRow,
     AgentRunRow,
@@ -37,6 +38,7 @@ from aidison.infrastructure.orm import (
 )
 from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.research.decision_contracts import AgentRunDecision
 from aidison.research.langgraph_contracts import AdmissionRecord, ResultEnvelope
 from aidison.runtime.agent_result_events import (
     AgentResultReplaySnapshot,
@@ -137,6 +139,27 @@ class AgentResultProjectionRepairResult:
     """The reviewed repair result for a result/admission relation pair."""
 
     preview: AgentResultProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentRunDecisionProjectionRepairPreview:
+    """Read-only comparison for one non-canonical user decision inbox row."""
+
+    project_id: UUID
+    agent_run_decision_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentRunDecisionProjectionRepairResult:
+    """The reviewed repair result for one already-present proposal decision."""
+
+    preview: AgentRunDecisionProjectionRepairPreview
     applied: bool
 
 
@@ -882,6 +905,190 @@ def _restore_agent_result_admission_relation(
     row.result_id = admission.result_id
     row.disposition = admission.disposition.value
     row.payload = admission.model_dump(mode="json")
+
+
+class AgentRunDecisionProjectionRepairService:
+    """Restore an existing user-review inbox row from its immutable verdict events.
+
+    This service never creates a missing decision. A missing row may mean that
+    the original human-review command did not commit atomically, so turning a
+    historical event into a newly visible inbox item requires a separate,
+    audited operator workflow.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_decision_id: UUID,
+    ) -> AgentRunDecisionProjectionRepairPreview:
+        """Compare the decision relation with pure event replay without mutation."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+        )
+        row = await self._session.get(AgentRunDecisionRow, agent_run_decision_id)
+        current_hash = _agent_run_decision_relation_row_hash(row) if row is not None else None
+        target_hash = _agent_run_decision_relation_hash(
+            decision=state.agent_run_decision,
+            event_version=state.aggregate_version,
+        )
+        return AgentRunDecisionProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_decision_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentRunDecisionProjectionRepairResult:
+        """Apply a reviewed decision repair under a row and advisory lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run-decision:{agent_run_decision_id}"},
+        )
+        row = await self._session.scalar(
+            select(AgentRunDecisionRow)
+            .where(
+                AgentRunDecisionRow.id == agent_run_decision_id,
+                AgentRunDecisionRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun decision relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _agent_run_decision_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun decision relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+        )
+        decision = state.agent_run_decision
+        target_hash = _agent_run_decision_relation_hash(
+            decision=decision,
+            event_version=state.aggregate_version,
+        )
+        preview = AgentRunDecisionProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentRunDecisionProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_agent_run_decision_relation(
+            row,
+            decision=decision,
+            event_version=state.aggregate_version,
+        )
+        await self._session.flush()
+        return AgentRunDecisionProjectionRepairResult(preview=preview, applied=True)
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_decision_id: UUID,
+    ) -> tuple[AgentRunDecisionReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_decision",
+                aggregate_id=agent_run_decision_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun decision event stream is missing")
+        return replay_agent_run_decision(events), events
+
+
+def _agent_run_decision_relation_row_hash(row: AgentRunDecisionRow) -> str:
+    """Hash every physical decision field controlled by lifecycle event replay."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "agent_run_id": str(row.agent_run_id),
+            "project_id": str(row.project_id),
+            "basis_hash": row.basis_hash,
+            "proposal_manifest_ref": row.proposal_manifest_ref,
+            "proposal_manifest_hash": row.proposal_manifest_hash,
+            "status": row.status,
+            "answer": row.answer,
+            "event_version": row.event_version,
+            "created_at": _relation_timestamp(row.created_at),
+            "resolved_at": _relation_timestamp(row.resolved_at),
+        }
+    )
+
+
+def _agent_run_decision_relation_hash(
+    *,
+    decision: AgentRunDecision,
+    event_version: int,
+) -> str:
+    """Hash the relation shape deterministically rebuilt from one decision stream."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(decision.id),
+            "agent_run_id": str(decision.agent_run_id),
+            "project_id": str(decision.project_id),
+            "basis_hash": decision.basis_hash,
+            "proposal_manifest_ref": decision.proposal_manifest_ref,
+            "proposal_manifest_hash": decision.proposal_manifest_hash,
+            "status": decision.status.value,
+            "answer": decision.answer,
+            "event_version": event_version,
+            "created_at": _relation_timestamp(decision.created_at),
+            "resolved_at": _relation_timestamp(decision.resolved_at),
+        }
+    )
+
+
+def _restore_agent_run_decision_relation(
+    row: AgentRunDecisionRow,
+    *,
+    decision: AgentRunDecision,
+    event_version: int,
+) -> None:
+    """Restore one existing inbox row without producing another human verdict event."""
+
+    row.agent_run_id = decision.agent_run_id
+    row.project_id = decision.project_id
+    row.basis_hash = decision.basis_hash
+    row.proposal_manifest_ref = decision.proposal_manifest_ref
+    row.proposal_manifest_hash = decision.proposal_manifest_hash
+    row.status = decision.status.value
+    row.answer = decision.answer
+    row.event_version = event_version
+    row.created_at = decision.created_at
+    row.resolved_at = decision.resolved_at
 
 
 @dataclass(frozen=True)

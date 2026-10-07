@@ -8,6 +8,7 @@ from pytest import CaptureFixture, MonkeyPatch
 
 from aidison.application.event_replay import (
     AgentResultProjectionRepairPreview,
+    AgentRunDecisionProjectionRepairPreview,
     AgentRunProjectionRepairPreview,
     ExecutionPlanProjectionRepairPreview,
 )
@@ -186,3 +187,34 @@ def test_result_preview_keeps_the_admission_relation_explicit(
         == 0
     )
     assert '"aggregate_type": "agent_run_result"' in capsys.readouterr().out
+
+
+def test_decision_preview_uses_a_separate_human_verdict_aggregate(
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    project_id = uuid4()
+    decision_id = uuid4()
+    preview = AgentRunDecisionProjectionRepairPreview(
+        project_id=project_id,
+        agent_run_decision_id=decision_id,
+        event_cursor=24,
+        event_count=2,
+        current_relation_hash="current",
+        replayed_relation_hash="replayed",
+        repair_required=True,
+    )
+
+    async def fake_run(args: Namespace) -> projection_repair.ProjectionRepairCommandReport:
+        assert args.agent_run_decision_id == decision_id
+        return projection_repair.ProjectionRepairCommandReport(preview=preview, applied=False)
+
+    monkeypatch.setattr(projection_repair, "_run", fake_run)
+
+    assert (
+        projection_repair.main(
+            ["--project-id", str(project_id), "--agent-run-decision-id", str(decision_id)]
+        )
+        == 0
+    )
+    assert '"aggregate_type": "agent_run_decision"' in capsys.readouterr().out
