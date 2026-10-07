@@ -5,14 +5,19 @@ from hashlib import sha256
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from aidison.application.admitted_ready_set import AdmittedReadySetApplication
-from aidison.application.event_replay import AgentResultShadowProjectionService
+from aidison.application.event_replay import (
+    AgentResultProjectionRepairService,
+    AgentResultShadowProjectionService,
+    ProjectionRepairConflictError,
+)
 from aidison.application.service import ProjectApplication
 from aidison.infrastructure.agent_results import AgentResultConflictError, AgentResultStore
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
+from aidison.infrastructure.orm import AgentRunResultAdmissionRow, AgentRunResultRow
 from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.research.langgraph_contracts import (
@@ -222,6 +227,159 @@ async def test_result_verified_snapshot_tail_replay_keeps_admission_separate() -
             assert verification.snapshot_tail_hash == verification.full_replay_hash
             assert verification.event_count == 2
             assert verification.tail_event_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_result_projection_repair_restores_existing_result_and_admission_pair() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_results CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+
+        async with factory() as session:
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Agent result repair fixture",
+                goal="Restore an existing result and verdict without promoting raw output",
+                idempotency_key=f"result-repair-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            result = _result(run=run, task=_task(run=run, key="repair"), value="repair")
+            admission = AdmissionRecord(
+                run_id=run.id,
+                result_id=result.id,
+                result_manifest_hash=result.manifest_hash,
+                disposition=AdmissionDisposition.ACCEPTED,
+                reason_codes=("runtime_fenced", "schema_valid"),
+                admitted_ref=f"admitted://result/{result.id}",
+            )
+            store = AgentResultStore(session)
+            await store.record_result(result)
+            await store.admit(admission)
+            await session.commit()
+
+        async with factory() as session:
+            result_row = await session.get(AgentRunResultRow, result.id)
+            admission_row = await session.scalar(
+                select(AgentRunResultAdmissionRow).where(
+                    AgentRunResultAdmissionRow.result_id == result.id
+                )
+            )
+            assert result_row is not None and admission_row is not None
+            result_row.event_version = 99
+            result_row.payload = {**result_row.payload, "status": "failed"}
+            admission_row.disposition = AdmissionDisposition.REJECTED.value
+            await session.commit()
+
+        async with factory() as session:
+            repair = AgentResultProjectionRepairService(session)
+            preview = await repair.preview(
+                project_id=project.id,
+                agent_run_result_id=result.id,
+            )
+            assert preview.repair_required
+            assert preview.current_relation_hash is not None
+            dry_run = await repair.apply(
+                project_id=project.id,
+                agent_run_result_id=result.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+            )
+            assert dry_run.applied is False
+            applied = await repair.apply(
+                project_id=project.id,
+                agent_run_result_id=result.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+                dry_run=False,
+            )
+            assert applied.applied is True
+            await session.commit()
+
+        async with factory() as session:
+            store = AgentResultStore(session)
+            events = await PostgresDomainStore(session).list_aggregate_events(
+                project.id,
+                aggregate_type="agent_run_result",
+                aggregate_id=result.id,
+            )
+            verification = await AgentResultShadowProjectionService(
+                PostgresDomainStore(session),
+                EventReplaySnapshotRepository(session),
+                store,
+            ).verify(project_id=project.id, result_id=result.id)
+
+            assert await store.get_result(result_id=result.id) == result
+            assert await store.get_admission(result_id=result.id) == admission
+            assert len(events) == 2
+            assert verification.snapshot_matches_full_replay
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_result_projection_repair_refuses_to_create_a_missing_admission_row() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_results CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Result admission shape refusal",
+                goal="Do not infer an accepted result from a missing verdict row",
+                idempotency_key=f"result-repair-shape-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            result = _result(run=run, task=_task(run=run, key="shape"), value="shape")
+            admission = AdmissionRecord(
+                run_id=run.id,
+                result_id=result.id,
+                result_manifest_hash=result.manifest_hash,
+                disposition=AdmissionDisposition.ACCEPTED,
+                reason_codes=("runtime_fenced",),
+                admitted_ref=f"admitted://result/{result.id}",
+            )
+            store = AgentResultStore(session)
+            await store.record_result(result)
+            await store.admit(admission)
+            await session.commit()
+
+        async with factory() as session:
+            row = await session.scalar(
+                select(AgentRunResultAdmissionRow).where(
+                    AgentRunResultAdmissionRow.result_id == result.id
+                )
+            )
+            assert row is not None
+            await session.delete(row)
+            await session.commit()
+
+        async with factory() as session:
+            repair = AgentResultProjectionRepairService(session)
+            preview = await repair.preview(
+                project_id=project.id,
+                agent_run_result_id=result.id,
+            )
+            assert preview.current_relation_hash is not None
+            with pytest.raises(ProjectionRepairConflictError, match="automatic row creation"):
+                await repair.apply(
+                    project_id=project.id,
+                    agent_run_result_id=result.id,
+                    expected_current_relation_hash=preview.current_relation_hash,
+                    dry_run=False,
+                )
     finally:
         await engine.dispose()
 

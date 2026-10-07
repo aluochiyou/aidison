@@ -29,9 +29,15 @@ from aidison.infrastructure.agent_decisions import AgentRunDecisionStore
 from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.infrastructure.agent_run_effects import AgentRunEffectLedger
 from aidison.infrastructure.agent_runs import AgentRunControl
-from aidison.infrastructure.orm import AgentRunRow, ExecutionPlanProposalRow
+from aidison.infrastructure.orm import (
+    AgentRunResultAdmissionRow,
+    AgentRunResultRow,
+    AgentRunRow,
+    ExecutionPlanProposalRow,
+)
 from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.research.langgraph_contracts import AdmissionRecord, ResultEnvelope
 from aidison.runtime.agent_result_events import (
     AgentResultReplaySnapshot,
     AgentResultReplayState,
@@ -110,6 +116,27 @@ class AgentRunProjectionRepairResult:
     """The reviewed inactive-run repair result; event history remains untouched."""
 
     preview: AgentRunProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentResultProjectionRepairPreview:
+    """Read-only comparison for a ResultEnvelope and its separate verdict row."""
+
+    project_id: UUID
+    agent_run_result_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentResultProjectionRepairResult:
+    """The reviewed repair result for a result/admission relation pair."""
+
+    preview: AgentResultProjectionRepairPreview
     applied: bool
 
 
@@ -606,6 +633,255 @@ def _relation_timestamp(value: datetime | None) -> str | None:
     """Give database and event-side timestamps one stable relation-hash format."""
 
     return value.isoformat() if value is not None else None
+
+
+class AgentResultProjectionRepairService:
+    """Repair an existing ResultEnvelope/admission pair without changing its shape.
+
+    Recording a result and admitting it are separate domain facts.  A missing
+    result row, a missing required admission row, or an unexpected admission
+    row is deliberately not auto-created or deleted: this maintenance command
+    only restores values for a relation shape already present in PostgreSQL.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_result_id: UUID,
+    ) -> AgentResultProjectionRepairPreview:
+        """Compare one result/admission projection without modifying PostgreSQL."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+        )
+        result_row = await self._session.get(AgentRunResultRow, agent_run_result_id)
+        admission_row = await self._admission_row(agent_run_result_id)
+        current_hash = (
+            _agent_result_relation_row_hash(result_row, admission_row)
+            if result_row is not None
+            else None
+        )
+        target_hash = _agent_result_relation_hash(
+            result=state.result_envelope,
+            admission=state.admission_record,
+            event_version=state.aggregate_version,
+        )
+        return AgentResultProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_result_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentResultProjectionRepairResult:
+        """Restore values only after a reviewed preview still matches under lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run-result:{agent_run_result_id}"},
+        )
+        result_row = await self._session.scalar(
+            select(AgentRunResultRow)
+            .where(AgentRunResultRow.id == agent_run_result_id)
+            .with_for_update()
+        )
+        if result_row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun result relation is missing; automatic row creation is forbidden"
+            )
+        admission_row = await self._session.scalar(
+            select(AgentRunResultAdmissionRow)
+            .where(AgentRunResultAdmissionRow.result_id == agent_run_result_id)
+            .with_for_update()
+        )
+        current_hash = _agent_result_relation_row_hash(result_row, admission_row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun result relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+        )
+        target_result = state.result_envelope
+        target_admission = state.admission_record
+        if (target_admission is None) != (admission_row is None):
+            raise ProjectionRepairConflictError(
+                "AgentRun result/admission relation shape differs from its event stream; "
+                "automatic row creation or deletion is forbidden"
+            )
+        if admission_row is not None and target_admission is not None:
+            if admission_row.id != target_admission.id:
+                raise ProjectionRepairConflictError(
+                    "AgentRun admission identity differs from its event stream; "
+                    "manual repair is required"
+                )
+        target_hash = _agent_result_relation_hash(
+            result=target_result,
+            admission=target_admission,
+            event_version=state.aggregate_version,
+        )
+        preview = AgentResultProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentResultProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_agent_result_relation(
+            result_row,
+            result=target_result,
+            event_version=state.aggregate_version,
+        )
+        if admission_row is not None and target_admission is not None:
+            _restore_agent_result_admission_relation(admission_row, admission=target_admission)
+        await self._session.flush()
+        return AgentResultProjectionRepairResult(preview=preview, applied=True)
+
+    async def _admission_row(
+        self,
+        result_id: UUID,
+    ) -> AgentRunResultAdmissionRow | None:
+        row: AgentRunResultAdmissionRow | None = await self._session.scalar(
+            select(AgentRunResultAdmissionRow).where(
+                AgentRunResultAdmissionRow.result_id == result_id
+            )
+        )
+        return row
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_result_id: UUID,
+    ) -> tuple[AgentResultReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_result",
+                aggregate_id=agent_run_result_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun result event stream is missing")
+        return replay_agent_result(events), events
+
+
+def _agent_result_relation_row_hash(
+    result: AgentRunResultRow,
+    admission: AgentRunResultAdmissionRow | None,
+) -> str:
+    """Hash event-backed fields, excluding server-generated relation timestamps."""
+
+    return canonical_payload_hash(
+        {
+            "result": {
+                "id": str(result.id),
+                "agent_run_id": str(result.agent_run_id),
+                "task_id": str(result.task_id),
+                "basis_hash": result.basis_hash,
+                "manifest_hash": result.manifest_hash,
+                "event_version": result.event_version,
+                "payload": result.payload,
+            },
+            "admission": (
+                {
+                    "id": str(admission.id),
+                    "agent_run_id": str(admission.agent_run_id),
+                    "result_id": str(admission.result_id),
+                    "disposition": admission.disposition,
+                    "payload": admission.payload,
+                }
+                if admission is not None
+                else None
+            ),
+        }
+    )
+
+
+def _agent_result_relation_hash(
+    *,
+    result: ResultEnvelope,
+    admission: AdmissionRecord | None,
+    event_version: int,
+) -> str:
+    """Hash the expected pair while preserving result and admission as separate facts."""
+
+    return canonical_payload_hash(
+        {
+            "result": {
+                "id": str(result.id),
+                "agent_run_id": str(result.run_id),
+                "task_id": str(result.task_id),
+                "basis_hash": result.basis_hash,
+                "manifest_hash": result.manifest_hash,
+                "event_version": event_version,
+                "payload": result.model_dump(mode="json"),
+            },
+            "admission": (
+                {
+                    "id": str(admission.id),
+                    "agent_run_id": str(admission.run_id),
+                    "result_id": str(admission.result_id),
+                    "disposition": admission.disposition.value,
+                    "payload": admission.model_dump(mode="json"),
+                }
+                if admission is not None
+                else None
+            ),
+        }
+    )
+
+
+def _restore_agent_result_relation(
+    row: AgentRunResultRow,
+    *,
+    result: ResultEnvelope,
+    event_version: int,
+) -> None:
+    """Restore immutable producer result fields without changing its row identity."""
+
+    row.agent_run_id = result.run_id
+    row.task_id = result.task_id
+    row.basis_hash = result.basis_hash
+    row.manifest_hash = result.manifest_hash
+    row.event_version = event_version
+    row.payload = result.model_dump(mode="json")
+
+
+def _restore_agent_result_admission_relation(
+    row: AgentRunResultAdmissionRow,
+    *,
+    admission: AdmissionRecord,
+) -> None:
+    """Restore an already-present verdict; it never promotes a raw result by itself."""
+
+    row.agent_run_id = admission.run_id
+    row.result_id = admission.result_id
+    row.disposition = admission.disposition.value
+    row.payload = admission.model_dump(mode="json")
 
 
 @dataclass(frozen=True)

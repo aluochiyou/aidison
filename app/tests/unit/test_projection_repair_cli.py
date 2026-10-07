@@ -7,6 +7,7 @@ import pytest
 from pytest import CaptureFixture, MonkeyPatch
 
 from aidison.application.event_replay import (
+    AgentResultProjectionRepairPreview,
     AgentRunProjectionRepairPreview,
     ExecutionPlanProjectionRepairPreview,
 )
@@ -152,3 +153,34 @@ def test_agent_run_preview_uses_the_same_explicit_maintenance_boundary(
     output = capsys.readouterr().out
     assert '"aggregate_type": "agent_run"' in output
     assert f'"agent_run_id": "{agent_run_id}"' in output
+
+
+def test_result_preview_keeps_the_admission_relation_explicit(
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    project_id = uuid4()
+    result_id = uuid4()
+    preview = AgentResultProjectionRepairPreview(
+        project_id=project_id,
+        agent_run_result_id=result_id,
+        event_cursor=22,
+        event_count=2,
+        current_relation_hash="current",
+        replayed_relation_hash="replayed",
+        repair_required=True,
+    )
+
+    async def fake_run(args: Namespace) -> projection_repair.ProjectionRepairCommandReport:
+        assert args.agent_run_result_id == result_id
+        return projection_repair.ProjectionRepairCommandReport(preview=preview, applied=False)
+
+    monkeypatch.setattr(projection_repair, "_run", fake_run)
+
+    assert (
+        projection_repair.main(
+            ["--project-id", str(project_id), "--agent-run-result-id", str(result_id)]
+        )
+        == 0
+    )
+    assert '"aggregate_type": "agent_run_result"' in capsys.readouterr().out
