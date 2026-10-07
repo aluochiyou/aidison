@@ -255,6 +255,17 @@ async def check_solution_dependencies(settings: WorkerSettings) -> None:
         await checkpoints.close()
 
 
+async def check_research_dependencies(settings: WorkerSettings) -> None:
+    """Validate all research runtime dependencies without contacting a source provider."""
+
+    await check_solution_dependencies(settings)
+    async with httpx.AsyncClient(timeout=_source_client_timeout(settings)) as source_client:
+        # Collector construction validates static authority only: configured
+        # local paths and token/allowlist pairs. It must not send a search or
+        # source-read request during a dependency check.
+        _research_source_collector(settings=settings, client=source_client)
+
+
 async def run_solution_worker(settings: WorkerSettings, *, once: bool = False) -> None:
     """Consume only the exact SolutionGraph binding during the runtime cutover."""
 
@@ -572,9 +583,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         _parser().error("--run-id requires --runtime research --once")
     if args.check:
         check = (
-            check_solution_dependencies
-            if args.runtime in {"research", "solution", "impact"}
-            else check_dependencies
+            check_research_dependencies
+            if args.runtime == "research"
+            else check_solution_dependencies
         )
         asyncio.run(check(settings))
     elif args.runtime == "research":

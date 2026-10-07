@@ -5,6 +5,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
+import aidison.worker as worker_module
 from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
     LocalFileResearchSourceCollector,
@@ -93,6 +94,32 @@ def test_worker_cli_parses_targeted_research_run_id() -> None:
     )
 
     assert str(parsed.run_id) == "cd07e61a-5d09-4e07-bda5-9a4a2f0a3cf1"
+
+
+@pytest.mark.parametrize(
+    ("runtime", "expected_check"),
+    (("research", "research"), ("solution", "solution"), ("impact", "solution")),
+)
+def test_worker_check_selects_the_runtime_specific_dependency_gate(
+    monkeypatch: pytest.MonkeyPatch,
+    runtime: str,
+    expected_check: str,
+) -> None:
+    calls: list[str] = []
+
+    async def research_check(settings: WorkerSettings) -> None:
+        del settings
+        calls.append("research")
+
+    async def solution_check(settings: WorkerSettings) -> None:
+        del settings
+        calls.append("solution")
+
+    monkeypatch.setattr(worker_module, "check_research_dependencies", research_check)
+    monkeypatch.setattr(worker_module, "check_solution_dependencies", solution_check)
+
+    assert worker_module.main(["--check", "--runtime", runtime]) == 0
+    assert calls == [expected_check]
 
 
 def test_research_source_collector_is_noop_without_explicit_source_authority() -> None:
