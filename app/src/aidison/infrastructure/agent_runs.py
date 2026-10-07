@@ -18,6 +18,7 @@ from aidison.runtime.agent_runs import (
     AgentRun,
     AgentRunClaim,
     AgentRunStatus,
+    execution_checkpoint_thread_id,
     utc_now,
 )
 from aidison.runtime.identity import (
@@ -284,7 +285,14 @@ class AgentRunControl:
         row = await self._locked_active_row(claim)
         if checkpoint.generation != claim.generation:
             raise AgentRunConflictError("checkpoint generation does not match AgentRun claim")
-        if checkpoint.thread_id != row.thread_id:
+        expected_physical_thread_id = execution_checkpoint_thread_id(
+            logical_thread_id=row.thread_id,
+            generation=claim.generation,
+        )
+        # Historical anchors used the logical Run thread directly. They remain
+        # readable, but new graph executions always submit the generation-
+        # scoped physical thread above.
+        if checkpoint.thread_id not in {row.thread_id, expected_physical_thread_id}:
             raise AgentRunConflictError("checkpoint thread does not match the AgentRun")
         binding = RuntimeBinding.model_validate(row.runtime_binding)
         if (

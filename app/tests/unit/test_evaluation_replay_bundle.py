@@ -17,6 +17,7 @@ from aidison.runtime.agent_runs import (
     AgentRun,
     AgentRunKind,
     AgentRunStatus,
+    execution_checkpoint_thread_id,
 )
 from aidison.runtime.contracts import (
     BudgetOperationKind,
@@ -105,7 +106,10 @@ def _event_backed_run() -> tuple[AgentRun, tuple[StoredDomainEvent, ...]]:
     checkpointed = running.model_copy(
         update={
             "admitted_checkpoint": AdmittedCheckpointRef(
-                thread_id=running.thread_id,
+                thread_id=execution_checkpoint_thread_id(
+                    logical_thread_id=running.thread_id,
+                    generation=1,
+                ),
                 checkpoint_id="checkpoint-1",
                 graph_revision=running.runtime_binding.graph_revision,
                 state_schema_version=running.runtime_binding.state_schema_version,

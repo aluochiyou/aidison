@@ -60,7 +60,7 @@ from aidison.runtime.checkpointing import (
 )
 from aidison.runtime.control_requests import AgentRunControlRequest, ControlRequestKind
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
-from aidison.runtime.minimal_graph import thread_config
+from aidison.runtime.minimal_graph import execution_thread_config
 
 pytestmark = pytest.mark.integration
 
@@ -380,7 +380,7 @@ async def test_single_task_research_writes_raw_artifact_then_admits_result_and_p
                 "run_id": str(run.id),
                 "question": "Which option should the project choose?",
             },
-            thread_config(thread_id=run.thread_id),
+            execution_thread_config(thread_id=run.thread_id, generation=claim.generation),
         )
         assert state["raw_artifact_ref"].startswith("artifact+sha256://")
         assert state["admitted_result_ref"].startswith("admitted://agent-run-results/")
@@ -698,7 +698,7 @@ async def test_single_task_graph_keeps_source_gap_partial_without_raw_model_arti
                 "run_id": str(run.id),
                 "question": "Which option should the project choose?",
             },
-            thread_config(thread_id=run.thread_id),
+            execution_thread_config(thread_id=run.thread_id, generation=claim.generation),
         )
 
         assert researcher.call_count == 0

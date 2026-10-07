@@ -19,7 +19,7 @@ from aidison.infrastructure.database import session_scope
 from aidison.runtime.agent_runs import AdmittedCheckpointRef, AgentRun
 from aidison.runtime.minimal_graph import (
     admitted_checkpoint_from_snapshot,
-    thread_config,
+    execution_thread_config,
 )
 
 
@@ -47,7 +47,10 @@ class LangGraphCheckpointBridge:
             raise ValueError("LangGraph input must carry the claimed AgentRun id")
 
         graph = cast(Any, claimed.compiled_graph)
-        config = thread_config(thread_id=claimed.run.thread_id)
+        config = execution_thread_config(
+            thread_id=claimed.run.thread_id,
+            generation=claimed.claim.generation,
+        )
         output = cast(dict[str, Any], await graph.ainvoke(input_state, config))
         snapshot = await graph.aget_state(config)
         if not snapshot.interrupts:

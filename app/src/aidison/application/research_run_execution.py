@@ -77,7 +77,7 @@ from aidison.research.single_task_graph import build_single_task_research_graph
 from aidison.research.source_collection import NoopResearchSourceCollector, ResearchSourceCollector
 from aidison.research.strategy import ResearchCollectionPolicy, ResearchRunContract
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim, AgentRunKind, AgentRunStatus
-from aidison.runtime.minimal_graph import thread_config
+from aidison.runtime.minimal_graph import execution_thread_config
 from aidison.workstreams.memory_routing import MemoryRoute, MemoryRouteDecision
 
 
@@ -342,7 +342,10 @@ class ResearchRunExecutor:
                 )
             )
             callback = self._graph_callback(run=run, graph_name="single_task_research")
-            config: dict[str, Any] = thread_config(thread_id=run.thread_id)
+            config: dict[str, Any] = execution_thread_config(
+                thread_id=run.thread_id,
+                generation=claim.generation,
+            )
             config["callbacks"] = [callback]
             try:
                 state = await graph.ainvoke(
@@ -492,7 +495,10 @@ class ResearchRunExecutor:
                 ),
             )
             callback = self._graph_callback(run=run, graph_name="admitted_ready_set")
-            config: dict[str, Any] = thread_config(thread_id=run.thread_id)
+            config: dict[str, Any] = execution_thread_config(
+                thread_id=run.thread_id,
+                generation=claim.generation,
+            )
             config["callbacks"] = [callback]
             try:
                 state = await graph.ainvoke(

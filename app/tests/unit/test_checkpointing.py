@@ -23,6 +23,8 @@ from aidison.runtime.minimal_graph import (
     admitted_checkpoint_config,
     admitted_checkpoint_from_snapshot,
     build_minimal_checkpointed_graph,
+    execution_checkpoint_thread_id,
+    execution_thread_config,
     thread_config,
 )
 
@@ -40,6 +42,44 @@ def test_checkpoint_settings_use_psycopg_url_and_safe_dedicated_schema() -> None
 
     with pytest.raises(ValidationError, match="schema"):
         CheckpointSettings(schema_name="public; drop schema public")
+
+
+@pytest.mark.asyncio
+async def test_execution_generation_isolates_unadmitted_physical_checkpoints() -> None:
+    """A retry starts cleanly; only an admitted anchor may resume prior graph state."""
+    from langgraph.checkpoint.memory import MemorySaver
+
+    graph = build_minimal_checkpointed_graph(checkpointer=MemorySaver())
+    thread_id = f"generation-isolation-{uuid4()}"
+    first_config = execution_thread_config(thread_id=thread_id, generation=1)
+    first = await graph.ainvoke(
+        {"run_id": "run-1", "prompt": "unadmitted first attempt"}, first_config
+    )
+    assert first["phase"] == "waiting_for_decision"
+    first_snapshot = await graph.aget_state(first_config)
+    assert first_snapshot.interrupts
+
+    retry_config = execution_thread_config(thread_id=thread_id, generation=2)
+    retried = await graph.ainvoke(
+        {"run_id": "run-1", "prompt": "fresh retry attempt"}, retry_config
+    )
+    assert retried["phase"] == "waiting_for_decision"
+    retry_snapshot = await graph.aget_state(retry_config)
+
+    assert retry_snapshot.values["prompt"] == "fresh retry attempt"
+    assert retry_snapshot.config["configurable"]["thread_id"] == execution_checkpoint_thread_id(
+        logical_thread_id=thread_id,
+        generation=2,
+    )
+    assert first_snapshot.config["configurable"]["thread_id"] == execution_checkpoint_thread_id(
+        logical_thread_id=thread_id,
+        generation=1,
+    )
+
+
+def test_execution_generation_must_be_positive() -> None:
+    with pytest.raises(ValueError, match="generation must be positive"):
+        execution_thread_config(thread_id="run", generation=0)
 
 
 @pytest.mark.integration

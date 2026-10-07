@@ -9,7 +9,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, StateSnapshot, interrupt
 from typing_extensions import TypedDict
 
-from aidison.runtime.agent_runs import AdmittedCheckpointRef
+from aidison.runtime.agent_runs import AdmittedCheckpointRef, execution_checkpoint_thread_id
 from aidison.runtime.identity import RuntimeBinding
 
 
@@ -25,6 +25,24 @@ class MinimalCheckpointedState(TypedDict, total=False):
 
 def thread_config(*, thread_id: str) -> dict[str, dict[str, str]]:
     return {"configurable": {"thread_id": thread_id}}
+
+
+def execution_thread_config(*, thread_id: str, generation: int) -> dict[str, dict[str, str]]:
+    """Start one leased graph generation in an isolated physical thread.
+
+    ``thread_id`` remains the durable AgentRun identity. A worker takeover or
+    acknowledged pre-dispatch pause, however, must never continue an
+    unadmitted physical ``latest`` checkpoint left by the earlier lease. The
+    Control-owned admitted anchor still carries its exact physical thread and
+    is the only configuration used for a decision resume.
+    """
+
+    return thread_config(
+        thread_id=execution_checkpoint_thread_id(
+            logical_thread_id=thread_id,
+            generation=generation,
+        )
+    )
 
 
 def admitted_checkpoint_config(ref: AdmittedCheckpointRef) -> dict[str, dict[str, str]]:
@@ -105,6 +123,7 @@ __all__ = [
     "admitted_checkpoint_config",
     "admitted_checkpoint_from_snapshot",
     "build_minimal_checkpointed_graph",
+    "execution_thread_config",
     "thread_config",
     "Command",
 ]

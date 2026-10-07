@@ -3,7 +3,12 @@ from __future__ import annotations
 from hashlib import sha256
 from uuid import uuid4
 
-from aidison.runtime.agent_runs import AdmittedCheckpointRef, AgentRun, AgentRunKind
+from aidison.runtime.agent_runs import (
+    AdmittedCheckpointRef,
+    AgentRun,
+    AgentRunKind,
+    execution_checkpoint_thread_id,
+)
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
 from aidison.runtime.recovery import RecoveryAction, RecoveryRequest, plan_recovery
 
@@ -30,7 +35,10 @@ def _run() -> AgentRun:
         runtime_binding=_binding(),
         thread_id="run-source",
         admitted_checkpoint=AdmittedCheckpointRef(
-            thread_id="run-source",
+            thread_id=execution_checkpoint_thread_id(
+                logical_thread_id="run-source",
+                generation=1,
+            ),
             checkpoint_id="checkpoint-1",
             graph_revision="research-v1",
             state_schema_version="research-state-v1",

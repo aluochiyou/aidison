@@ -16,7 +16,11 @@ from pydantic import Field, model_validator
 from aidison.domain.events import StoredDomainEvent, canonical_payload_hash
 from aidison.domain.models import FrozenModel
 from aidison.runtime.agent_run_events import AgentRunEventType, replay_agent_run
-from aidison.runtime.agent_runs import AdmittedCheckpointRef, AgentRun
+from aidison.runtime.agent_runs import (
+    AdmittedCheckpointRef,
+    AgentRun,
+    execution_checkpoint_thread_id,
+)
 from aidison.runtime.contracts import (
     FailureClass,
     InvocationRecording,
@@ -279,7 +283,13 @@ def _incompleteness_reasons(
     if checkpoint is None:
         reasons.append("missing_admitted_checkpoint")
         return reasons
-    if checkpoint.thread_id != run.thread_id:
+    if checkpoint.thread_id not in {
+        run.thread_id,
+        execution_checkpoint_thread_id(
+            logical_thread_id=run.thread_id,
+            generation=checkpoint.generation,
+        ),
+    }:
         reasons.append("checkpoint_thread_mismatch")
     if (
         checkpoint.graph_revision != run.runtime_binding.graph_revision

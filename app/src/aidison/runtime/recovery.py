@@ -9,7 +9,11 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from aidison.runtime.agent_runs import AdmittedCheckpointRef, AgentRun
+from aidison.runtime.agent_runs import (
+    AdmittedCheckpointRef,
+    AgentRun,
+    execution_checkpoint_thread_id,
+)
 from aidison.runtime.identity import RuntimeBinding
 
 
@@ -74,7 +78,14 @@ def plan_recovery(value: RecoveryRequest) -> RecoveryDecision:
     if (
         checkpoint is not None
         and binding == value.requested_binding
-        and checkpoint.thread_id == value.run.thread_id
+        and checkpoint.thread_id
+        in {
+            value.run.thread_id,
+            execution_checkpoint_thread_id(
+                logical_thread_id=value.run.thread_id,
+                generation=checkpoint.generation,
+            ),
+        }
         and checkpoint.graph_revision == binding.graph_revision
         and checkpoint.state_schema_version == binding.state_schema_version
     ):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from enum import StrEnum
+from hashlib import sha256
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -13,6 +14,23 @@ from aidison.runtime.identity import RuntimeBinding
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def execution_checkpoint_thread_id(*, logical_thread_id: str, generation: int) -> str:
+    """Derive one bounded physical LangGraph thread for a leased generation.
+
+    The logical ``AgentRun.thread_id`` identifies a durable business Run. A
+    claimed generation is an independent physical graph execution until its
+    checkpoint is admitted by Control. Keeping the latter separate prevents a
+    retry from silently loading an earlier lease's unadmitted latest state.
+    """
+
+    if not logical_thread_id:
+        raise ValueError("logical checkpoint thread ID must not be blank")
+    if generation < 1:
+        raise ValueError("checkpoint execution generation must be positive")
+    identity = sha256(logical_thread_id.encode("utf-8")).hexdigest()
+    return f"aidison-agent-run-g{generation}-{identity}"
 
 
 class AgentRunKind(StrEnum):

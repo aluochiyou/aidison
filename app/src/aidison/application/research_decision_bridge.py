@@ -12,7 +12,7 @@ from aidison.infrastructure.database import session_scope
 from aidison.research.decision_contracts import AgentRunDecision
 from aidison.research.langgraph_contracts import ProposalManifest
 from aidison.runtime.agent_runs import AdmittedCheckpointRef, AgentRun, AgentRunClaim
-from aidison.runtime.minimal_graph import admitted_checkpoint_from_snapshot, thread_config
+from aidison.runtime.minimal_graph import admitted_checkpoint_from_snapshot, execution_thread_config
 
 
 class ResearchDecisionBridge:
@@ -28,7 +28,9 @@ class ResearchDecisionBridge:
         proposal_override: ProposalManifest | None = None,
     ) -> tuple[AgentRunDecision, AdmittedCheckpointRef]:
         compiled = cast(Any, graph)
-        snapshot = await compiled.aget_state(thread_config(thread_id=run.thread_id))
+        snapshot = await compiled.aget_state(
+            execution_thread_config(thread_id=run.thread_id, generation=claim.generation)
+        )
         if not snapshot.interrupts:
             raise RuntimeError("ResearchGraph did not stop for user decision")
         values = cast(dict[str, Any], snapshot.values)

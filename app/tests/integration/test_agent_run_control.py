@@ -40,6 +40,7 @@ from aidison.runtime.agent_runs import (
     AgentRun,
     AgentRunKind,
     AgentRunStatus,
+    execution_checkpoint_thread_id,
     utc_now,
 )
 from aidison.runtime.checkpointing import (
@@ -144,7 +145,10 @@ async def test_agent_run_claim_fences_stale_worker_and_persists_admitted_checkpo
             assert reclaimed is not None
             assert reclaimed.started_at == first_started_at
             checkpoint = AdmittedCheckpointRef(
-                thread_id=created.thread_id,
+                thread_id=execution_checkpoint_thread_id(
+                    logical_thread_id=created.thread_id,
+                    generation=second_claim.generation,
+                ),
                 checkpoint_id="checkpoint-2",
                 graph_revision="r0",
                 state_schema_version="state-v1",

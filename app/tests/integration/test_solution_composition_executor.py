@@ -25,7 +25,7 @@ from aidison.runtime.checkpointing import (
     normalize_psycopg_url,
 )
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
-from aidison.runtime.minimal_graph import thread_config
+from aidison.runtime.minimal_graph import execution_thread_config
 from aidison.solution.composition_executor import (
     SolutionCompositionExecutor,
     SolutionCompositionMaterial,
@@ -199,7 +199,7 @@ async def test_solution_executor_persists_raw_then_admits_normalized_result(
         )
         state = await graph.ainvoke(
             {"run_id": str(run.id)},
-            thread_config(thread_id=run.thread_id),
+            execution_thread_config(thread_id=run.thread_id, generation=claim.generation),
         )
 
         assert composer.call_count == 1

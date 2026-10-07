@@ -25,7 +25,7 @@ from aidison.observability import (
 )
 from aidison.research.decision_contracts import AgentRunDecision
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim, AgentRunKind, AgentRunStatus
-from aidison.runtime.minimal_graph import thread_config
+from aidison.runtime.minimal_graph import execution_thread_config
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +79,10 @@ class ImpactProposalGraphRunExecutor:
         )
         try:
             callback = self._graph_callback(run=run)
-            config: dict[str, Any] = thread_config(thread_id=run.thread_id)
+            config: dict[str, Any] = execution_thread_config(
+                thread_id=run.thread_id,
+                generation=claim.generation,
+            )
             config["callbacks"] = [callback]
             try:
                 state = await graph.ainvoke({"run_id": str(run.id)}, config)
