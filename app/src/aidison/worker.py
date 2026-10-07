@@ -237,6 +237,7 @@ async def run_solution_worker(settings: WorkerSettings, *, once: bool = False) -
     database = DatabaseSettings()
     engine = create_engine(database)
     checkpoints = CheckpointRuntime(_checkpoint_settings(database))
+    runtime_tracer = build_runtime_tracer(RuntimeTracingSettings())
     try:
         executor = SolutionRunExecutor(
             session_factory=create_session_factory(engine),
@@ -244,6 +245,7 @@ async def run_solution_worker(settings: WorkerSettings, *, once: bool = False) -
             checkpointer=await checkpoints.start(),
             composer=JsonModeSolutionComposer(build_chat_model()),
             verifier=JsonModeInterfaceVerifier(build_chat_model()),
+            runtime_tracer=runtime_tracer,
         )
         worker = SolutionLangGraphWorker(
             orchestration_worker=LangGraphOrchestrationWorker(
@@ -273,6 +275,7 @@ async def run_solution_worker(settings: WorkerSettings, *, once: bool = False) -
             if outcome is None:
                 await asyncio.sleep(settings.poll_seconds)
     finally:
+        runtime_tracer.flush()
         await checkpoints.close()
         await engine.dispose()
 
@@ -389,12 +392,14 @@ async def run_impact_worker(settings: WorkerSettings, *, once: bool = False) -> 
     database = DatabaseSettings()
     engine = create_engine(database)
     checkpoints = CheckpointRuntime(_checkpoint_settings(database))
+    runtime_tracer = build_runtime_tracer(RuntimeTracingSettings())
     try:
         executor = ImpactProposalGraphRunExecutor(
             session_factory=create_session_factory(engine),
             artifact_root=settings.artifact_root,
             checkpointer=await checkpoints.start(),
             analyst=JsonModeImpactAnalyst(build_chat_model()),
+            runtime_tracer=runtime_tracer,
         )
         worker = ImpactProposalLangGraphWorker(
             orchestration_worker=LangGraphOrchestrationWorker(
@@ -424,6 +429,7 @@ async def run_impact_worker(settings: WorkerSettings, *, once: bool = False) -> 
             if outcome is None:
                 await asyncio.sleep(settings.poll_seconds)
     finally:
+        runtime_tracer.flush()
         await checkpoints.close()
         await engine.dispose()
 

@@ -17,6 +17,12 @@ from aidison.impact.proposal_execution import ImpactProposalExecutor
 from aidison.impact.proposal_graph import build_impact_proposal_graph
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.database import session_scope
+from aidison.observability import (
+    DisabledRuntimeTracer,
+    LangGraphRuntimeCallback,
+    RuntimeTracer,
+    TelemetryCorrelation,
+)
 from aidison.research.decision_contracts import AgentRunDecision
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim, AgentRunKind, AgentRunStatus
 from aidison.runtime.minimal_graph import thread_config
@@ -40,11 +46,21 @@ class ImpactProposalGraphRunExecutor:
         artifact_root: Path,
         checkpointer: BaseCheckpointSaver[Any],
         analyst: ImpactAnalyst,
+        runtime_tracer: RuntimeTracer | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._artifact_root = artifact_root
         self._checkpointer = checkpointer
         self._analyst = analyst
+        self._runtime_tracer = runtime_tracer or DisabledRuntimeTracer()
+
+    def _graph_callback(self, *, run: AgentRun) -> LangGraphRuntimeCallback:
+        return LangGraphRuntimeCallback(
+            tracer=self._runtime_tracer,
+            correlation=TelemetryCorrelation(project_id=run.project_id, run_id=run.id),
+            graph_name="impact_proposal",
+            graph_revision=run.runtime_binding.graph_revision,
+        )
 
     async def execute_claim(
         self, *, run: AgentRun, claim: AgentRunClaim
@@ -62,10 +78,13 @@ class ImpactProposalGraphRunExecutor:
             claim=claim,
         )
         try:
-            state = await graph.ainvoke(
-                {"run_id": str(run.id)},
-                thread_config(thread_id=run.thread_id),
-            )
+            callback = self._graph_callback(run=run)
+            config: dict[str, Any] = thread_config(thread_id=run.thread_id)
+            config["callbacks"] = [callback]
+            try:
+                state = await graph.ainvoke({"run_id": str(run.id)}, config)
+            finally:
+                callback.close()
         except AgentRunCancelled:
             return ImpactProposalRunExecution(readiness="cancelled", agent_decision=None)
         except Exception:

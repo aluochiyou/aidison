@@ -24,6 +24,12 @@ from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.database import session_scope
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.observability import (
+    DisabledRuntimeTracer,
+    LangGraphRuntimeCallback,
+    RuntimeTracer,
+    TelemetryCorrelation,
+)
 from aidison.research.decision_contracts import AgentRunDecision
 from aidison.research.langgraph_contracts import ExecutionGrant, TaskEnvelope
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim, AgentRunKind, AgentRunStatus
@@ -70,12 +76,22 @@ class SolutionRunExecutor:
         checkpointer: BaseCheckpointSaver[Any],
         composer: SolutionComposer,
         verifier: InterfaceVerifier | None = None,
+        runtime_tracer: RuntimeTracer | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._artifact_root = artifact_root
         self._checkpointer = checkpointer
         self._composer = composer
         self._verifier = verifier
+        self._runtime_tracer = runtime_tracer or DisabledRuntimeTracer()
+
+    def _graph_callback(self, *, run: AgentRun) -> LangGraphRuntimeCallback:
+        return LangGraphRuntimeCallback(
+            tracer=self._runtime_tracer,
+            correlation=TelemetryCorrelation(project_id=run.project_id, run_id=run.id),
+            graph_name="single_task_solution",
+            graph_revision=run.runtime_binding.graph_revision,
+        )
 
     async def execute_claim(
         self,
@@ -115,10 +131,13 @@ class SolutionRunExecutor:
             ),
         )
         try:
-            state = await graph.ainvoke(
-                {"run_id": str(run.id)},
-                thread_config(thread_id=run.thread_id),
-            )
+            callback = self._graph_callback(run=run)
+            config: dict[str, Any] = thread_config(thread_id=run.thread_id)
+            config["callbacks"] = [callback]
+            try:
+                state = await graph.ainvoke({"run_id": str(run.id)}, config)
+            finally:
+                callback.close()
         except SolutionRunCancelled:
             return SolutionRunExecution(readiness="cancelled", agent_decision=None)
         except Exception:
