@@ -441,3 +441,61 @@ async def test_durable_admission_is_the_only_dependency_unlock_signal() -> None:
             assert unlocked.task_ids == (child.id,)
     finally:
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_task_cannot_admit_two_distinct_results_after_retry() -> None:
+    """Keep retry evidence durable without letting it fork task completion."""
+
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_results CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Single accepted task result fixture",
+                goal="A duplicate dispatch must not fork a task's accepted output",
+                idempotency_key=f"single-accepted-task-result-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            task = _task(run=run, key="retry-target")
+            first = _result(run=run, task=task, value="first-attempt")
+            retried = _result(run=run, task=task, value="second-attempt")
+            store = AgentResultStore(session)
+            await store.record_result(first)
+            await store.record_result(retried)
+            await store.admit(
+                AdmissionRecord(
+                    run_id=run.id,
+                    result_id=first.id,
+                    result_manifest_hash=first.manifest_hash,
+                    disposition=AdmissionDisposition.ACCEPTED,
+                    reason_codes=("runtime_fenced", "schema_valid"),
+                    admitted_ref=f"admitted://result/{first.id}",
+                )
+            )
+
+            with pytest.raises(AgentResultConflictError, match="already has an accepted"):
+                await store.admit(
+                    AdmissionRecord(
+                        run_id=run.id,
+                        result_id=retried.id,
+                        result_manifest_hash=retried.manifest_hash,
+                        disposition=AdmissionDisposition.ACCEPTED,
+                        reason_codes=("runtime_fenced", "schema_valid"),
+                        admitted_ref=f"admitted://result/{retried.id}",
+                    )
+                )
+
+            assert await store.admitted_task_ids(run_id=run.id) == (task.id,)
+            assert tuple(item.id for item in await store.admitted_results(run_id=run.id)) == (
+                first.id,
+            )
+    finally:
+        await engine.dispose()

@@ -115,6 +115,36 @@ class AgentResultStore:
             if existing.payload != admission.model_dump(mode="json"):
                 raise AgentResultConflictError("result already has another admission verdict")
             return AdmissionRecord.model_validate(existing.payload)
+
+        # A task may produce several immutable Results while a provider call is
+        # retried or an earlier one is rejected.  It may, however, contribute
+        # only one accepted Result to a Run's dependency projection.  Lock the
+        # parent Run before querying so two concurrent admission transactions
+        # cannot both observe an empty accepted set and promote different
+        # Results for the same stable task identity.
+        run = await self._session.scalar(
+            select(AgentRunRow)
+            .where(AgentRunRow.id == admission.run_id)
+            .with_for_update()
+        )
+        if run is None:
+            raise AgentResultConflictError("AdmissionRecord references a missing AgentRun")
+        if admission.disposition is AdmissionDisposition.ACCEPTED:
+            accepted_for_task = await self._session.scalar(
+                select(AgentRunResultAdmissionRow.id)
+                .join(
+                    AgentRunResultRow,
+                    AgentRunResultRow.id == AgentRunResultAdmissionRow.result_id,
+                )
+                .where(
+                    AgentRunResultRow.agent_run_id == admission.run_id,
+                    AgentRunResultRow.task_id == result.task_id,
+                    AgentRunResultAdmissionRow.agent_run_id == admission.run_id,
+                    AgentRunResultAdmissionRow.disposition == AdmissionDisposition.ACCEPTED.value,
+                )
+            )
+            if accepted_for_task is not None:
+                raise AgentResultConflictError("task already has an accepted result")
         self._session.add(
             AgentRunResultAdmissionRow(
                 id=admission.id,
@@ -132,11 +162,6 @@ class AgentResultStore:
             return admission
         result.event_version = 2
         await self._session.flush()
-        run = await self._session.scalar(
-            select(AgentRunRow).where(AgentRunRow.id == admission.run_id)
-        )
-        if run is None:
-            raise AgentResultConflictError("AdmissionRecord references a missing AgentRun")
         admission_row = await self._session.scalar(
             select(AgentRunResultAdmissionRow).where(
                 AgentRunResultAdmissionRow.id == admission.id
