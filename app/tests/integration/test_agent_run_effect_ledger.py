@@ -8,7 +8,11 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text, update
 
-from aidison.application.event_replay import AgentRunEffectShadowProjectionService
+from aidison.application.event_replay import (
+    AgentRunEffectProjectionRepairService,
+    AgentRunEffectShadowProjectionService,
+    ProjectionRepairConflictError,
+)
 from aidison.application.service import ProjectApplication
 from aidison.infrastructure.agent_run_effects import (
     AgentRunEffectConflictError,
@@ -20,7 +24,7 @@ from aidison.infrastructure.database import (
     create_engine,
     create_session_factory,
 )
-from aidison.infrastructure.orm import AgentRunRow
+from aidison.infrastructure.orm import AgentRunEffectRow, AgentRunRow
 from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.agent_run_effect_events import replay_agent_run_effect
@@ -196,6 +200,135 @@ async def test_effect_verified_snapshot_tail_replay_preserves_ambiguous_state() 
             assert verification.snapshot_tail_hash == verification.full_replay_hash
             assert verification.event_count == 3
             assert verification.tail_event_count == 2
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_terminal_effect_projection_repair_never_dispatches_a_provider() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_effects CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+
+        async with factory() as session:
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Terminal effect repair fixture",
+                goal="Restore a settled external-effect ledger row without a redelivery",
+                idempotency_key=f"effect-repair-project-{uuid4()}",
+            )
+            control = AgentRunControl(session)
+            run = await control.create(_run(project_id=project.id))
+            claim = await control.claim_next(worker_id="effect-worker", lease_seconds=60)
+            assert claim is not None
+            ledger = AgentRunEffectLedger(session)
+            prepared = await ledger.prepare(intent=_intent(run=run), claim=claim)
+            await ledger.mark_dispatched(effect_id=prepared.id, claim=claim)
+            succeeded = await ledger.mark_succeeded(
+                effect_id=prepared.id,
+                provider_effect_id="provider-effect-1",
+                response_artifact_ref="artifact://effect-response/1",
+            )
+            await session.commit()
+
+        async with factory() as session:
+            row = await session.get(AgentRunEffectRow, succeeded.id)
+            assert row is not None
+            row.state = AgentRunEffectState.FAILED.value
+            row.event_version = 99
+            row.response_artifact_ref = None
+            await session.commit()
+
+        async with factory() as session:
+            repair = AgentRunEffectProjectionRepairService(session)
+            preview = await repair.preview(
+                project_id=project.id,
+                agent_run_effect_id=succeeded.id,
+            )
+            assert preview.repair_required
+            assert preview.current_relation_hash is not None
+            dry_run = await repair.apply(
+                project_id=project.id,
+                agent_run_effect_id=succeeded.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+            )
+            assert dry_run.applied is False
+            applied = await repair.apply(
+                project_id=project.id,
+                agent_run_effect_id=succeeded.id,
+                expected_current_relation_hash=preview.current_relation_hash,
+                dry_run=False,
+            )
+            assert applied.applied is True
+            await session.commit()
+
+        async with factory() as session:
+            ledger = AgentRunEffectLedger(session)
+            events = await PostgresDomainStore(session).list_aggregate_events(
+                project.id,
+                aggregate_type="agent_run_effect",
+                aggregate_id=succeeded.id,
+            )
+            verification = await AgentRunEffectShadowProjectionService(
+                PostgresDomainStore(session),
+                EventReplaySnapshotRepository(session),
+                ledger,
+            ).verify(project_id=project.id, effect_id=succeeded.id)
+
+            assert await ledger.get(succeeded.id) == succeeded
+            assert len(events) == 3
+            assert verification.snapshot_matches_full_replay
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_nonterminal_effect_projection_repair_requires_reconciliation_flow() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_effects CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Nonterminal effect repair refusal",
+                goal="Keep prepared external effects in the normal reconciliation flow",
+                idempotency_key=f"effect-repair-refusal-project-{uuid4()}",
+            )
+            control = AgentRunControl(session)
+            run = await control.create(_run(project_id=project.id))
+            claim = await control.claim_next(worker_id="effect-worker", lease_seconds=60)
+            assert claim is not None
+            prepared = await AgentRunEffectLedger(session).prepare(
+                intent=_intent(run=run),
+                claim=claim,
+            )
+            await session.commit()
+
+        async with factory() as session:
+            repair = AgentRunEffectProjectionRepairService(session)
+            preview = await repair.preview(
+                project_id=project.id,
+                agent_run_effect_id=prepared.id,
+            )
+            assert preview.current_relation_hash is not None
+            with pytest.raises(ProjectionRepairConflictError, match="nonterminal"):
+                await repair.apply(
+                    project_id=project.id,
+                    agent_run_effect_id=prepared.id,
+                    expected_current_relation_hash=preview.current_relation_hash,
+                    dry_run=False,
+                )
     finally:
         await engine.dispose()
 

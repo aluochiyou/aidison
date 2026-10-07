@@ -31,6 +31,7 @@ from aidison.infrastructure.agent_run_effects import AgentRunEffectLedger
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.orm import (
     AgentRunDecisionRow,
+    AgentRunEffectRow,
     AgentRunResultAdmissionRow,
     AgentRunResultRow,
     AgentRunRow,
@@ -61,6 +62,7 @@ from aidison.runtime.agent_run_effect_events import (
     replay_agent_run_effect,
     replay_agent_run_effect_from_snapshot,
 )
+from aidison.runtime.agent_run_effects import AgentRunEffect, AgentRunEffectState
 from aidison.runtime.agent_run_events import (
     AgentRunReplaySnapshot,
     AgentRunReplayState,
@@ -160,6 +162,27 @@ class AgentRunDecisionProjectionRepairResult:
     """The reviewed repair result for one already-present proposal decision."""
 
     preview: AgentRunDecisionProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentRunEffectProjectionRepairPreview:
+    """Read-only comparison for one external-effect ledger projection."""
+
+    project_id: UUID
+    agent_run_effect_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentRunEffectProjectionRepairResult:
+    """The reviewed repair result for one terminal effect ledger row."""
+
+    preview: AgentRunEffectProjectionRepairPreview
     applied: bool
 
 
@@ -1089,6 +1112,232 @@ def _restore_agent_run_decision_relation(
     row.event_version = event_version
     row.created_at = decision.created_at
     row.resolved_at = decision.resolved_at
+
+
+class AgentRunEffectProjectionRepairService:
+    """Restore only terminal effect-ledger projections from immutable events.
+
+    ``prepared``, ``dispatched`` and ``ambiguous`` effects can still affect
+    external reconciliation or retry decisions. Their relation rows remain
+    read-only to this maintenance tool. Only an event stream whose latest
+    state is already terminal (``succeeded`` or ``failed``) is eligible.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_effect_id: UUID,
+    ) -> AgentRunEffectProjectionRepairPreview:
+        """Compare one ledger row without mutating it or contacting a provider."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+        )
+        row = await self._session.get(AgentRunEffectRow, agent_run_effect_id)
+        current_hash = _agent_run_effect_relation_row_hash(row) if row is not None else None
+        target_hash = _agent_run_effect_relation_hash(
+            effect=state.agent_run_effect,
+            event_version=state.aggregate_version,
+        )
+        return AgentRunEffectProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_effect_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentRunEffectProjectionRepairResult:
+        """Apply only a reviewed, terminal state restoration under lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run-effect:{agent_run_effect_id}"},
+        )
+        row = await self._session.scalar(
+            select(AgentRunEffectRow)
+            .where(AgentRunEffectRow.id == agent_run_effect_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun effect relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _agent_run_effect_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun effect relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+        )
+        effect = state.agent_run_effect
+        if effect.state not in {AgentRunEffectState.SUCCEEDED, AgentRunEffectState.FAILED}:
+            raise ProjectionRepairConflictError(
+                "nonterminal AgentRun effects require the normal reconciliation flow"
+            )
+        target_hash = _agent_run_effect_relation_hash(
+            effect=effect,
+            event_version=state.aggregate_version,
+        )
+        preview = AgentRunEffectProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentRunEffectProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_agent_run_effect_relation(
+            row,
+            effect=effect,
+            event_version=state.aggregate_version,
+        )
+        await self._session.flush()
+        return AgentRunEffectProjectionRepairResult(preview=preview, applied=True)
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_effect_id: UUID,
+    ) -> tuple[AgentRunEffectReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_effect",
+                aggregate_id=agent_run_effect_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun effect event stream is missing")
+        return replay_agent_run_effect(events), events
+
+
+def _agent_run_effect_relation_row_hash(row: AgentRunEffectRow) -> str:
+    """Hash every physical ledger field controlled by immutable effect events."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "agent_run_id": str(row.agent_run_id),
+            "task_id": str(row.task_id),
+            "basis_hash": row.basis_hash,
+            "approval_ref": row.approval_ref,
+            "effect_kind": row.effect_kind,
+            "provider": row.provider,
+            "external_idempotency_key": row.external_idempotency_key,
+            "idempotency_key": row.idempotency_key,
+            "request_hash": row.request_hash,
+            "request_artifact_ref": row.request_artifact_ref,
+            "claim_generation": row.claim_generation,
+            "lease_token": str(row.lease_token),
+            "state": row.state,
+            "event_version": row.event_version,
+            "provider_effect_id": row.provider_effect_id,
+            "response_artifact_ref": row.response_artifact_ref,
+            "failure_ref": row.failure_ref,
+            "normalized_error": row.normalized_error,
+            "reconciliation_artifact_ref": row.reconciliation_artifact_ref,
+            "created_at": _relation_timestamp(row.created_at),
+            "dispatched_at": _relation_timestamp(row.dispatched_at),
+            "resolved_at": _relation_timestamp(row.resolved_at),
+            "reconciled_at": _relation_timestamp(row.reconciled_at),
+        }
+    )
+
+
+def _agent_run_effect_relation_hash(
+    *,
+    effect: AgentRunEffect,
+    event_version: int,
+) -> str:
+    """Hash the exact terminal ledger shape rebuilt from the event stream."""
+
+    intent = effect.intent
+    return canonical_payload_hash(
+        {
+            "id": str(effect.id),
+            "agent_run_id": str(intent.run_id),
+            "task_id": str(intent.task_id),
+            "basis_hash": intent.basis_hash,
+            "approval_ref": intent.approval_ref,
+            "effect_kind": intent.effect_kind,
+            "provider": intent.provider,
+            "external_idempotency_key": intent.external_idempotency_key,
+            "idempotency_key": intent.idempotency_key,
+            "request_hash": intent.request_hash,
+            "request_artifact_ref": intent.request_artifact_ref,
+            "claim_generation": effect.claim_generation,
+            "lease_token": str(effect.lease_token),
+            "state": effect.state.value,
+            "event_version": event_version,
+            "provider_effect_id": effect.provider_effect_id,
+            "response_artifact_ref": effect.response_artifact_ref,
+            "failure_ref": effect.failure_ref,
+            "normalized_error": effect.normalized_error,
+            "reconciliation_artifact_ref": effect.reconciliation_artifact_ref,
+            "created_at": _relation_timestamp(effect.created_at),
+            "dispatched_at": _relation_timestamp(effect.dispatched_at),
+            "resolved_at": _relation_timestamp(effect.resolved_at),
+            "reconciled_at": _relation_timestamp(effect.reconciled_at),
+        }
+    )
+
+
+def _restore_agent_run_effect_relation(
+    row: AgentRunEffectRow,
+    *,
+    effect: AgentRunEffect,
+    event_version: int,
+) -> None:
+    """Restore terminal ledger data only; it never calls or retries a provider."""
+
+    intent = effect.intent
+    row.agent_run_id = intent.run_id
+    row.task_id = intent.task_id
+    row.basis_hash = intent.basis_hash
+    row.approval_ref = intent.approval_ref
+    row.effect_kind = intent.effect_kind
+    row.provider = intent.provider
+    row.external_idempotency_key = intent.external_idempotency_key
+    row.idempotency_key = intent.idempotency_key
+    row.request_hash = intent.request_hash
+    row.request_artifact_ref = intent.request_artifact_ref
+    row.claim_generation = effect.claim_generation
+    row.lease_token = effect.lease_token
+    row.state = effect.state.value
+    row.event_version = event_version
+    row.provider_effect_id = effect.provider_effect_id
+    row.response_artifact_ref = effect.response_artifact_ref
+    row.failure_ref = effect.failure_ref
+    row.normalized_error = effect.normalized_error
+    row.reconciliation_artifact_ref = effect.reconciliation_artifact_ref
+    row.created_at = effect.created_at
+    row.dispatched_at = effect.dispatched_at
+    row.resolved_at = effect.resolved_at
+    row.reconciled_at = effect.reconciled_at
 
 
 @dataclass(frozen=True)
