@@ -48,6 +48,8 @@ from aidison.research.researcher import (
     JsonModeResearchProviderAdapter,
 )
 from aidison.research.source_collection import (
+    CompositeResearchSourceCollector,
+    GitHubRepositorySourceCollector,
     NoopResearchSourceCollector,
     ResearchSourceCollector,
     TavilySearchResearchSourceCollector,
@@ -118,6 +120,20 @@ class WorkerSettings(AidisonSettings):
         default=None,
         validation_alias="TAVILY_MAX_QUERIES",
         ge=1,
+    )
+    github_api_token: SecretStr | None = Field(
+        default=None,
+        validation_alias="AIDISON_GITHUB_API_TOKEN",
+    )
+    github_source_targets: str = Field(
+        default="",
+        validation_alias="AIDISON_GITHUB_SOURCE_TARGETS",
+    )
+    github_timeout_seconds: float = Field(
+        default=15.0,
+        validation_alias="GITHUB_TIMEOUT_SECONDS",
+        gt=0,
+        le=60,
     )
     model_max_concurrency: int = Field(
         default=2,
@@ -294,7 +310,7 @@ async def run_research_worker(
     checkpoints = CheckpointRuntime(_checkpoint_settings(database))
     runtime_tracer = build_runtime_tracer(RuntimeTracingSettings())
     try:
-        async with httpx.AsyncClient(timeout=settings.tavily_timeout_seconds) as source_client:
+        async with httpx.AsyncClient(timeout=_source_client_timeout(settings)) as source_client:
             source_collector = _research_source_collector(
                 settings=settings,
                 client=source_client,
@@ -367,16 +383,61 @@ def _research_source_collector(
     settings: WorkerSettings,
     client: httpx.AsyncClient,
 ) -> ResearchSourceCollector:
-    """Select the only production source collector from explicit deployment config."""
+    """Build only explicitly configured trusted source readers.
 
-    if settings.tavily_api_key is None:
+    A GitHub source target is an operator-controlled read allowlist, never a
+    model-generated URL. Supplying only a token or only targets is rejected at
+    startup so deployments cannot mistake a partial configuration for authority.
+    """
+
+    collectors: list[ResearchSourceCollector] = []
+    github_targets = _github_source_targets(settings.github_source_targets)
+    if settings.github_api_token is None and github_targets:
+        raise ValueError("AIDISON_GITHUB_SOURCE_TARGETS requires AIDISON_GITHUB_API_TOKEN")
+    if settings.github_api_token is not None and not github_targets:
+        raise ValueError("AIDISON_GITHUB_API_TOKEN requires AIDISON_GITHUB_SOURCE_TARGETS")
+    if settings.github_api_token is not None:
+        collectors.append(
+            GitHubRepositorySourceCollector(
+                api_token=settings.github_api_token.get_secret_value(),
+                source_targets=github_targets,
+                client=client,
+            )
+        )
+    if settings.tavily_api_key is not None:
+        collectors.append(
+            TavilySearchResearchSourceCollector(
+                api_key=settings.tavily_api_key.get_secret_value(),
+                client=client,
+                max_results=settings.tavily_max_results,
+                max_queries=settings.tavily_max_queries,
+            )
+        )
+    if not collectors:
         return NoopResearchSourceCollector()
-    return TavilySearchResearchSourceCollector(
-        api_key=settings.tavily_api_key.get_secret_value(),
-        client=client,
-        max_results=settings.tavily_max_results,
-        max_queries=settings.tavily_max_queries,
+    if len(collectors) == 1:
+        return collectors[0]
+    return CompositeResearchSourceCollector(collectors)
+
+
+def _github_source_targets(value: str) -> tuple[str, ...]:
+    """Parse one compact config value without accepting paths from a task prompt."""
+
+    targets = tuple(
+        target.strip()
+        for item in value.splitlines()
+        for target in item.split(",")
+        if target.strip()
     )
+    if len(set(targets)) != len(targets):
+        raise ValueError("AIDISON_GITHUB_SOURCE_TARGETS must not repeat a target")
+    return targets
+
+
+def _source_client_timeout(settings: WorkerSettings) -> float:
+    """One reusable client with the least restrictive configured source timeout."""
+
+    return max(settings.tavily_timeout_seconds, settings.github_timeout_seconds)
 
 
 async def run_impact_worker(settings: WorkerSettings, *, once: bool = False) -> None:

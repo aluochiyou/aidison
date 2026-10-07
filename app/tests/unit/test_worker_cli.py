@@ -1,10 +1,21 @@
 import asyncio
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
-from aidison.worker import WorkerSettings, _parser, _run_worker_pool
+from aidison.research.source_collection import (
+    CompositeResearchSourceCollector,
+    NoopResearchSourceCollector,
+)
+from aidison.worker import (
+    WorkerSettings,
+    _github_source_targets,
+    _parser,
+    _research_source_collector,
+    _run_worker_pool,
+)
 
 
 def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,3 +91,65 @@ def test_worker_cli_parses_targeted_research_run_id() -> None:
     )
 
     assert str(parsed.run_id) == "cd07e61a-5d09-4e07-bda5-9a4a2f0a3cf1"
+
+
+def test_research_source_collector_is_noop_without_explicit_source_authority() -> None:
+    async def exercise() -> None:
+        async with httpx.AsyncClient() as client:
+            collector = _research_source_collector(
+                settings=WorkerSettings(_env_file=None),
+                client=client,
+            )
+            assert isinstance(collector, NoopResearchSourceCollector)
+
+    asyncio.run(exercise())
+
+
+def test_research_source_collector_requires_complete_github_authority_config() -> None:
+    async def exercise() -> None:
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(ValueError, match="requires AIDISON_GITHUB_API_TOKEN"):
+                _research_source_collector(
+                    settings=WorkerSettings(
+                        _env_file=None,
+                        github_source_targets="aidison-lab/flight-docs@main:spec.md",
+                    ),
+                    client=client,
+                )
+            with pytest.raises(ValueError, match="requires AIDISON_GITHUB_SOURCE_TARGETS"):
+                _research_source_collector(
+                    settings=WorkerSettings(
+                        _env_file=None,
+                        github_api_token="github-test-token",
+                    ),
+                    client=client,
+                )
+
+    asyncio.run(exercise())
+
+
+def test_research_source_collector_combines_authorized_tavily_and_github_readers() -> None:
+    async def exercise() -> None:
+        async with httpx.AsyncClient() as client:
+            collector = _research_source_collector(
+                settings=WorkerSettings(
+                    _env_file=None,
+                    tavily_api_key="tavily-test-token",
+                    github_api_token="github-test-token",
+                    github_source_targets="aidison-lab/flight-docs@main:spec.md",
+                ),
+                client=client,
+            )
+            assert isinstance(collector, CompositeResearchSourceCollector)
+
+    asyncio.run(exercise())
+
+
+def test_github_source_targets_accept_comma_or_line_delimited_allowlists() -> None:
+    assert _github_source_targets("lab/a@main:one.md, lab/b@stable:two.md\nlab/c@v1:three.md") == (
+        "lab/a@main:one.md",
+        "lab/b@stable:two.md",
+        "lab/c@v1:three.md",
+    )
+    with pytest.raises(ValueError, match="must not repeat"):
+        _github_source_targets("lab/a@main:one.md,lab/a@main:one.md")

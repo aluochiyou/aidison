@@ -8,7 +8,10 @@ quoted span proposed by the model.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import re
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Protocol
@@ -102,6 +105,175 @@ class ResearchSourceCollectionError(RuntimeError):
 
 class TavilySourceCollectionError(ResearchSourceCollectionError):
     """A classified failure at the trusted Tavily source boundary."""
+
+
+class GitHubSourceCollectionError(ResearchSourceCollectionError):
+    """A classified failure at the trusted GitHub Contents API boundary."""
+
+
+class GitHubRepositorySourceCollector:
+    """Read explicitly allowlisted text files through GitHub's Contents API.
+
+    A source target has the form ``owner/repository@ref:path/to/file``.  The
+    configured ref is only an input locator; the returned Git blob SHA becomes
+    the canonical source locator, so a moving branch cannot silently rewrite a
+    previously observed source.  This collector deliberately does not expose
+    GitHub search: model-produced query text must not widen the configured
+    repository read authority.
+    """
+
+    _target_pattern = re.compile(
+        r"^(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@"
+        r"(?P<ref>[A-Za-z0-9_.:/-]+):(?P<path>[A-Za-z0-9_.+/@-]+)$"
+    )
+    _endpoint = "https://api.github.com/repos/{repository}/contents/{path}"
+
+    def __init__(
+        self,
+        *,
+        api_token: str,
+        source_targets: Sequence[str],
+        client: httpx.AsyncClient,
+        max_document_characters: int = 32_000,
+    ) -> None:
+        if not api_token.strip():
+            raise ValueError("GitHub API token must not be empty")
+        if not source_targets:
+            raise ValueError("GitHub source targets must not be empty")
+        if not 1 <= max_document_characters <= 96_000:
+            raise ValueError("GitHub source document limit must be between 1 and 96000")
+        self._api_token = api_token
+        self._targets = tuple(self._parse_target(value) for value in source_targets)
+        if len(set(self._targets)) != len(self._targets):
+            raise ValueError("GitHub source targets must be unique")
+        self._client = client
+        self._max_document_characters = max_document_characters
+
+    async def collect(
+        self,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+    ) -> tuple[CollectedResearchSource, ...]:
+        del run, task, question
+        observed_at = datetime.now(UTC)
+        sources = [
+            await self._fetch_target(target=target, observed_at=observed_at)
+            for target in self._targets
+        ]
+        return tuple(sources)
+
+    @classmethod
+    def _parse_target(cls, value: str) -> tuple[str, str, str]:
+        match = cls._target_pattern.fullmatch(value.strip())
+        if match is None:
+            raise ValueError(
+                "GitHub source target must be owner/repository@ref:path/to/file"
+            )
+        repository = match.group("repository")
+        ref = match.group("ref")
+        path = match.group("path")
+        if path.startswith("/") or "//" in path or any(part == ".." for part in path.split("/")):
+            raise ValueError("GitHub source target path must stay inside its repository")
+        return repository, ref, path
+
+    async def _fetch_target(
+        self,
+        *,
+        target: tuple[str, str, str],
+        observed_at: datetime,
+    ) -> CollectedResearchSource:
+        repository, ref, path = target
+        try:
+            response = await self._client.get(
+                self._endpoint.format(repository=repository, path=path),
+                params={"ref": ref},
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": f"Bearer {self._api_token}",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            raise GitHubSourceCollectionError(
+                _github_http_failure_code(error.response.status_code)
+            ) from error
+        except httpx.RequestError as error:
+            raise GitHubSourceCollectionError("github_network_failure") from error
+        try:
+            body = response.json()
+            if not isinstance(body, dict):
+                raise ValueError("GitHub response is not an object")
+            if body.get("type") != "file":
+                raise ValueError("GitHub source target is not a file")
+            blob_sha = body.get("sha")
+            encoded = body.get("content")
+            encoding = body.get("encoding")
+            if not isinstance(blob_sha, str) or not re.fullmatch(r"[a-f0-9]{40,64}", blob_sha):
+                raise ValueError("GitHub file response has no valid blob SHA")
+            if not isinstance(encoded, str) or encoding != "base64":
+                raise ValueError("GitHub file response has no base64 text content")
+            # GitHub wraps large base64 payloads across lines. Whitespace is
+            # transport formatting, not document content, so remove it before
+            # retaining strict alphabet validation.
+            decoded = base64.b64decode("".join(encoded.split()), validate=True)
+            document = decoded.decode("utf-8").strip()[: self._max_document_characters]
+            if not document:
+                raise ValueError("GitHub source file has no usable UTF-8 text")
+        except (ValueError, UnicodeDecodeError, binascii.Error) as error:
+            raise GitHubSourceCollectionError("github_response_schema_invalid") from error
+
+        canonical_locator = f"https://github.com/{repository}/blob/{blob_sha}/{path}"
+        return CollectedResearchSource(
+            key=f"github-{sha256(canonical_locator.encode()).hexdigest()[:20]}",
+            source=SourceIdentity(
+                kind=SourceKind.REPOSITORY,
+                provider="github-contents-v1",
+                canonical_locator=canonical_locator,
+            ),
+            normalized_document=document,
+            media_type=_github_media_type(path),
+            representation="normalized-github-contents-v1",
+            parser_revision="github-contents-v1",
+            observed_at=observed_at,
+            coverage_source_kinds=("evidence",),
+        )
+
+
+class CompositeResearchSourceCollector:
+    """Combine independently configured read-only collectors without duplicate input."""
+
+    def __init__(self, collectors: Sequence[ResearchSourceCollector]) -> None:
+        if not collectors:
+            raise ValueError("composite source collector needs at least one collector")
+        self._collectors = tuple(collectors)
+
+    async def collect(
+        self,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+    ) -> tuple[CollectedResearchSource, ...]:
+        collected: list[CollectedResearchSource] = []
+        seen_source_ids: set[str] = set()
+        for collector in self._collectors:
+            for source in await collector.collect(run=run, task=task, question=question):
+                source_id = source.source.id
+                assert source_id is not None
+                if source_id in seen_source_ids:
+                    continue
+                seen_source_ids.add(source_id)
+                collected.append(source)
+        collection_policy = getattr(task, "collection_policy", None)
+        max_documents = (
+            collection_policy.max_documents_total
+            if collection_policy is not None
+            else None
+        )
+        return tuple(collected if max_documents is None else collected[:max_documents])
 
 
 class TavilySearchResearchSourceCollector:
@@ -504,6 +676,28 @@ def _tavily_http_failure_code(status_code: int) -> str:
     return "tavily_request_rejected"
 
 
+def _github_http_failure_code(status_code: int) -> str:
+    if status_code in {401, 403}:
+        return "github_authentication_failed"
+    if status_code == 404:
+        return "github_source_not_found"
+    if status_code == 429:
+        return "github_quota_exhausted"
+    if status_code >= 500:
+        return "github_provider_unavailable"
+    return "github_request_rejected"
+
+
+def _github_media_type(path: str) -> str:
+    suffix = path.rsplit(".", maxsplit=1)[-1].lower() if "." in path else ""
+    return {
+        "md": "text/markdown",
+        "json": "application/json",
+        "yaml": "application/yaml",
+        "yml": "application/yaml",
+    }.get(suffix, "text/plain")
+
+
 def _is_recoverable_query_failure(reason_code: str) -> bool:
     """Whether one failed Coverage Key may defer to the gap loop safely."""
 
@@ -512,6 +706,9 @@ def _is_recoverable_query_failure(reason_code: str) -> bool:
 
 __all__ = [
     "CollectedResearchSource",
+    "CompositeResearchSourceCollector",
+    "GitHubRepositorySourceCollector",
+    "GitHubSourceCollectionError",
     "NoopResearchSourceCollector",
     "ResearchSourceCollectionError",
     "ResearchSourceCollector",
