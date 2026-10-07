@@ -104,6 +104,7 @@ def _research_failure_summary(failure_code: str, error: Exception | None) -> str
         "github_quota_exhausted": "GitHub 资料访问配额已耗尽",
         "github_provider_unavailable": "GitHub 资料服务暂时不可用",
         "github_source_not_found": "配置的 GitHub 资料文件不存在或当前凭据不可读取",
+        "github_document_too_large": "配置的 GitHub 资料文件超过了本次研究允许的正文大小",
         "github_request_rejected": "GitHub 拒绝了本次资料读取请求",
         "github_response_schema_invalid": "GitHub 返回的资料文件无法作为 UTF-8 文本解析",
         "research_graph_missing_proposal": "研究图结束时没有生成可审查提案",

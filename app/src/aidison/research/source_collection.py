@@ -148,6 +148,10 @@ class GitHubRepositorySourceCollector:
             raise ValueError("GitHub source targets must be unique")
         self._client = client
         self._max_document_characters = max_document_characters
+        # UTF-8 can consume four bytes per Unicode code point. Keep a bounded
+        # allowance for normalization while rejecting oversized Base64 before
+        # decoding it into process memory.
+        self._max_document_bytes = max_document_characters * 4
 
     async def collect(
         self,
@@ -211,17 +215,30 @@ class GitHubRepositorySourceCollector:
             blob_sha = body.get("sha")
             encoded = body.get("content")
             encoding = body.get("encoding")
+            size = body.get("size")
             if not isinstance(blob_sha, str) or not re.fullmatch(r"[a-f0-9]{40,64}", blob_sha):
                 raise ValueError("GitHub file response has no valid blob SHA")
             if not isinstance(encoded, str) or encoding != "base64":
                 raise ValueError("GitHub file response has no base64 text content")
+            if not isinstance(size, int) or isinstance(size, bool) or size < 0:
+                raise ValueError("GitHub file response has no valid byte size")
+            if size > self._max_document_bytes:
+                raise GitHubSourceCollectionError("github_document_too_large")
             # GitHub wraps large base64 payloads across lines. Whitespace is
             # transport formatting, not document content, so remove it before
             # retaining strict alphabet validation.
-            decoded = base64.b64decode("".join(encoded.split()), validate=True)
+            compact_encoded = "".join(encoded.split())
+            maximum_encoded_bytes = 4 * ((self._max_document_bytes + 2) // 3)
+            if len(compact_encoded) > maximum_encoded_bytes:
+                raise GitHubSourceCollectionError("github_document_too_large")
+            decoded = base64.b64decode(compact_encoded, validate=True)
+            if len(decoded) > self._max_document_bytes:
+                raise GitHubSourceCollectionError("github_document_too_large")
             document = decoded.decode("utf-8").strip()[: self._max_document_characters]
             if not document:
                 raise ValueError("GitHub source file has no usable UTF-8 text")
+        except GitHubSourceCollectionError:
+            raise
         except (ValueError, UnicodeDecodeError, binascii.Error) as error:
             raise GitHubSourceCollectionError("github_response_schema_invalid") from error
 

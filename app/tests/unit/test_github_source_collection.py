@@ -31,6 +31,7 @@ async def test_github_collector_reads_only_allowlisted_file_and_freezes_blob_ide
             json={
                 "type": "file",
                 "sha": "a" * 40,
+                "size": len(document.encode()),
                 "encoding": "base64",
                 "content": "\n".join(
                     (
@@ -121,6 +122,7 @@ async def test_github_collector_rejects_non_utf8_or_malformed_content() -> None:
             json={
                 "type": "file",
                 "sha": "b" * 40,
+                "size": 2,
                 "encoding": "base64",
                 "content": base64.b64encode(b"\xff\xfe").decode(),
             },
@@ -140,6 +142,37 @@ async def test_github_collector_rejects_non_utf8_or_malformed_content() -> None:
             )
 
     assert raised.value.reason_code == "github_response_schema_invalid"
+
+
+@pytest.mark.asyncio
+async def test_github_collector_rejects_oversized_response_before_base64_decode() -> None:
+    async def responder(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "type": "file",
+                "sha": "c" * 40,
+                "size": 200_000,
+                "encoding": "base64",
+                "content": "not-decoded",
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+        collector = GitHubRepositorySourceCollector(
+            api_token="github-test-token",
+            source_targets=("aidison-lab/flight-docs@main:specs/interface.md",),
+            client=client,
+            max_document_characters=32_000,
+        )
+        with pytest.raises(GitHubSourceCollectionError) as raised:
+            await collector.collect(
+                run=object(),  # type: ignore[arg-type]
+                task=object(),  # type: ignore[arg-type]
+                question="ignored",
+            )
+
+    assert raised.value.reason_code == "github_document_too_large"
 
 
 @pytest.mark.parametrize(
