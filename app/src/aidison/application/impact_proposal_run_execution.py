@@ -123,7 +123,8 @@ class ImpactProposalLangGraphWorker:
             raise RuntimeError(
                 "Impact v2 binding has no ImpactProposalGraphRunExecutor registration"
             )
-        return await claimed.compiled_graph.execute_claim(run=claimed.run, claim=claimed.claim)
+        async with self._orchestration_worker.lease_heartbeat(claimed.claim):
+            return await claimed.compiled_graph.execute_claim(run=claimed.run, claim=claimed.claim)
 
 
 __all__ = [
