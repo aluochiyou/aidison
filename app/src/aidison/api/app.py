@@ -2098,29 +2098,25 @@ def create_app(
         run = await control.get(run_id)
         if run is None or run.project_id != project_id:
             raise AgentRunNotFoundError("AgentRun not found")
-        cancelled = await control.request_cancel(run_id=run_id)
-        if not run.cancel_requested and run.status.value not in {
-            "cancelled",
-            "succeeded",
-            "failed",
-        }:
+        cancellation_receipt = await control.request_cancel_with_receipt(run_id=run_id)
+        if cancellation_receipt.changed:
             event_type = (
                 "agent_run.cancelled"
-                if cancelled.status.value == "cancelled"
+                if cancellation_receipt.run.status.value == "cancelled"
                 else "agent_run.cancel_requested"
             )
             await store.append_event(
                 project_id,
                 event_type,
                 {
-                    "agent_run_id": str(cancelled.id),
+                    "agent_run_id": str(cancellation_receipt.run.id),
                     "idempotency_key": idempotency_key,
-                    "running": cancelled.status.value == "running",
+                    "running": cancellation_receipt.run.status.value == "running",
                 },
             )
         await session.commit()
         response.headers["ETag"] = f'"{revision}"'
-        return {"agent_run": cancelled, "project_revision": revision}
+        return {"agent_run": cancellation_receipt.run, "project_revision": revision}
 
     @api.post("/api/projects/{project_id}/agent-runs/{run_id}/controls")
     async def create_agent_run_control_request(
@@ -2214,21 +2210,20 @@ def create_app(
         )
         if not has_acknowledged_pause:
             raise AgentRunConflictError("AgentRun has no acknowledged pause request")
-        was_waiting = run.status.value == "waiting"
-        resumed = await control.resume_after_pause(run_id=run.id)
-        if was_waiting:
+        resume_receipt = await control.resume_after_pause_with_receipt(run_id=run.id)
+        if resume_receipt.changed:
             await store.append_event(
                 project_id,
                 "agent_run.resumed",
                 {
-                    "agent_run_id": str(resumed.id),
+                    "agent_run_id": str(resume_receipt.run.id),
                     "idempotency_key": idempotency_key,
                     "reason": "acknowledged_pause",
                 },
             )
         await session.commit()
         response.headers["ETag"] = f'"{revision}"'
-        return {"agent_run": resumed, "project_revision": revision}
+        return {"agent_run": resume_receipt.run, "project_revision": revision}
 
     @api.post("/api/decisions/{decision_id}/resolve")
     async def resolve_decision(

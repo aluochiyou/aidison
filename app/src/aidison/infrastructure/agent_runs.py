@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID, uuid4
 
@@ -39,6 +40,14 @@ class AgentRunNotFoundError(AgentRunControlError):
 
 class AgentRunConflictError(AgentRunControlError):
     """Raised when stale ownership or incompatible idempotency is detected."""
+
+
+@dataclass(frozen=True)
+class AgentRunControlTransition:
+    """A durable state change plus whether this call actually performed it."""
+
+    run: AgentRun
+    changed: bool
 
 
 def _terminal_event_type(status: AgentRunStatus) -> AgentRunEventType:
@@ -389,6 +398,14 @@ class AgentRunControl:
         return self._from_row(row)
 
     async def resume_after_pause(self, *, run_id: UUID) -> AgentRun:
+        """Compatibility wrapper for callers that need only the current Run."""
+        return (await self.resume_after_pause_with_receipt(run_id=run_id)).run
+
+    async def resume_after_pause_with_receipt(
+        self,
+        *,
+        run_id: UUID,
+    ) -> AgentRunControlTransition:
         """Requeue a Run stopped at the pre-dispatch pause safe point.
 
         This deliberately does not resume a LangGraph interrupt.  Decision
@@ -403,7 +420,7 @@ class AgentRunControl:
         if row is None:
             raise AgentRunNotFoundError("AgentRun not found")
         if row.status == AgentRunStatus.QUEUED.value:
-            return self._from_row(row)
+            return AgentRunControlTransition(run=self._from_row(row), changed=False)
         if row.status != AgentRunStatus.WAITING.value:
             raise AgentRunConflictError("only a paused waiting AgentRun can be requeued")
         if row.admitted_checkpoint is not None:
@@ -414,7 +431,7 @@ class AgentRunControl:
         row.updated_at = utc_now()
         await self._session.flush()
         await self._append_lifecycle_event(row, AgentRunEventType.REQUEUED)
-        return self._from_row(row)
+        return AgentRunControlTransition(run=self._from_row(row), changed=True)
 
     async def complete(
         self,
@@ -469,6 +486,14 @@ class AgentRunControl:
         return self._from_row(row)
 
     async def cancel_if_not_running(self, *, run_id: UUID) -> AgentRun:
+        """Compatibility wrapper for callers that need only the current Run."""
+        return (await self.cancel_if_not_running_with_receipt(run_id=run_id)).run
+
+    async def cancel_if_not_running_with_receipt(
+        self,
+        *,
+        run_id: UUID,
+    ) -> AgentRunControlTransition:
         """Cancel only a Run with no active Worker lease.
 
         A running graph cannot be cancelled by changing a database bit: it must
@@ -485,7 +510,7 @@ class AgentRunControl:
             AgentRunStatus.FAILED.value,
             AgentRunStatus.CANCELLED.value,
         }:
-            return self._from_row(row)
+            return AgentRunControlTransition(run=self._from_row(row), changed=False)
         if row.status == AgentRunStatus.RUNNING.value:
             raise AgentRunConflictError("running AgentRun requires worker safe-point cancellation")
         now = utc_now()
@@ -495,9 +520,17 @@ class AgentRunControl:
         row.completed_at = now
         await self._session.flush()
         await self._append_lifecycle_event(row, AgentRunEventType.CANCELLED)
-        return self._from_row(row)
+        return AgentRunControlTransition(run=self._from_row(row), changed=True)
 
     async def request_cancel(self, *, run_id: UUID) -> AgentRun:
+        """Compatibility wrapper for callers that need only the current Run."""
+        return (await self.request_cancel_with_receipt(run_id=run_id)).run
+
+    async def request_cancel_with_receipt(
+        self,
+        *,
+        run_id: UUID,
+    ) -> AgentRunControlTransition:
         """Persist a cancellation request; running work resolves at a Worker safe point."""
         row = await self._session.scalar(
             select(AgentRunRow).where(AgentRunRow.id == run_id).with_for_update()
@@ -509,14 +542,26 @@ class AgentRunControl:
             AgentRunStatus.FAILED.value,
             AgentRunStatus.CANCELLED.value,
         }:
-            return self._from_row(row)
+            return AgentRunControlTransition(run=self._from_row(row), changed=False)
         if row.status != AgentRunStatus.RUNNING.value:
-            return await self.cancel_if_not_running(run_id=run_id)
+            # This row is already locked by the current transaction; keep the
+            # immediate terminal transition here instead of re-locking it via
+            # the public non-running helper.
+            now = utc_now()
+            row.cancel_requested = True
+            row.status = AgentRunStatus.CANCELLED.value
+            row.updated_at = now
+            row.completed_at = now
+            await self._session.flush()
+            await self._append_lifecycle_event(row, AgentRunEventType.CANCELLED)
+            return AgentRunControlTransition(run=self._from_row(row), changed=True)
+        if row.cancel_requested:
+            return AgentRunControlTransition(run=self._from_row(row), changed=False)
         row.cancel_requested = True
         row.updated_at = utc_now()
         await self._session.flush()
         await self._append_lifecycle_event(row, AgentRunEventType.CANCELLATION_REQUESTED)
-        return self._from_row(row)
+        return AgentRunControlTransition(run=self._from_row(row), changed=True)
 
     async def invalidate_stale_project_basis(
         self,

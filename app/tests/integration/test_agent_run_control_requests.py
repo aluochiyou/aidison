@@ -260,16 +260,18 @@ async def test_control_commands_are_versioned_visible_and_cancel_is_event_idempo
                 == requested.json()["control_request"]["id"]
             )
 
-            first_cancel = await client.post(
-                f"/api/projects/{project.id}/agent-runs/{run.id}/cancel",
-                headers={"Idempotency-Key": f"cancel-{uuid4()}", "If-Match": '"1"'},
+            first_cancel, repeated_cancel = await asyncio.gather(
+                client.post(
+                    f"/api/projects/{project.id}/agent-runs/{run.id}/cancel",
+                    headers={"Idempotency-Key": f"cancel-{uuid4()}", "If-Match": '"1"'},
+                ),
+                client.post(
+                    f"/api/projects/{project.id}/agent-runs/{run.id}/cancel",
+                    headers={"Idempotency-Key": f"cancel-{uuid4()}", "If-Match": '"1"'},
+                ),
             )
             assert first_cancel.status_code == 200, first_cancel.text
             assert first_cancel.json()["agent_run"]["status"] == "cancelled"
-            repeated_cancel = await client.post(
-                f"/api/projects/{project.id}/agent-runs/{run.id}/cancel",
-                headers={"Idempotency-Key": f"cancel-{uuid4()}", "If-Match": '"1"'},
-            )
             assert repeated_cancel.status_code == 200, repeated_cancel.text
 
             snapshot = await client.get(f"/api/projects/{project.id}/snapshot")
@@ -334,18 +336,18 @@ async def test_acknowledged_pre_dispatch_pause_can_resume_once_through_api() -> 
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://test"
         ) as client:
-            headers = {"Idempotency-Key": f"resume-{uuid4()}", "If-Match": '"1"'}
-            resumed = await client.post(
-                f"/api/projects/{project.id}/agent-runs/{run.id}/resume",
-                headers=headers,
+            resumed, repeated = await asyncio.gather(
+                client.post(
+                    f"/api/projects/{project.id}/agent-runs/{run.id}/resume",
+                    headers={"Idempotency-Key": f"resume-{uuid4()}", "If-Match": '"1"'},
+                ),
+                client.post(
+                    f"/api/projects/{project.id}/agent-runs/{run.id}/resume",
+                    headers={"Idempotency-Key": f"resume-{uuid4()}", "If-Match": '"1"'},
+                ),
             )
             assert resumed.status_code == 200, resumed.text
             assert resumed.json()["agent_run"]["status"] == "queued"
-
-            repeated = await client.post(
-                f"/api/projects/{project.id}/agent-runs/{run.id}/resume",
-                headers={"Idempotency-Key": f"resume-{uuid4()}", "If-Match": '"1"'},
-            )
             assert repeated.status_code == 200, repeated.text
 
             events = await client.get(f"/api/projects/{project.id}/events")
