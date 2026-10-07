@@ -170,6 +170,30 @@ def test_live_mode_keeps_reporter_unset_when_delivery_fails() -> None:
     assert report.reporter == "none"
 
 
+def test_live_mode_survives_a_nonconforming_reporter() -> None:
+    class ExplodingReporter:
+        name = "custom"
+
+        @property
+        def enabled(self) -> bool:
+            return True
+
+        def report(self, report: EvaluationReport) -> bool:
+            del report
+            raise ConnectionError("simulated exporter outage")
+
+    report = asyncio.run(
+        run_evaluation(
+            case_keys=("red-action-blocked",),
+            mode=EvaluationMode.LIVE,
+            reporter=ExplodingReporter(),
+        )
+    )
+
+    assert report.summary.all_passed
+    assert report.reporter == "none"
+
+
 def _result_input() -> dict[str, object]:
     basis = sha256(b"basis").hexdigest()
     result_id = str(uuid4())

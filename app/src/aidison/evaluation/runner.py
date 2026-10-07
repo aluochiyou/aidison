@@ -199,7 +199,14 @@ async def run_evaluation(
         layers_covered=tuple(sorted({case.layer for case in selected}, key=str)),
     )
     if mode is EvaluationMode.LIVE and reporter is not None and reporter.enabled:
-        if reporter.report(report):
+        try:
+            delivered = reporter.report(report)
+        except Exception:
+            # Reporters are integration boundaries.  A third-party or custom
+            # adapter that violates the fail-safe contract cannot turn a local
+            # deterministic verdict into an infrastructure failure.
+            delivered = False
+        if delivered:
             report = report.model_copy(update={"reporter": reporter.name})
     return report
 
