@@ -53,16 +53,6 @@ DEFAULT_SOLUTION_RUNTIME_BINDING = RuntimeBinding(
     policy_binding_ref="policy://solution/1",
 )
 
-DEFAULT_IMPACT_RUNTIME_BINDING = RuntimeBinding(
-    runtime_family=RuntimeFamily.LANGGRAPH_V1,
-    runtime_revision="runtime-v1",
-    graph_key="impact",
-    graph_revision="impact-v1",
-    state_schema_version="impact-state-v1",
-    profile_binding_ref="profile://impact/1",
-    policy_binding_ref="policy://impact/1",
-)
-
 DEFAULT_IMPACT_PROPOSAL_RUNTIME_BINDING = RuntimeBinding(
     runtime_family=RuntimeFamily.LANGGRAPH_V1,
     runtime_revision="runtime-v1",
