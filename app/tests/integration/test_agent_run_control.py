@@ -203,11 +203,25 @@ async def test_checkpoint_admission_requires_the_frozen_thread_and_runtime_bindi
                         generation=claim.generation,
                     ),
                 )
-            with pytest.raises(AgentRunConflictError, match="runtime binding"):
+            with pytest.raises(AgentRunConflictError, match="thread"):
                 await control.admit_checkpoint(
                     claim=claim,
                     checkpoint=AdmittedCheckpointRef(
                         thread_id=created.thread_id,
+                        checkpoint_id="legacy-logical-thread",
+                        graph_revision="r0",
+                        state_schema_version="state-v1",
+                        generation=claim.generation,
+                    ),
+                )
+            with pytest.raises(AgentRunConflictError, match="runtime binding"):
+                await control.admit_checkpoint(
+                    claim=claim,
+                    checkpoint=AdmittedCheckpointRef(
+                        thread_id=execution_checkpoint_thread_id(
+                            logical_thread_id=created.thread_id,
+                            generation=claim.generation,
+                        ),
                         checkpoint_id="wrong-runtime",
                         graph_revision="other-graph",
                         state_schema_version="other-schema",
@@ -480,7 +494,10 @@ async def test_event_backed_checkpoint_captures_event_cursor_and_invocation_keys
             admitted = await control.admit_checkpoint(
                 claim=claim,
                 checkpoint=AdmittedCheckpointRef(
-                    thread_id=created.thread_id,
+                    thread_id=execution_checkpoint_thread_id(
+                        logical_thread_id=created.thread_id,
+                        generation=claim.generation,
+                    ),
                     checkpoint_id="checkpoint-event-backed",
                     graph_revision="r0",
                     state_schema_version="state-v1",

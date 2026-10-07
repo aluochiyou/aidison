@@ -289,10 +289,11 @@ class AgentRunControl:
             logical_thread_id=row.thread_id,
             generation=claim.generation,
         )
-        # Historical anchors used the logical Run thread directly. They remain
-        # readable, but new graph executions always submit the generation-
-        # scoped physical thread above.
-        if checkpoint.thread_id not in {row.thread_id, expected_physical_thread_id}:
+        # Historical logical-thread anchors remain readable through recovery
+        # and replay compatibility paths. New admissions must use the current
+        # lease generation's physical thread so an unadmitted latest checkpoint
+        # can never be promoted accidentally.
+        if checkpoint.thread_id != expected_physical_thread_id:
             raise AgentRunConflictError("checkpoint thread does not match the AgentRun")
         binding = RuntimeBinding.model_validate(row.runtime_binding)
         if (
