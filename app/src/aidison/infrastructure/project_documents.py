@@ -194,6 +194,37 @@ class ProjectSourceDocumentStore:
         await self._flush_or_commit(commit=commit)
         return _document(row), changed
 
+    async def restore(
+        self,
+        *,
+        project_id: UUID,
+        document_id: UUID,
+        commit: bool = True,
+    ) -> tuple[ProjectSourceDocument, bool]:
+        """Re-enable a quarantined document only after rechecking its bytes."""
+
+        row = await self._session.scalar(
+            select(ProjectSourceDocumentRow)
+            .where(
+                ProjectSourceDocumentRow.id == document_id,
+                ProjectSourceDocumentRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectSourceDocumentNotFoundError("project source document not found")
+        if row.status == ProjectSourceDocumentStatus.ACTIVE.value:
+            await self._flush_or_commit(commit=commit)
+            return _document(row), False
+        if row.status != ProjectSourceDocumentStatus.QUARANTINED.value:
+            raise ProjectSourceDocumentIntegrityError(
+                f"project source document cannot be restored from {row.status}"
+            )
+        await self._read_verified_bytes(row)
+        row.status = ProjectSourceDocumentStatus.ACTIVE.value
+        await self._flush_or_commit(commit=commit)
+        return _document(row), True
+
     async def read_text(
         self,
         *,

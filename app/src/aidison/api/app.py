@@ -1291,6 +1291,52 @@ def create_app(
         response.headers["ETag"] = f'"{project.revision}"'
         return document
 
+    @api.post("/api/projects/{project_id}/source-documents/{document_id}/restore")
+    async def restore_project_source_document(
+        project_id: UUID,
+        document_id: UUID,
+        idempotency_key: IdempotencyKey,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        """Re-enable verified material after a deliberate quarantine review."""
+
+        store = PostgresDomainStore(session)
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        payload_hash = canonical_hash("restore-project-source-document", project_id, document_id)
+        command_key = f"project-source-document-restore:{project_id}:{idempotency_key}"
+        receipt = await store.claim_command(command_key, payload_hash)
+        documents = ProjectSourceDocumentStore(
+            session,
+            Path(cast(Path, api.state.artifact_root)),
+        )
+        if receipt is not None:
+            document = await documents.get(
+                project_id=project_id, document_id=UUID(receipt)
+            )
+            response.headers["ETag"] = f'"{project.revision}"'
+            return document
+        document, changed = await documents.restore(
+            project_id=project_id,
+            document_id=document_id,
+            commit=False,
+        )
+        await store.save_command_receipt(command_key, payload_hash, str(document.id))
+        if changed:
+            await store.append_event(
+                project_id,
+                "project_source_document.restored",
+                {
+                    "document_id": str(document.id),
+                    "content_hash": document.content_hash,
+                },
+            )
+        await session.commit()
+        response.headers["ETag"] = f'"{project.revision}"'
+        return document
+
     @api.get("/api/projects/{project_id}/source-documents/{document_id}/content")
     async def read_project_source_document(
         project_id: UUID,

@@ -150,5 +150,29 @@ async def test_project_document_upload_is_idempotent_and_becomes_research_input(
             task=SimpleNamespace(),  # type: ignore[arg-type]
             question="No active user document should remain",
         ) == ()
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            restored = await client.post(
+                f"/api/projects/{project_id}/source-documents/{safe_document['id']}/restore",
+                headers={"Idempotency-Key": f"{prefix}:restore"},
+            )
+            assert restored.status_code == 200
+            assert restored.json()["status"] == "active"
+            replayed_restore = await client.post(
+                f"/api/projects/{project_id}/source-documents/{safe_document['id']}/restore",
+                headers={"Idempotency-Key": f"{prefix}:restore"},
+            )
+            assert replayed_restore.status_code == 200
+            assert replayed_restore.json()["id"] == safe_document["id"]
+
+        restored_sources = await collector.collect(
+            run=SimpleNamespace(project_id=project_id),  # type: ignore[arg-type]
+            task=SimpleNamespace(),  # type: ignore[arg-type]
+            question="Only the restored document should be research input",
+        )
+        assert len(restored_sources) == 1
+        assert restored_sources[0].normalized_document == (
+            "Keep a current margin before choosing a battery."
+        )
     finally:
         await engine.dispose()
