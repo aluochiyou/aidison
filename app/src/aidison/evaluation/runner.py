@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
+from aidison.application.agent_run_trajectory import AgentRunTrajectory
 from aidison.evaluation.contracts import (
     CaseResult,
     CaseStatus,
@@ -27,6 +28,7 @@ from aidison.evaluation.contracts import (
 from aidison.evaluation.fixtures import FIXTURE_CASES, FROZEN_FIXTURE_MANIFEST
 from aidison.evaluation.metrics import (
     StructuredSchemaSpec,
+    check_agent_run_regression_oracle,
     check_cost_latency_envelope,
     check_end_to_end_boundary,
     check_evidence_completeness,
@@ -37,6 +39,7 @@ from aidison.evaluation.metrics import (
     check_result_admission,
     check_structured_contract,
 )
+from aidison.evaluation.regression import AgentRunRegressionOracle
 from aidison.evaluation.reporter import EvaluationReporter
 from aidison.research.langgraph_contracts import AdmissionRecord, ResultEnvelope
 from aidison.runtime.contracts import InvocationRecording
@@ -83,6 +86,13 @@ async def _eval_replay_bundle_readiness(inputs: dict[str, Any]) -> MetricResult:
     return check_replay_bundle_readiness(bundle=bundle)
 
 
+async def _eval_agent_run_regression_oracle(inputs: dict[str, Any]) -> MetricResult:
+    return check_agent_run_regression_oracle(
+        trajectory=AgentRunTrajectory.model_validate(inputs["trajectory"]),
+        oracle=AgentRunRegressionOracle.model_validate(inputs["oracle"]),
+    )
+
+
 async def _eval_red_action(inputs: dict[str, Any]) -> MetricResult:
     return check_red_action_blocked(
         allowed_tool_classes=tuple(inputs.get("allowed_tool_classes") or ()),
@@ -121,6 +131,7 @@ _CHECKERS: dict[str, Callable[[dict[str, Any]], Awaitable[MetricResult]]] = {
     "result_admission": _eval_result_admission,
     "replay_determinism": _eval_replay_determinism,
     "replay_bundle_readiness": _eval_replay_bundle_readiness,
+    "agent_run_regression_oracle": _eval_agent_run_regression_oracle,
     "red_action": _eval_red_action,
     "end_to_end_boundary": _eval_end_to_end_boundary,
     "cost_latency_envelope": _eval_cost_latency_envelope,

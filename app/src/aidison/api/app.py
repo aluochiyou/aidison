@@ -59,6 +59,7 @@ from aidison.api.schemas import (
     ResolveProjectReshapeRequest,
     ResolveRequirementsChangeRequest,
     ResolveSpendBudgetRequest,
+    ReviewFailureRegressionCandidateRequest,
     SaveSolutionSnapshotRequest,
     SearchOffersRequest,
     StartImpactRunRequest,
@@ -80,6 +81,9 @@ from aidison.application.agent_run_trajectory import (
 from aidison.application.failure_regression import (
     FailureRegressionCandidateCapture,
     FailureRegressionCandidateService,
+    FailureRegressionReviewDecision,
+    FailureRegressionReviewResult,
+    GoldenRegressionEvaluation,
 )
 from aidison.application.impact_proposal_commit import ImpactProposalCommitApplication
 from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
@@ -125,6 +129,7 @@ from aidison.domain.models import (
     ShoppingBudgetSelection,
 )
 from aidison.engineering.coupling import EngineeringCouplingEdge, analyze_couplings
+from aidison.evaluation.regression import GoldenRegressionTask
 from aidison.infrastructure.agent_decisions import AgentRunDecisionStore
 from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.infrastructure.agent_run_controls import AgentRunControlRequestStore
@@ -2271,6 +2276,76 @@ def create_app(
             session=session,
             artifact_root=Path(getattr(api.state, "artifact_root", "artifacts/data")),
         ).list(project_id=project_id, agent_run_id=run_id)
+
+    @api.post(
+        "/api/projects/{project_id}/agent-runs/{run_id}/evaluation-candidates/"
+        "{candidate_key}/review",
+        response_model=FailureRegressionReviewResult,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def review_failed_agent_run_evaluation_candidate(
+        project_id: UUID,
+        run_id: UUID,
+        candidate_key: str,
+        request: ReviewFailureRegressionCandidateRequest,
+        idempotency_key: IdempotencyKey,
+        session: DbSession,
+    ) -> FailureRegressionReviewResult:
+        """Human-review one candidate; only approved replayable input becomes Golden."""
+
+        return await FailureRegressionCandidateService(
+            session=session,
+            artifact_root=Path(getattr(api.state, "artifact_root", "artifacts/data")),
+        ).review(
+            project_id=project_id,
+            agent_run_id=run_id,
+            candidate_key=candidate_key,
+            decision=FailureRegressionReviewDecision(request.decision),
+            reviewed_by=request.reviewed_by,
+            review_notes=request.review_notes,
+            expected_outcome=request.expected_outcome,
+            oracle=request.oracle,
+            idempotency_key=idempotency_key,
+        )
+
+    @api.get(
+        "/api/projects/{project_id}/agent-runs/{run_id}/golden-regression-tasks",
+        response_model=list[GoldenRegressionTask],
+    )
+    async def list_golden_regression_tasks(
+        project_id: UUID,
+        run_id: UUID,
+        session: DbSession,
+    ) -> tuple[GoldenRegressionTask, ...]:
+        return await FailureRegressionCandidateService(
+            session=session,
+            artifact_root=Path(getattr(api.state, "artifact_root", "artifacts/data")),
+        ).list_golden_tasks(project_id=project_id, agent_run_id=run_id)
+
+    @api.post(
+        "/api/projects/{project_id}/agent-runs/{source_run_id}/golden-regression-tasks/"
+        "{golden_task_key}/evaluate/{observed_run_id}",
+        response_model=GoldenRegressionEvaluation,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def evaluate_agent_run_against_golden_task(
+        project_id: UUID,
+        source_run_id: UUID,
+        golden_task_key: str,
+        observed_run_id: UUID,
+        idempotency_key: IdempotencyKey,
+        session: DbSession,
+    ) -> GoldenRegressionEvaluation:
+        return await FailureRegressionCandidateService(
+            session=session,
+            artifact_root=Path(getattr(api.state, "artifact_root", "artifacts/data")),
+        ).evaluate_golden_task(
+            project_id=project_id,
+            source_agent_run_id=source_run_id,
+            golden_task_key=golden_task_key,
+            observed_agent_run_id=observed_run_id,
+            idempotency_key=idempotency_key,
+        )
 
     @api.post("/api/projects/{project_id}/agent-runs/{run_id}/cancel")
     async def cancel_agent_run(

@@ -7,6 +7,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from aidison.application.agent_run_trajectory import build_agent_run_trajectory
+from aidison.evaluation.contracts import MetricStatus
+from aidison.evaluation.metrics import check_agent_run_regression_oracle
+from aidison.evaluation.regression import AgentRunRegressionOracle
 from aidison.runtime.agent_run_budget import (
     AgentRunBudgetOperation,
     AgentRunBudgetOperationKind,
@@ -158,3 +161,36 @@ def test_trajectory_rejects_replay_effect_from_another_project() -> None:
             operations=(),
             recordings=(_recording(project_id=uuid4()),),
         )
+
+
+def test_human_regression_oracle_fails_on_status_cost_and_ambiguity() -> None:
+    trajectory = build_agent_run_trajectory(
+        run=_run(),
+        events=(),
+        operations=(
+            _operation(
+                attempt_number=1,
+                state=AgentRunBudgetState.SETTLED,
+                created_offset=1,
+                consumed_tokens=31,
+            ),
+        ),
+        recordings=(_recording(),),
+    )
+
+    result = check_agent_run_regression_oracle(
+        trajectory=trajectory,
+        oracle=AgentRunRegressionOracle(
+            expected_terminal_status=AgentRunStatus.FAILED,
+            forbidden_failure_codes=("quota_unavailable",),
+            max_provider_attempts=0,
+            max_consumed_tokens=10,
+            max_ambiguous_effects=0,
+        ),
+    )
+
+    assert result.status is MetricStatus.FAIL
+    assert "terminal status succeeded != failed" in result.detail
+    assert "provider attempts 1 exceed 0" in result.detail
+    assert "consumed tokens 31 exceed 10" in result.detail
+    assert "ambiguous effects 1 exceed 0" in result.detail

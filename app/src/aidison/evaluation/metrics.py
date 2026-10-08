@@ -14,8 +14,10 @@ from typing import Any
 
 from pydantic import Field
 
+from aidison.application.agent_run_trajectory import AgentRunTrajectory
 from aidison.application.research_quality import build_research_quality_payload
 from aidison.evaluation.contracts import FrozenModel, MetricResult, MetricStatus
+from aidison.evaluation.regression import AgentRunRegressionOracle
 from aidison.research.consolidation import (
     ConsolidationInput,
     CoverageObservationStatus,
@@ -237,6 +239,77 @@ def check_replay_bundle_readiness(*, bundle: EvaluationReplayBundle) -> MetricRe
             "checkpoint_event_cursor": bundle.checkpoint_event_cursor,
             "invocation_count": len(bundle.invocations),
         },
+    )
+
+
+def check_agent_run_regression_oracle(
+    *,
+    trajectory: AgentRunTrajectory,
+    oracle: AgentRunRegressionOracle,
+) -> MetricResult:
+    """Compare a later payload-free trajectory with one human-approved oracle."""
+
+    violations: list[str] = []
+    if trajectory.status is not oracle.expected_terminal_status:
+        violations.append(
+            f"terminal status {trajectory.status.value} != "
+            f"{oracle.expected_terminal_status.value}"
+        )
+    event_types = {event.event_type for event in trajectory.lifecycle_events}
+    missing_events = sorted(set(oracle.required_event_types) - event_types)
+    if missing_events:
+        violations.append(f"missing required events: {missing_events}")
+    observed_failure_codes = {
+        item.error_code for item in trajectory.provider_attempts if item.error_code is not None
+    }
+    if trajectory.failure_analysis.terminal_failure_code is not None:
+        observed_failure_codes.add(trajectory.failure_analysis.terminal_failure_code)
+    forbidden = sorted(set(oracle.forbidden_failure_codes) & observed_failure_codes)
+    if forbidden:
+        violations.append(f"forbidden failure codes observed: {forbidden}")
+    if trajectory.summary.provider_attempt_count > oracle.max_provider_attempts:
+        violations.append(
+            "provider attempts "
+            f"{trajectory.summary.provider_attempt_count} exceed {oracle.max_provider_attempts}"
+        )
+    if trajectory.summary.consumed_tokens > oracle.max_consumed_tokens:
+        violations.append(
+            f"consumed tokens {trajectory.summary.consumed_tokens} exceed "
+            f"{oracle.max_consumed_tokens}"
+        )
+    if trajectory.summary.ambiguous_effect_count > oracle.max_ambiguous_effects:
+        violations.append(
+            "ambiguous effects "
+            f"{trajectory.summary.ambiguous_effect_count} exceed {oracle.max_ambiguous_effects}"
+        )
+    if (
+        oracle.require_self_recovery is not None
+        and trajectory.failure_analysis.self_recovered is not oracle.require_self_recovery
+    ):
+        violations.append(
+            f"self_recovered={trajectory.failure_analysis.self_recovered} != "
+            f"{oracle.require_self_recovery}"
+        )
+    payload = {
+        "agent_run_id": str(trajectory.agent_run_id),
+        "status": trajectory.status.value,
+        "provider_attempt_count": trajectory.summary.provider_attempt_count,
+        "consumed_tokens": trajectory.summary.consumed_tokens,
+        "ambiguous_effect_count": trajectory.summary.ambiguous_effect_count,
+        "self_recovered": trajectory.failure_analysis.self_recovered,
+    }
+    if violations:
+        return MetricResult(
+            metric_id="agent_run_regression_oracle",
+            status=MetricStatus.FAIL,
+            detail="; ".join(violations),
+            payload=payload,
+        )
+    return MetricResult(
+        metric_id="agent_run_regression_oracle",
+        status=MetricStatus.PASS,
+        detail="AgentRun trajectory satisfies the human-approved regression oracle",
+        payload=payload,
     )
 
 

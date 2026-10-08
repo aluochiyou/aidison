@@ -12,6 +12,7 @@ from aidison.domain.models import (
     EvidenceBinding,
     UserAdjustmentKind,
 )
+from aidison.evaluation.regression import AgentRunRegressionOracle
 
 
 class ApiModel(BaseModel):
@@ -147,6 +148,23 @@ class StartImpactRunRequest(ApiModel):
 class ResolveAgentRunDecisionRequest(ApiModel):
     decision: Literal["approved", "rejected"]
     basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class ReviewFailureRegressionCandidateRequest(ApiModel):
+    decision: Literal["approved", "rejected"]
+    reviewed_by: str = Field(min_length=1, max_length=160)
+    review_notes: str = Field(min_length=1, max_length=4_000)
+    expected_outcome: str | None = Field(default=None, min_length=1, max_length=4_000)
+    oracle: AgentRunRegressionOracle | None = None
+
+    @model_validator(mode="after")
+    def labels_match_decision(self) -> ReviewFailureRegressionCandidateRequest:
+        if self.decision == "approved":
+            if self.expected_outcome is None or self.oracle is None:
+                raise ValueError("approved review requires expected_outcome and oracle")
+        elif self.expected_outcome is not None or self.oracle is not None:
+            raise ValueError("rejected review cannot carry a Golden Task oracle")
+        return self
 
 
 class CreateAgentRunControlRequest(ApiModel):

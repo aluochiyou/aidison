@@ -25,7 +25,13 @@ from aidison.infrastructure.database import (
 )
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.runtime.agent_run_events import AgentRunEventType
-from aidison.runtime.agent_runs import AgentRun, AgentRunKind, AgentRunStatus
+from aidison.runtime.agent_runs import (
+    AdmittedCheckpointRef,
+    AgentRun,
+    AgentRunKind,
+    AgentRunStatus,
+    execution_checkpoint_thread_id,
+)
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
 
 pytestmark = pytest.mark.integration
@@ -48,6 +54,7 @@ async def _failed_run(
     *,
     project_id: UUID,
     revision: int,
+    replayable: bool = False,
 ) -> AgentRun:
     control = AgentRunControl(session)
     run = await control.create(
@@ -73,6 +80,20 @@ async def _failed_run(
         run_id=run.id,
     )
     assert claim is not None
+    if replayable:
+        await control.admit_checkpoint(
+            claim=claim,
+            checkpoint=AdmittedCheckpointRef(
+                thread_id=execution_checkpoint_thread_id(
+                    logical_thread_id=run.thread_id,
+                    generation=claim.generation,
+                ),
+                checkpoint_id="failure-regression-checkpoint",
+                graph_revision=run.runtime_binding.graph_revision,
+                state_schema_version=run.runtime_binding.state_schema_version,
+                generation=claim.generation,
+            ),
+        )
     return await control.complete(claim=claim, status=AgentRunStatus.FAILED)
 
 
@@ -156,6 +177,23 @@ async def test_failed_run_capture_is_idempotent_and_cannot_claim_golden_status(
             assert listed.status_code == 200
             assert listed.json() == [payload]
 
+            blocked_promotion = await client.post(
+                f"{endpoint}/{candidate['candidate_key']}/review",
+                headers={"Idempotency-Key": f"review-incomplete-{uuid4()}"},
+                json={
+                    "decision": "approved",
+                    "reviewed_by": "evaluation-owner",
+                    "review_notes": "Replay input is incomplete.",
+                    "expected_outcome": "The run should recover.",
+                    "oracle": {
+                        "expected_terminal_status": "succeeded",
+                        "max_provider_attempts": 3,
+                        "max_consumed_tokens": 4000,
+                    },
+                },
+            )
+            assert blocked_promotion.status_code == 409
+
             rejected = await client.post(
                 f"/api/projects/{project.id}/agent-runs/{queued.id}/evaluation-candidates",
                 headers={"Idempotency-Key": f"capture-nonfailed-{uuid4()}"},
@@ -197,5 +235,120 @@ async def test_failed_run_capture_is_idempotent_and_cannot_claim_golden_status(
             assert len(candidates) == 1
             assert len(replay_bundles) == 1
             assert len(candidate_events) == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_human_review_promotes_replayable_failure_and_scores_a_later_run(
+    tmp_path: Path,
+) -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Golden failure regression fixture",
+                goal="Promote one reviewed failure and score a later AgentRun",
+                idempotency_key=f"golden-regression-project-{uuid4()}",
+            )
+            source = await _failed_run(
+                session,
+                project_id=project.id,
+                revision=project.revision,
+                replayable=True,
+            )
+            control = AgentRunControl(session)
+            observed = await control.create(
+                AgentRun(
+                    project_id=project.id,
+                    kind=AgentRunKind.RESEARCH,
+                    idempotency_key=f"golden-observed-run-{uuid4()}",
+                    basis_hash=sha256(b"golden-observed-basis").hexdigest(),
+                    basis_project_revision=project.revision,
+                    runtime_binding=_binding(),
+                    thread_id=f"golden-observed-thread-{uuid4()}",
+                )
+            )
+            await control.record_queued_event(
+                run_id=observed.id,
+                event_type=AgentRunEventType.RESEARCH_QUEUED,
+                context={},
+                artifact_refs=(),
+            )
+            observed_claim = await control.claim_next(
+                worker_id="golden-observed-worker",
+                lease_seconds=60,
+                run_id=observed.id,
+            )
+            assert observed_claim is not None
+            observed = await control.complete(
+                claim=observed_claim,
+                status=AgentRunStatus.SUCCEEDED,
+            )
+            await session.commit()
+
+        api = create_app(factory, artifact_root=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=api),
+            base_url="http://test",
+        ) as client:
+            candidate_endpoint = (
+                f"/api/projects/{project.id}/agent-runs/{source.id}/evaluation-candidates"
+            )
+            captured = await client.post(
+                candidate_endpoint,
+                headers={"Idempotency-Key": f"golden-capture-{uuid4()}"},
+            )
+            assert captured.status_code == 201, captured.text
+            candidate = captured.json()["candidate"]
+            assert candidate["replay_bundle_status"] == "replayable"
+
+            review = await client.post(
+                f"{candidate_endpoint}/{candidate['candidate_key']}/review",
+                headers={"Idempotency-Key": f"golden-review-{uuid4()}"},
+                json={
+                    "decision": "approved",
+                    "reviewed_by": "evaluation-owner",
+                    "review_notes": "The repaired runtime must finish without retry ambiguity.",
+                    "expected_outcome": "Research finishes successfully within the fixed budget.",
+                    "oracle": {
+                        "expected_terminal_status": "succeeded",
+                        "required_event_types": ["agent_run.succeeded"],
+                        "forbidden_failure_codes": ["runtime_no_progress"],
+                        "max_provider_attempts": 0,
+                        "max_consumed_tokens": 0,
+                        "max_ambiguous_effects": 0,
+                        "require_self_recovery": False,
+                    },
+                },
+            )
+            assert review.status_code == 201, review.text
+            review_payload = review.json()
+            golden = review_payload["golden_task"]
+            assert review_payload["review"]["decision"] == "approved"
+            assert golden["source_candidate_key"] == candidate["candidate_key"]
+
+            listed = await client.get(
+                f"/api/projects/{project.id}/agent-runs/{source.id}/golden-regression-tasks"
+            )
+            assert listed.status_code == 200, listed.text
+            assert listed.json() == [golden]
+
+            evaluated = await client.post(
+                f"/api/projects/{project.id}/agent-runs/{source.id}/"
+                f"golden-regression-tasks/{golden['golden_task_key']}/evaluate/{observed.id}",
+                headers={"Idempotency-Key": f"golden-evaluate-{uuid4()}"},
+            )
+            assert evaluated.status_code == 201, evaluated.text
+            report = evaluated.json()["report"]
+            assert report["summary"]["passed"] == 1
+            assert report["summary"]["failed"] == 0
+            assert report["cases"][0]["metric_id"] == "agent_run_regression_oracle"
     finally:
         await engine.dispose()
