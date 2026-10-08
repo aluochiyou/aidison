@@ -263,6 +263,11 @@ class ModelGateway:
                         failure=ProviderFailureClass.CIRCUIT_OPEN,
                     )
                 )
+                if (
+                    request.fallback_policy is FallbackPolicy.AVAILABILITY_ONLY
+                    and target_index < len(request.targets) - 1
+                ):
+                    continue
                 return self._observed(
                     request,
                     ModelInvocationResult(

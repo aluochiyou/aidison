@@ -70,6 +70,15 @@ class FakeCircuit:
         self.failures.append((key, failure))
 
 
+class SelectiveCircuit(FakeCircuit):
+    def __init__(self, blocked_keys: set[str]) -> None:
+        super().__init__()
+        self.blocked_keys = blocked_keys
+
+    async def allow_request(self, *, key: str, deadline: datetime) -> bool:
+        return key not in self.blocked_keys
+
+
 class RecordingBudgetPort:
     def __init__(self) -> None:
         self.events: list[tuple[str, int, object]] = []
@@ -220,6 +229,31 @@ async def test_open_circuit_fails_closed_without_provider_or_quota_call() -> Non
     assert result.failure is ProviderFailureClass.CIRCUIT_OPEN
     assert adapter.calls == []
     assert quota.events == []
+
+
+@pytest.mark.asyncio
+async def test_open_primary_circuit_uses_frozen_availability_fallback() -> None:
+    request = _request()
+    primary = request.targets[0]
+    adapter = FakeAdapter(
+        [{"response_ref": "artifact://fallback-response", "provider_request_id": "req-2"}]
+    )
+    quota = FakeQuota()
+    result = await ModelGateway(
+        adapter=adapter,
+        quota=quota,
+        circuit=SelectiveCircuit({primary.key}),
+    ).invoke(request)
+
+    assert result.status == "succeeded"
+    assert result.actual_target == request.targets[1]
+    assert result.fallback_from == primary
+    assert [attempt.failure for attempt in result.attempts] == [
+        ProviderFailureClass.CIRCUIT_OPEN,
+        None,
+    ]
+    assert adapter.calls == [request.targets[1].key]
+    assert quota.events == [f"acquire:{request.targets[1].key}", "release"]
 
 
 @pytest.mark.asyncio

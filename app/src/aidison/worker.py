@@ -35,10 +35,10 @@ from aidison.observability import (
     RuntimeTracingSettings,
     build_runtime_tracer,
 )
+from aidison.providers.circuit_breaker import SlidingWindowProviderCircuit
 from aidison.providers.gateway import ProviderSettings, build_chat_model, build_model_target
 from aidison.providers.model_gateway import (
     ModelGateway,
-    ProviderCircuit,
     ProviderFailure,
     ProviderFailureClass,
     ProviderQuota,
@@ -152,6 +152,24 @@ class WorkerSettings(AidisonSettings):
         ge=1,
         le=32,
     )
+    model_circuit_failure_threshold: int = Field(
+        default=5,
+        validation_alias="AIDISON_MODEL_CIRCUIT_FAILURE_THRESHOLD",
+        ge=1,
+        le=50,
+    )
+    model_circuit_window_seconds: float = Field(
+        default=60.0,
+        validation_alias="AIDISON_MODEL_CIRCUIT_WINDOW_SECONDS",
+        gt=0,
+        le=3_600,
+    )
+    model_circuit_open_seconds: float = Field(
+        default=30.0,
+        validation_alias="AIDISON_MODEL_CIRCUIT_OPEN_SECONDS",
+        gt=0,
+        le=600,
+    )
     research_model_reserved_tokens: int = Field(
         default=8_000,
         validation_alias="AIDISON_RESEARCH_MODEL_RESERVED_TOKENS",
@@ -193,20 +211,6 @@ class _LocalProviderQuota(ProviderQuota):
         except TimeoutError as error:
             raise ProviderFailure(ProviderFailureClass.QUOTA_UNAVAILABLE) from error
         return _LocalQuotaPermit(self._semaphore)
-
-
-class _AllowAllProviderCircuit(ProviderCircuit):
-    """A deliberately local availability seam; it is not a distributed truth source."""
-
-    async def allow_request(self, *, key: str, deadline: datetime) -> bool:
-        del key, deadline
-        return True
-
-    async def record_success(self, *, key: str) -> None:
-        del key
-
-    async def record_failure(self, *, key: str, failure: ProviderFailureClass) -> None:
-        del key, failure
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -353,7 +357,11 @@ async def run_research_worker(
                     artifact_root=settings.artifact_root,
                 ),
                 quota=_LocalProviderQuota(max_concurrency=settings.model_max_concurrency),
-                circuit=_AllowAllProviderCircuit(),
+                circuit=SlidingWindowProviderCircuit(
+                    failure_threshold=settings.model_circuit_failure_threshold,
+                    failure_window_seconds=settings.model_circuit_window_seconds,
+                    open_seconds=settings.model_circuit_open_seconds,
+                ),
                 budget=PostgresModelAttemptBudgetPort(session_factory=session_factory),
                 observer=RuntimeModelInvocationObserver(runtime_tracer),
             )

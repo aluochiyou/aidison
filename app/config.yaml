@@ -27,6 +27,11 @@ runtime:
   # Per-worker model dispatch gate. Each physical research call is also
   # reserved and settled against the user-approved AgentRun Token budget.
   model_max_concurrency: 2
+  # Process-local provider circuit. Only availability/protocol failures count;
+  # invalid prompts, permission errors and local quota waits do not trip it.
+  model_circuit_failure_threshold: 5
+  model_circuit_window_seconds: 60
+  model_circuit_open_seconds: 30
   research_model_reserved_tokens: 4000
   research_model_timeout_seconds: 120
   lease_seconds: 60

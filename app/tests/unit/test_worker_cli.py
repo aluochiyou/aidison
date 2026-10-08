@@ -39,6 +39,9 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.lease_seconds == 60
     assert settings.poll_seconds == 0.5
     assert settings.durable_recheck_seconds == 30
+    assert settings.model_circuit_failure_threshold == 5
+    assert settings.model_circuit_window_seconds == 60
+    assert settings.model_circuit_open_seconds == 30
     assert settings.worker_id
 
 
