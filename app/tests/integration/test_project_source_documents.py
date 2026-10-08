@@ -164,15 +164,35 @@ async def test_project_document_upload_is_idempotent_and_becomes_research_input(
             )
             assert replayed_restore.status_code == 200
             assert replayed_restore.json()["id"] == safe_document["id"]
+            unrelated = await client.post(
+                f"/api/projects/{project_id}/source-documents",
+                json={
+                    "name": "motor-notes.txt",
+                    "content": "Motor A requires a 35A peak current at 12V.",
+                    "media_type": "text/plain",
+                },
+                headers={"Idempotency-Key": f"{prefix}:third-document"},
+            )
+            assert unrelated.status_code == 201
 
         restored_sources = await collector.collect(
             run=SimpleNamespace(project_id=project_id),  # type: ignore[arg-type]
             task=SimpleNamespace(),  # type: ignore[arg-type]
-            question="Only the restored document should be research input",
+            question="Which source explains the current margin?",
         )
-        assert len(restored_sources) == 1
+        assert len(restored_sources) == 2
         assert restored_sources[0].normalized_document == (
             "Keep a current margin before choosing a battery."
         )
+        bounded_sources = await collector.collect(
+            run=SimpleNamespace(project_id=project_id),  # type: ignore[arg-type]
+            task=SimpleNamespace(
+                collection_policy=SimpleNamespace(max_documents_total=1)
+            ),  # type: ignore[arg-type]
+            question="Which source explains the current margin?",
+        )
+        assert [source.normalized_document for source in bounded_sources] == [
+            "Keep a current margin before choosing a battery."
+        ]
     finally:
         await engine.dispose()

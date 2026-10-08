@@ -29,6 +29,7 @@ from aidison.infrastructure.project_documents import (
 )
 from aidison.research.evidence_diagnostics import ResearchSourceCollectionFailure
 from aidison.research.langgraph_contracts import TaskEnvelope
+from aidison.research.project_documents import ProjectSourceDocument
 from aidison.research.source_observations import SourceIdentity, SourceKind, source_origin_key
 from aidison.runtime.agent_runs import AgentRun
 
@@ -140,13 +141,17 @@ class ProjectDocumentResearchSourceCollector:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         artifact_root: Path,
-        max_documents: int = 32,
+        max_documents: int = 8,
+        max_candidates: int = 32,
     ) -> None:
-        if not 1 <= max_documents <= 64:
-            raise ValueError("project source document limit must be between 1 and 64")
+        if not 1 <= max_documents <= 32:
+            raise ValueError("project source document limit must be between 1 and 32")
+        if not max_documents <= max_candidates <= 64:
+            raise ValueError("project source candidate limit must be between document limit and 64")
         self._session_factory = session_factory
         self._artifact_root = artifact_root
         self._max_documents = max_documents
+        self._max_candidates = max_candidates
 
     async def collect(
         self,
@@ -155,40 +160,50 @@ class ProjectDocumentResearchSourceCollector:
         task: TaskEnvelope,
         question: str,
     ) -> tuple[CollectedResearchSource, ...]:
-        del task, question
         try:
             async with self._session_factory() as session:
                 documents = ProjectSourceDocumentStore(session, self._artifact_root)
                 try:
                     active = await documents.list_active(
-                        project_id=run.project_id, limit=self._max_documents
+                        project_id=run.project_id, limit=self._max_candidates
                     )
-                    sources: list[CollectedResearchSource] = []
+                    sources: list[tuple[ProjectSourceDocument, CollectedResearchSource]] = []
                     observed_at = datetime.now(UTC)
                     for document in active:
                         _, content = await documents.read_text(
                             project_id=run.project_id, document_id=document.id
                         )
-                        sources.append(
-                            CollectedResearchSource(
-                                key=f"project-source-{document.id.hex}",
-                                source=SourceIdentity(
-                                    kind=SourceKind.USER_UPLOAD,
-                                    provider="aidison-project-document-v1",
-                                    canonical_locator=(
-                                        "aidison://project-source/"
-                                        f"{document.id}/{document.content_hash}"
-                                    ),
+                        source = CollectedResearchSource(
+                            key=f"project-source-{document.id.hex}",
+                            source=SourceIdentity(
+                                kind=SourceKind.USER_UPLOAD,
+                                provider="aidison-project-document-v1",
+                                canonical_locator=(
+                                    "aidison://project-source/"
+                                    f"{document.id}/{document.content_hash}"
                                 ),
-                                normalized_document=content,
-                                media_type=document.media_type,
-                                representation="normalized-project-document-text-v1",
-                                parser_revision="project-document-upload-v1",
-                                observed_at=observed_at,
-                                coverage_source_kinds=(SourceKind.USER_UPLOAD.value,),
-                            )
+                            ),
+                            normalized_document=content,
+                            media_type=document.media_type,
+                            representation="normalized-project-document-text-v1",
+                            parser_revision="project-document-upload-v1",
+                            observed_at=observed_at,
+                            coverage_source_kinds=(SourceKind.USER_UPLOAD.value,),
                         )
-                    return tuple(sources)
+                        sources.append((document, source))
+                    task_policy = getattr(task, "collection_policy", None)
+                    policy_limit = (
+                        task_policy.max_documents_total if task_policy is not None else None
+                    )
+                    limit = min(
+                        self._max_documents,
+                        policy_limit if policy_limit is not None else self._max_documents,
+                    )
+                    return _rank_project_document_sources(
+                        sources,
+                        question=question,
+                        limit=limit,
+                    )
                 except ProjectSourceDocumentIntegrityError:
                     # Persist the missing/corrupt lifecycle transition before
                     # this Run fails closed; otherwise session close rolls it
@@ -197,6 +212,48 @@ class ProjectDocumentResearchSourceCollector:
                     raise
         except ProjectSourceDocumentIntegrityError as error:
             raise ProjectDocumentSourceCollectionError("project_document_unavailable") from error
+
+
+def _rank_project_document_sources(
+    sources: Sequence[tuple[ProjectSourceDocument, CollectedResearchSource]],
+    *,
+    question: str,
+    limit: int,
+) -> tuple[CollectedResearchSource, ...]:
+    """Use a deterministic lexical pre-ranker before the frozen source budget.
+
+    Project uploads are trusted *inputs*, not automatically relevant context.
+    This deliberately small ranker avoids a second model call and makes the
+    exact selection reproducible from the frozen task question and bytes. A
+    later vector retrieval layer can replace this seam without changing the
+    source snapshot or Evidence Admission contracts.
+    """
+
+    if limit < 1:
+        return ()
+    tokens = tuple(
+        sorted(
+            set(
+                re.findall(
+                    r"[a-z0-9][a-z0-9_.+-]{1,}|[\u4e00-\u9fff]",
+                    question.casefold(),
+                )
+            )
+        )
+    )
+
+    def score(source: CollectedResearchSource) -> int:
+        document = source.normalized_document.casefold()
+        return sum(min(document.count(token), 3) for token in tokens)
+
+    ranked = sorted(
+        sources,
+        key=lambda item: (
+            -score(item[1]),
+            item[1].source.canonical_locator,
+        ),
+    )
+    return tuple(source for _, source in ranked[:limit])
 
 
 class LocalFileResearchSourceCollector:
