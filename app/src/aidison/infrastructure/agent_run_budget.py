@@ -99,6 +99,33 @@ class AgentRunBudgetLedger:
             raise AgentRunBudgetConflictError("AgentRun budget account not found")
         return _account(row)
 
+    async def list_operations_for_run(
+        self,
+        agent_run_id: UUID,
+    ) -> tuple[AgentRunBudgetOperation, ...]:
+        """Return provider/tool attempts in their durable observation order.
+
+        This read path intentionally follows the Run-owned account rather than
+        accepting an account ID from the caller.  It is used by diagnostics and
+        evaluation projections and never locks or mutates budget state.
+        """
+
+        rows = (
+            await self._session.scalars(
+                select(AgentRunBudgetOperationRow)
+                .join(
+                    AgentRunBudgetAccountRow,
+                    AgentRunBudgetOperationRow.account_id == AgentRunBudgetAccountRow.id,
+                )
+                .where(AgentRunBudgetAccountRow.agent_run_id == agent_run_id)
+                .order_by(
+                    AgentRunBudgetOperationRow.created_at,
+                    AgentRunBudgetOperationRow.id,
+                )
+            )
+        ).all()
+        return tuple(_operation(row) for row in rows)
+
     async def reserve(
         self,
         *,

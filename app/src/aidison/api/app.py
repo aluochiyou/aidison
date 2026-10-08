@@ -73,6 +73,10 @@ from aidison.application.agent_run_application import (
     DEFAULT_SOLUTION_RUNTIME_BINDING,
     AgentRunApplication,
 )
+from aidison.application.agent_run_trajectory import (
+    AgentRunTrajectory,
+    AgentRunTrajectoryService,
+)
 from aidison.application.impact_proposal_commit import ImpactProposalCommitApplication
 from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
 from aidison.application.proposal_commit import ProposalCommitApplication
@@ -2290,6 +2294,22 @@ def create_app(
             "canonical_decision": canonical,
             "project_revision": next_revision,
         }
+
+    @api.get(
+        "/api/projects/{project_id}/agent-runs/{run_id}/trajectory",
+        response_model=AgentRunTrajectory,
+    )
+    async def get_agent_run_trajectory(
+        project_id: UUID,
+        run_id: UUID,
+        session: DbSession,
+    ) -> AgentRunTrajectory:
+        """Return payload-free lifecycle, attempt and replay-ledger diagnostics."""
+
+        return await AgentRunTrajectoryService(session).build(
+            project_id=project_id,
+            agent_run_id=run_id,
+        )
 
     @api.post("/api/projects/{project_id}/agent-runs/{run_id}/cancel")
     async def cancel_agent_run(
