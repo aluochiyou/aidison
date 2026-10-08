@@ -125,7 +125,48 @@ class ModelInvocationResult(BaseModel):
     provider_request_id: str | None = None
     failure: ProviderFailureClass | None = None
     fallback_from: ModelTarget | None = None
+    usage_tokens: int | None = Field(default=None, ge=0)
     attempts: tuple[PhysicalAttempt, ...]
+
+
+class ModelInvocationObservation(BaseModel):
+    """Payload-free summary exposed to diagnostics only after settlement."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    logical_invocation_id: UUID
+    run_id: UUID
+    project_id: UUID | None = None
+    task_id: UUID
+    status: str = Field(min_length=1, max_length=40)
+    provider: str = Field(min_length=1, max_length=120)
+    model: str = Field(min_length=1, max_length=200)
+    attempt_count: int = Field(ge=0)
+    fallback_used: bool
+    usage_tokens: int | None = Field(default=None, ge=0)
+    failure: ProviderFailureClass | None = None
+
+    @classmethod
+    def from_result(
+        cls,
+        *,
+        request: ModelInvocationRequest,
+        result: ModelInvocationResult,
+    ) -> ModelInvocationObservation:
+        target = _observed_target(request=request, result=result)
+        return cls(
+            logical_invocation_id=request.logical_invocation_id,
+            run_id=request.run_id,
+            project_id=request.project_id,
+            task_id=request.task_id,
+            status=result.status,
+            provider=target.provider,
+            model=target.model,
+            attempt_count=len(result.attempts),
+            fallback_used=result.fallback_from is not None,
+            usage_tokens=result.usage_tokens,
+            failure=result.failure,
+        )
 
 
 class ProviderAdapter(Protocol):
@@ -192,6 +233,12 @@ class ModelAttemptBudgetPort(Protocol):
     async def mark_ambiguous(self, *, operation_id: object, normalized_error: str) -> None: ...
 
 
+class ModelInvocationObserver(Protocol):
+    """Fail-open sink for one completed non-streaming logical invocation."""
+
+    def observe(self, observation: ModelInvocationObservation) -> None: ...
+
+
 class ModelGateway:
     def __init__(
         self,
@@ -200,8 +247,10 @@ class ModelGateway:
         quota: ProviderQuota,
         circuit: ProviderCircuit,
         budget: ModelAttemptBudgetPort | None = None,
+        observer: ModelInvocationObserver | None = None,
     ) -> None:
         self._adapter, self._quota, self._circuit, self._budget = adapter, quota, circuit, budget
+        self._observer = observer
 
     async def invoke(self, request: ModelInvocationRequest) -> ModelInvocationResult:
         attempts: list[PhysicalAttempt] = []
@@ -214,17 +263,23 @@ class ModelGateway:
                         failure=ProviderFailureClass.CIRCUIT_OPEN,
                     )
                 )
-                return ModelInvocationResult(
-                    status="failed",
-                    failure=ProviderFailureClass.CIRCUIT_OPEN,
-                    attempts=tuple(attempts),
+                return self._observed(
+                    request,
+                    ModelInvocationResult(
+                        status="failed",
+                        failure=ProviderFailureClass.CIRCUIT_OPEN,
+                        attempts=tuple(attempts),
+                    ),
                 )
             for _ in range(request.retry_policy.max_attempts_per_target):
                 if datetime.now(UTC) >= request.deadline:
-                    return ModelInvocationResult(
-                        status="failed",
-                        failure=ProviderFailureClass.CANCELLED,
-                        attempts=tuple(attempts),
+                    return self._observed(
+                        request,
+                        ModelInvocationResult(
+                            status="failed",
+                            failure=ProviderFailureClass.CANCELLED,
+                            attempts=tuple(attempts),
+                        ),
                     )
                 ordinal = len(attempts) + 1
                 operation_id = await self._reserve_budget_attempt(
@@ -298,19 +353,26 @@ class ModelGateway:
                     )
                     attempts.append(PhysicalAttempt(target=target, ordinal=ordinal))
                     if not budget_settled:
-                        return ModelInvocationResult(
-                            status="failed",
-                            failure=ProviderFailureClass.UNKNOWN_USAGE_OR_EFFECT,
-                            attempts=tuple(attempts),
+                        return self._observed(
+                            request,
+                            ModelInvocationResult(
+                                status="failed",
+                                failure=ProviderFailureClass.UNKNOWN_USAGE_OR_EFFECT,
+                                attempts=tuple(attempts),
+                            ),
                         )
                     await self._circuit.record_success(key=target.key)
-                    return ModelInvocationResult(
-                        status="succeeded",
-                        actual_target=target,
-                        response_ref=response["response_ref"],
-                        provider_request_id=response.get("provider_request_id"),
-                        fallback_from=request.targets[0] if target_index else None,
-                        attempts=tuple(attempts),
+                    return self._observed(
+                        request,
+                        ModelInvocationResult(
+                            status="succeeded",
+                            actual_target=target,
+                            response_ref=response["response_ref"],
+                            provider_request_id=response.get("provider_request_id"),
+                            fallback_from=request.targets[0] if target_index else None,
+                            usage_tokens=_reported_usage_tokens(response),
+                            attempts=tuple(attempts),
+                        ),
                     )
                 finally:
                     await permit.release()
@@ -328,11 +390,32 @@ class ModelGateway:
             ):
                 break
         failure_class = attempts[-1].failure if attempts else ProviderFailureClass.QUOTA_UNAVAILABLE
-        return ModelInvocationResult(
-            status="failed",
-            failure=failure_class,
-            attempts=tuple(attempts),
+        return self._observed(
+            request,
+            ModelInvocationResult(
+                status="failed",
+                failure=failure_class,
+                attempts=tuple(attempts),
+            ),
         )
+
+    def _observed(
+        self,
+        request: ModelInvocationRequest,
+        result: ModelInvocationResult,
+    ) -> ModelInvocationResult:
+        """Notify diagnostics after product state is resolved, never before."""
+
+        if self._observer is not None:
+            try:
+                self._observer.observe(
+                    ModelInvocationObservation.from_result(request=request, result=result)
+                )
+            except Exception:
+                # Observability is not part of the provider/effect transaction.
+                # It must never turn a settled invocation into a retry.
+                pass
+        return result
 
     async def stream(
         self,
@@ -513,3 +596,20 @@ class ModelGateway:
         if provider_request_id is not None and not isinstance(provider_request_id, str):
             raise ProviderFailure(ProviderFailureClass.MALFORMED_RESPONSE)
         return response
+
+
+def _reported_usage_tokens(response: dict[str, Any]) -> int | None:
+    value = response.get("usage_tokens")
+    return value if isinstance(value, int) and value >= 0 else None
+
+
+def _observed_target(
+    *,
+    request: ModelInvocationRequest,
+    result: ModelInvocationResult,
+) -> ModelTarget:
+    if result.actual_target is not None:
+        return result.actual_target
+    if result.attempts:
+        return result.attempts[-1].target
+    return request.targets[0]

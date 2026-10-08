@@ -91,6 +91,20 @@ class RecordingBudgetPort:
         self.events.append(("ambiguous", int(operation_id.rsplit("-", 1)[1]), normalized_error))
 
 
+class RecordingInvocationObserver:
+    def __init__(self) -> None:
+        self.records = []
+
+    def observe(self, observation) -> None:
+        self.records.append(observation)
+
+
+class FailingInvocationObserver:
+    def observe(self, observation) -> None:
+        del observation
+        raise RuntimeError("telemetry offline")
+
+
 class FakeStreamAdapter:
     def __init__(self, events: list[str]):
         self.events = events
@@ -258,14 +272,21 @@ async def test_budget_port_records_each_physical_attempt_and_settles_known_usage
     )
     budget = RecordingBudgetPort()
     request = _request().model_copy(update={"budget_context": _budget_context()})
+    observer = RecordingInvocationObserver()
     result = await ModelGateway(
         adapter=adapter,
         quota=FakeQuota(),
         circuit=FakeCircuit(),
         budget=budget,
+        observer=observer,
     ).invoke(request)
 
     assert result.status == "succeeded"
+    assert result.usage_tokens == 31
+    assert len(observer.records) == 1
+    assert observer.records[0].logical_invocation_id == request.logical_invocation_id
+    assert observer.records[0].usage_tokens == 31
+    assert not hasattr(observer.records[0], "provider_payload")
     assert budget.events == [
         ("reserve", 1, "primary:primary-v1:pool-a:chat"),
         ("dispatch", 1, "operation-1"),
@@ -274,6 +295,27 @@ async def test_budget_port_records_each_physical_attempt_and_settles_known_usage
         ("dispatch", 2, "operation-2"),
         ("settle", 31, "operation-2"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_observer_failure_cannot_change_a_settled_model_result() -> None:
+    result = await ModelGateway(
+        adapter=FakeAdapter(
+            [
+                {
+                    "response_ref": "artifact://response-observed",
+                    "provider_request_id": "req-observed",
+                    "usage_tokens": 12,
+                }
+            ]
+        ),
+        quota=FakeQuota(),
+        circuit=FakeCircuit(),
+        observer=FailingInvocationObserver(),
+    ).invoke(_request(fallback=False))
+
+    assert result.status == "succeeded"
+    assert result.usage_tokens == 12
 
 
 @pytest.mark.asyncio

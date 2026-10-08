@@ -31,6 +31,7 @@ from aidison.impact.analyst import JsonModeImpactAnalyst
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
 from aidison.infrastructure.model_budget_port import PostgresModelAttemptBudgetPort
 from aidison.observability import (
+    RuntimeModelInvocationObserver,
     RuntimeTracingSettings,
     build_runtime_tracer,
 )
@@ -354,6 +355,7 @@ async def run_research_worker(
                 quota=_LocalProviderQuota(max_concurrency=settings.model_max_concurrency),
                 circuit=_AllowAllProviderCircuit(),
                 budget=PostgresModelAttemptBudgetPort(session_factory=session_factory),
+                observer=RuntimeModelInvocationObserver(runtime_tracer),
             )
             executor = ResearchRunExecutor(
                 session_factory=session_factory,

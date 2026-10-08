@@ -30,6 +30,8 @@ _SAFE_ATTRIBUTE_KEYS = frozenset(
         "aidison.event",
         "aidison.graph_name",
         "aidison.graph_revision",
+        "aidison.attempt_count",
+        "aidison.fallback_used",
         "aidison.outcome",
         "aidison.project_id",
         "aidison.run_id",
@@ -38,6 +40,9 @@ _SAFE_ATTRIBUTE_KEYS = frozenset(
         "http.method",
         "http.status_code",
         "runtime.binding",
+        "gen_ai.provider.name",
+        "gen_ai.request.model",
+        "gen_ai.usage.total_tokens",
     }
 )
 _current_trace_id: ContextVar[str | None] = ContextVar("aidison_runtime_trace_id", default=None)

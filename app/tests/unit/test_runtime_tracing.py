@@ -4,13 +4,14 @@ import asyncio
 from collections.abc import Mapping
 from contextlib import AbstractContextManager
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 from aidison.api.app import create_app
 from aidison.observability import TelemetryCorrelation
+from aidison.observability.model_invocation_tracing import RuntimeModelInvocationObserver
 from aidison.observability.runtime_tracing import (
     DisabledRuntimeTracer,
     LangfuseRuntimeTracer,
@@ -18,6 +19,9 @@ from aidison.observability.runtime_tracing import (
     RuntimeTracer,
     RuntimeTracingSettings,
     build_runtime_tracer,
+)
+from aidison.providers.model_gateway import (
+    ModelInvocationObservation,
 )
 
 RUN_A = UUID("00000000-0000-0000-0000-0000000000a1")
@@ -173,6 +177,47 @@ def test_runtime_trace_isolates_parallel_run_trace_ids() -> None:
     assert {item["trace_context"]["trace_id"] for item in client.calls} == {
         RUN_A.hex,
         RUN_B.hex,
+    }
+
+
+def test_model_invocation_observer_exports_only_scalar_settlement_summary() -> None:
+    client = _FakeLangfuse()
+    tracer = _tracer(client)
+    observation = ModelInvocationObservation(
+        logical_invocation_id=uuid4(),
+        project_id=UUID(int=1),
+        run_id=RUN_A,
+        task_id=UUID(int=2),
+        status="succeeded",
+        provider="deepseek",
+        model="deepseek-chat",
+        attempt_count=1,
+        fallback_used=False,
+        usage_tokens=321,
+    )
+
+    RuntimeModelInvocationObserver(tracer).observe(observation)
+
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    assert "input" not in call and "output" not in call
+    assert call["trace_context"] == {"trace_id": RUN_A.hex}
+    assert call["metadata"] == {
+        "aidison.project": "runtime",
+        "aidison.component": "runtime",
+        "aidison.service": "aidison-runtime",
+        "aidison.project_id": str(UUID(int=1)),
+        "aidison.run_id": str(RUN_A),
+        "aidison.task_id": str(UUID(int=2)),
+        "aidison.invocation_id": str(observation.logical_invocation_id),
+        "aidison.event": "model_invocation_completed",
+        "aidison.outcome": "succeeded",
+        "aidison.attempt_count": 1,
+        "aidison.fallback_used": False,
+        "gen_ai.provider.name": "deepseek",
+        "gen_ai.request.model": "deepseek-chat",
+        "gen_ai.usage.total_tokens": 321,
+        "error.class": None,
     }
 
 
