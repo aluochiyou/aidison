@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,54 @@ from aidison.research.source_collection import (
 from aidison.research.source_observations import SourceKind
 
 pytestmark = pytest.mark.integration
+
+
+@pytest.mark.asyncio
+async def test_concurrent_project_document_uploads_converge_to_one_content_record(
+    tmp_path: Path,
+) -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    api = create_app(factory, artifact_root=tmp_path)
+    transport = httpx.ASGITransport(app=api)
+    prefix = uuid4().hex
+    body = {
+        "name": "shared-battery-spec.md",
+        "content": "Battery A supports 6S and a continuous 40A discharge current.",
+        "media_type": "text/markdown",
+    }
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE projects CASCADE"))
+            await session.commit()
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            created = await client.post(
+                "/api/projects",
+                json={"name": "Concurrent sources", "goal": "Choose a battery"},
+                headers={"Idempotency-Key": f"{prefix}:project"},
+            )
+            assert created.status_code == 201
+            project_id = created.json()["id"]
+
+            async def upload(index: int) -> httpx.Response:
+                return await client.post(
+                    f"/api/projects/{project_id}/source-documents",
+                    json=body,
+                    headers={"Idempotency-Key": f"{prefix}:document:{index}"},
+                )
+
+            uploads = await asyncio.gather(*(upload(index) for index in range(6)))
+            assert all(response.status_code == 201 for response in uploads)
+            assert len({response.json()["id"] for response in uploads}) == 1
+            listed = await client.get(f"/api/projects/{project_id}/source-documents")
+            assert listed.status_code == 200
+            assert len(listed.json()) == 1
+            assert listed.json()[0]["content_hash"] == uploads[0].json()["content_hash"]
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
