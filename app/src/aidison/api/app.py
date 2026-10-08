@@ -1241,7 +1241,55 @@ def create_app(
         return await ProjectSourceDocumentStore(
             session,
             Path(cast(Path, api.state.artifact_root)),
-        ).list_active(project_id=project_id)
+        ).list_all(project_id=project_id)
+
+    @api.post(
+        "/api/projects/{project_id}/source-documents/{document_id}/quarantine"
+    )
+    async def quarantine_project_source_document(
+        project_id: UUID,
+        document_id: UUID,
+        idempotency_key: IdempotencyKey,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        """Exclude one user document from future research without erasing audit data."""
+
+        store = PostgresDomainStore(session)
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        payload_hash = canonical_hash("quarantine-project-source-document", project_id, document_id)
+        command_key = f"project-source-document-quarantine:{project_id}:{idempotency_key}"
+        receipt = await store.claim_command(command_key, payload_hash)
+        documents = ProjectSourceDocumentStore(
+            session,
+            Path(cast(Path, api.state.artifact_root)),
+        )
+        if receipt is not None:
+            document = await documents.get(
+                project_id=project_id, document_id=UUID(receipt)
+            )
+            response.headers["ETag"] = f'"{project.revision}"'
+            return document
+        document, changed = await documents.quarantine(
+            project_id=project_id,
+            document_id=document_id,
+            commit=False,
+        )
+        await store.save_command_receipt(command_key, payload_hash, str(document.id))
+        if changed:
+            await store.append_event(
+                project_id,
+                "project_source_document.quarantined",
+                {
+                    "document_id": str(document.id),
+                    "content_hash": document.content_hash,
+                },
+            )
+        await session.commit()
+        response.headers["ETag"] = f'"{project.revision}"'
+        return document
 
     @api.get("/api/projects/{project_id}/source-documents/{document_id}/content")
     async def read_project_source_document(
@@ -1252,7 +1300,11 @@ def create_app(
         document, content = await ProjectSourceDocumentStore(
             session,
             Path(cast(Path, api.state.artifact_root)),
-        ).read_text(project_id=project_id, document_id=document_id)
+        ).read_text(
+            project_id=project_id,
+            document_id=document_id,
+            require_active=False,
+        )
         return Response(
             content=content,
             media_type=document.media_type,

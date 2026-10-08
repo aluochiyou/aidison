@@ -105,5 +105,50 @@ async def test_project_document_upload_is_idempotent_and_becomes_research_input(
                 task=SimpleNamespace(),  # type: ignore[arg-type]
                 question="Retry after a storage failure",
             )
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            second = await client.post(
+                f"/api/projects/{project_id}/source-documents",
+                json={
+                    "name": "safety-notes.txt",
+                    "content": "Keep a current margin before choosing a battery.",
+                    "media_type": "text/plain",
+                },
+                headers={"Idempotency-Key": f"{prefix}:second-document"},
+            )
+            assert second.status_code == 201
+            safe_document = second.json()
+            quarantined = await client.post(
+                f"/api/projects/{project_id}/source-documents/{safe_document['id']}/quarantine",
+                headers={"Idempotency-Key": f"{prefix}:quarantine"},
+            )
+            assert quarantined.status_code == 200
+            assert quarantined.json()["status"] == "quarantined"
+
+            replayed_quarantine = await client.post(
+                f"/api/projects/{project_id}/source-documents/{safe_document['id']}/quarantine",
+                headers={"Idempotency-Key": f"{prefix}:quarantine"},
+            )
+            assert replayed_quarantine.status_code == 200
+            assert replayed_quarantine.json()["id"] == safe_document["id"]
+
+            inspected = await client.get(
+                f"/api/projects/{project_id}/source-documents/{safe_document['id']}/content"
+            )
+            assert inspected.status_code == 200
+            assert inspected.text == "Keep a current margin before choosing a battery."
+
+            listed_after = await client.get(f"/api/projects/{project_id}/source-documents")
+            assert listed_after.status_code == 200
+            assert {item["status"] for item in listed_after.json()} == {
+                "corrupt",
+                "quarantined",
+            }
+
+        assert await collector.collect(
+            run=SimpleNamespace(project_id=project_id),  # type: ignore[arg-type]
+            task=SimpleNamespace(),  # type: ignore[arg-type]
+            question="No active user document should remain",
+        ) == ()
     finally:
         await engine.dispose()

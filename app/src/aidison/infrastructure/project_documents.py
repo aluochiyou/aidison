@@ -156,11 +156,60 @@ class ProjectSourceDocumentStore:
         )
         return tuple(_document(row) for row in rows)
 
+    async def list_all(
+        self, *, project_id: UUID, limit: int = 64
+    ) -> tuple[ProjectSourceDocument, ...]:
+        if not 1 <= limit <= 128:
+            raise ValueError("project source document limit must be between 1 and 128")
+        rows = await self._session.scalars(
+            select(ProjectSourceDocumentRow)
+            .where(ProjectSourceDocumentRow.project_id == project_id)
+            .order_by(ProjectSourceDocumentRow.created_at, ProjectSourceDocumentRow.id)
+            .limit(limit)
+        )
+        return tuple(_document(row) for row in rows)
+
+    async def quarantine(
+        self,
+        *,
+        project_id: UUID,
+        document_id: UUID,
+        commit: bool = True,
+    ) -> tuple[ProjectSourceDocument, bool]:
+        """Stop future research reads without deleting auditable source bytes."""
+
+        row = await self._session.scalar(
+            select(ProjectSourceDocumentRow)
+            .where(
+                ProjectSourceDocumentRow.id == document_id,
+                ProjectSourceDocumentRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectSourceDocumentNotFoundError("project source document not found")
+        changed = row.status != ProjectSourceDocumentStatus.QUARANTINED.value
+        if changed:
+            row.status = ProjectSourceDocumentStatus.QUARANTINED.value
+        await self._flush_or_commit(commit=commit)
+        return _document(row), changed
+
     async def read_text(
-        self, *, project_id: UUID, document_id: UUID
+        self,
+        *,
+        project_id: UUID,
+        document_id: UUID,
+        require_active: bool = True,
     ) -> tuple[ProjectSourceDocument, str]:
         row = await self._row(project_id=project_id, document_id=document_id)
-        if row.status != ProjectSourceDocumentStatus.ACTIVE.value:
+        if require_active and row.status != ProjectSourceDocumentStatus.ACTIVE.value:
+            raise ProjectSourceDocumentIntegrityError(
+                f"project source document is {row.status}"
+            )
+        if row.status in {
+            ProjectSourceDocumentStatus.MISSING.value,
+            ProjectSourceDocumentStatus.CORRUPT.value,
+        }:
             raise ProjectSourceDocumentIntegrityError(
                 f"project source document is {row.status}"
             )
