@@ -92,6 +92,7 @@ def test_runtime_trace_uses_stable_run_trace_and_only_safe_metadata() -> None:
     assert metadata == {
         "aidison.project": "runtime",
         "aidison.component": "runtime",
+        "aidison.service": "aidison-runtime",
         "aidison.request_id": "req-1",
         "aidison.project_id": "00000000-0000-0000-0000-000000000001",
         "aidison.run_id": str(RUN_A),
@@ -143,6 +144,7 @@ def test_langgraph_callback_ignores_graph_inputs_outputs_and_uses_agent_run_trac
     assert call["metadata"] == {
         "aidison.project": "runtime",
         "aidison.component": "runtime",
+        "aidison.service": "aidison-runtime",
         "aidison.run_id": str(RUN_A),
         "aidison.task_id": "power.research",
         "aidison.invocation_id": str(callback_run_id),

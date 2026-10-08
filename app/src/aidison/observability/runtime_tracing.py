@@ -217,6 +217,11 @@ class LangfuseRuntimeTracer:
         metadata = _safe_metadata(correlation=correlation, attributes=attributes)
         if metadata is None:
             return _NoopTraceSpan()
+        # A Langfuse project is selected by credentials rather than a per-call
+        # SDK argument. Preserve the configured logical project as a safe
+        # deployment label so traces from several Aidison environments can be
+        # distinguished without exporting request/model payloads.
+        metadata["aidison.service"] = self._project
         return _LangfuseTraceSpan(
             tracer=self,
             trace_id=_trace_id_for(correlation),
