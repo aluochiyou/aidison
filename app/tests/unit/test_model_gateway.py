@@ -114,6 +114,15 @@ class FailingInvocationObserver:
         raise RuntimeError("telemetry offline")
 
 
+class RejectingDispatchGate:
+    def __init__(self) -> None:
+        self.calls = []
+
+    async def authorize(self, *, request, target, ordinal) -> None:
+        self.calls.append((request.run_id, target.key, ordinal))
+        raise RuntimeError("no-progress gate rejected dispatch")
+
+
 class FakeStreamAdapter:
     def __init__(self, events: list[str]):
         self.events = events
@@ -254,6 +263,29 @@ async def test_open_primary_circuit_uses_frozen_availability_fallback() -> None:
     ]
     assert adapter.calls == [request.targets[1].key]
     assert quota.events == [f"acquire:{request.targets[1].key}", "release"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_gate_rejects_before_budget_quota_or_provider_side_effect() -> None:
+    adapter = FakeAdapter([])
+    quota = FakeQuota()
+    budget = RecordingBudgetPort()
+    gate = RejectingDispatchGate()
+    request = _request(fallback=False).model_copy(update={"budget_context": _budget_context()})
+
+    with pytest.raises(RuntimeError, match="no-progress gate"):
+        await ModelGateway(
+            adapter=adapter,
+            quota=quota,
+            circuit=FakeCircuit(),
+            budget=budget,
+            dispatch_gate=gate,
+        ).invoke(request)
+
+    assert gate.calls == [(request.run_id, request.targets[0].key, 1)]
+    assert budget.events == []
+    assert quota.events == []
+    assert adapter.calls == []
 
 
 @pytest.mark.asyncio

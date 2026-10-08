@@ -19,6 +19,7 @@ from aidison.application.agent_run_application import (
     DEFAULT_RESEARCH_RUNTIME_BINDING,
     DEFAULT_SOLUTION_RUNTIME_BINDING,
 )
+from aidison.application.agent_run_health import AgentRunProgressWatchdog
 from aidison.application.impact_proposal_run_execution import (
     ImpactProposalGraphRunExecutor,
     ImpactProposalLangGraphWorker,
@@ -396,6 +397,7 @@ async def run_research_worker(
                 ),
                 budget=PostgresModelAttemptBudgetPort(session_factory=session_factory),
                 observer=RuntimeModelInvocationObserver(runtime_tracer),
+                dispatch_gate=AgentRunProgressWatchdog(session_factory=session_factory),
             )
             executor = ResearchRunExecutor(
                 session_factory=session_factory,

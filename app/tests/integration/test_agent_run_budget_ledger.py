@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text, update
 
+from aidison.application.agent_run_health import AgentRunProgressWatchdog
 from aidison.application.service import ProjectApplication
 from aidison.infrastructure.agent_run_budget import (
     AgentRunBudgetConflictError,
@@ -34,6 +35,7 @@ from aidison.providers.model_gateway import (
 from aidison.runtime.agent_run_budget import AgentRunBudgetOperationKind, AgentRunBudgetState
 from aidison.runtime.agent_runs import AgentRun, AgentRunKind, utc_now
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
+from aidison.runtime.run_health import RunHealth, RunHealthViolation
 
 pytestmark = pytest.mark.integration
 
@@ -253,6 +255,89 @@ async def test_model_gateway_uses_postgres_budget_port_for_a_real_physical_attem
             refreshed_account = await AgentRunBudgetLedger(session).get_account(account.id)
             assert refreshed_account.token_reserved == 0
             assert refreshed_account.token_consumed == 21
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_progress_watchdog_blocks_third_identical_physical_attempt() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_budget_accounts CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="AgentRun progress watchdog fixture",
+                goal="Stop repeated model calls that produce no admitted result",
+                idempotency_key=f"agent-run-watchdog-project-{uuid4()}",
+            )
+            run_control = AgentRunControl(session)
+            run = await run_control.create(_run(project_id=project.id))
+            claim = await run_control.claim_next(
+                worker_id="progress-watchdog-worker", lease_seconds=60
+            )
+            assert claim is not None
+            account = await AgentRunBudgetLedger(session).create_account(
+                agent_run_id=run.id,
+                token_cap=200,
+                tool_call_cap=0,
+            )
+            await session.commit()
+
+        target = ModelTarget(
+            provider="provider-a",
+            model="model-a",
+            revision="2026-09",
+            credential_pool_id="pool-a",
+            quota_group="research",
+            capabilities=("structured_output",),
+        )
+        gateway = ModelGateway(
+            adapter=_GatewayAdapter(),
+            quota=_Quota(),
+            circuit=_Circuit(),
+            budget=PostgresModelAttemptBudgetPort(session_factory=factory),
+            dispatch_gate=AgentRunProgressWatchdog(session_factory=factory),
+        )
+
+        def request(sequence: int) -> ModelInvocationRequest:
+            return ModelInvocationRequest(
+                logical_invocation_id=uuid4(),
+                run_id=run.id,
+                task_id=uuid4(),
+                basis_hash=run.basis_hash,
+                prompt_ref="artifact+sha256://" + "a" * 64 + "/same-prompt",
+                required_capabilities=("structured_output",),
+                targets=(target,),
+                retry_policy=RetryPolicy(max_attempts_per_target=1, base_backoff_seconds=0),
+                fallback_policy=FallbackPolicy.NONE,
+                deadline=utc_now() + timedelta(minutes=1),
+                budget_context=ModelBudgetContext(
+                    account_id=account.id,
+                    claim=claim,
+                    logical_step="research.repeated-step",
+                    idempotency_prefix=f"{run.id}:repeated-step:{sequence}",
+                    request_hash=sha256(b"same-request").hexdigest(),
+                    reserved_tokens=40,
+                ),
+            )
+
+        assert (await gateway.invoke(request(1))).status == "succeeded"
+        assert (await gateway.invoke(request(2))).status == "succeeded"
+        with pytest.raises(RunHealthViolation) as raised:
+            await gateway.invoke(request(3))
+
+        assert raised.value.finding.health is RunHealth.DUPLICATE_LOOP
+        async with factory() as session:
+            operations = await AgentRunBudgetLedger(session).list_operations_for_run(run.id)
+        assert len(operations) == 2
+        assert all(operation.state is AgentRunBudgetState.SETTLED for operation in operations)
     finally:
         await engine.dispose()
 

@@ -77,6 +77,18 @@ class RunHealthFinding(BaseModel):
     observed_token_cost: int = Field(ge=0)
 
 
+class RunHealthViolation(RuntimeError):
+    """Raised before another physical call would continue an unhealthy Run.
+
+    The exception carries only a classified finding.  Raw prompts, provider
+    payloads and source content must never cross this control boundary.
+    """
+
+    def __init__(self, finding: RunHealthFinding) -> None:
+        self.finding = finding
+        super().__init__(f"{finding.health.value}:{','.join(finding.reason_codes)}")
+
+
 _MEANINGFUL = {
     ProgressEventKind.RESULT_ADMITTED,
     ProgressEventKind.COVERAGE_CHANGED,
@@ -101,8 +113,8 @@ def evaluate_run_health(
     ordered = tuple(sorted(events, key=lambda item: item.occurred_at))
     run_id = ordered[0].run_id
     progress = sum(event.kind in _MEANINGFUL for event in ordered)
-    cost = sum(event.token_cost for event in ordered)
     if ordered[-1].kind is ProgressEventKind.USER_WAIT:
+        cost = sum(event.token_cost for event in ordered)
         return _finding(
             run_id,
             RunHealth.WAITING_LEGITIMATELY,
@@ -111,9 +123,20 @@ def evaluate_run_health(
             progress,
             cost,
         )
-    hashes = [event.invocation_hash for event in ordered if event.invocation_hash]
+
+    # A durable result admission (or another explicitly meaningful event)
+    # starts a new no-progress window.  Earlier cost and retries remain in the
+    # audit trail, but must not make a later healthy step look stuck; likewise,
+    # one early success must not hide a subsequent loop forever.
+    last_progress_index = max(
+        (index for index, event in enumerate(ordered) if event.kind in _MEANINGFUL),
+        default=-1,
+    )
+    window = ordered[last_progress_index + 1 :]
+    cost = sum(event.token_cost for event in window)
+    hashes = [event.invocation_hash for event in window if event.invocation_hash]
     if (
-        progress == 0
+        window
         and hashes
         and max(hashes.count(value) for value in set(hashes)) > policy.max_duplicate_invocations
     ):
@@ -125,7 +148,7 @@ def evaluate_run_health(
             progress,
             cost,
         )
-    if progress == 0 and cost > policy.max_tokens_without_progress:
+    if window and cost > policy.max_tokens_without_progress:
         return _finding(
             run_id,
             RunHealth.COST_WITHOUT_PROGRESS,
@@ -134,8 +157,8 @@ def evaluate_run_health(
             progress,
             cost,
         )
-    failures = [event for event in ordered if event.kind is ProgressEventKind.PROVIDER_FAILURE]
-    if progress == 0 and len(failures) >= policy.max_consecutive_provider_failures:
+    failures = [event for event in window if event.kind is ProgressEventKind.PROVIDER_FAILURE]
+    if window and len(failures) >= policy.max_consecutive_provider_failures:
         return _finding(
             run_id,
             RunHealth.PROVIDER_STALL,
@@ -174,5 +197,6 @@ __all__ = [
     "ProgressWatchdogPolicy",
     "RunHealth",
     "RunHealthFinding",
+    "RunHealthViolation",
     "evaluate_run_health",
 ]

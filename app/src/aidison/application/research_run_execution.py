@@ -12,6 +12,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from langgraph.checkpoint.base import BaseCheckpointSaver
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aidison.application.agent_run_health import run_health_failure_code
 from aidison.application.langgraph_worker import LangGraphOrchestrationWorker
 from aidison.application.multi_task_research import (
     AdmittedDependencyContextLoader,
@@ -78,6 +79,7 @@ from aidison.research.source_collection import NoopResearchSourceCollector, Rese
 from aidison.research.strategy import ResearchCollectionPolicy, ResearchRunContract
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim, AgentRunKind, AgentRunStatus
 from aidison.runtime.minimal_graph import execution_thread_config
+from aidison.runtime.run_health import RunHealthViolation
 from aidison.workstreams.memory_routing import MemoryRoute, MemoryRouteDecision
 
 
@@ -120,6 +122,10 @@ def _research_failure_summary(failure_code: str, error: Exception | None) -> str
             "补题后仍出现完全相同的证据缺口，需要你调整研究范围、来源策略或项目约束"
         ),
         "runtime_budget_exhausted": "本轮 AI Token 预算已用完",
+        "runtime_duplicate_invocation_loop": "检测到相同模型请求重复执行且没有产生新结果",
+        "runtime_cost_without_progress": "本轮持续消耗 Token，但没有产生新的准入结果",
+        "runtime_provider_stall": "模型服务连续失败，且本轮没有形成有效进展",
+        "runtime_no_progress": "运行健康检查发现本轮没有形成有效进展",
         "research_model_usage_unverified": "模型没有返回可核验的 Token 用量，已停止继续计费调用",
         "research_model_timeout": "模型调用超过本轮允许时限，已停止等待",
         "research_run_duration_exceeded": "研究运行超过了已批准的最长时长，已停止继续派发",
@@ -221,6 +227,13 @@ class ResearchRunExecutor:
                 run=run,
                 claim=claim,
                 failure_code="research_run_duration_exceeded",
+            )
+            return ResearchRunExecution(readiness="blocked", agent_decision=None)
+        except RunHealthViolation as error:
+            await self._fail_claim_if_current(
+                run=run,
+                claim=claim,
+                failure_code=run_health_failure_code(error.finding),
             )
             return ResearchRunExecution(readiness="blocked", agent_decision=None)
 
@@ -398,6 +411,13 @@ class ResearchRunExecutor:
                 failure_code=_model_failure_code(error),
             )
             return ResearchRunExecution(readiness="blocked", agent_decision=None)
+        except RunHealthViolation as error:
+            await self._fail_claim_if_current(
+                run=run,
+                claim=claim,
+                failure_code=run_health_failure_code(error.finding),
+            )
+            return ResearchRunExecution(readiness="blocked", agent_decision=None)
         except Exception as error:
             await self._fail_claim_if_current(
                 run=run,
@@ -553,6 +573,13 @@ class ResearchRunExecutor:
                 run=run,
                 claim=claim,
                 failure_code=_model_failure_code(error),
+            )
+            return ResearchRunExecution(readiness="blocked", agent_decision=None)
+        except RunHealthViolation as error:
+            await self._fail_claim_if_current(
+                run=run,
+                claim=claim,
+                failure_code=run_health_failure_code(error.finding),
             )
             return ResearchRunExecution(readiness="blocked", agent_decision=None)
         except Exception as error:

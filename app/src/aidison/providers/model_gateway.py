@@ -239,6 +239,18 @@ class ModelInvocationObserver(Protocol):
     def observe(self, observation: ModelInvocationObservation) -> None: ...
 
 
+class ModelDispatchGate(Protocol):
+    """Optional fail-closed policy checked before each physical model attempt."""
+
+    async def authorize(
+        self,
+        *,
+        request: ModelInvocationRequest,
+        target: ModelTarget,
+        ordinal: int,
+    ) -> None: ...
+
+
 class ModelGateway:
     def __init__(
         self,
@@ -248,9 +260,11 @@ class ModelGateway:
         circuit: ProviderCircuit,
         budget: ModelAttemptBudgetPort | None = None,
         observer: ModelInvocationObserver | None = None,
+        dispatch_gate: ModelDispatchGate | None = None,
     ) -> None:
         self._adapter, self._quota, self._circuit, self._budget = adapter, quota, circuit, budget
         self._observer = observer
+        self._dispatch_gate = dispatch_gate
 
     async def invoke(self, request: ModelInvocationRequest) -> ModelInvocationResult:
         attempts: list[PhysicalAttempt] = []
@@ -287,6 +301,12 @@ class ModelGateway:
                         ),
                     )
                 ordinal = len(attempts) + 1
+                if self._dispatch_gate is not None:
+                    await self._dispatch_gate.authorize(
+                        request=request,
+                        target=target,
+                        ordinal=ordinal,
+                    )
                 operation_id = await self._reserve_budget_attempt(
                     request=request,
                     target=target,
@@ -433,6 +453,8 @@ class ModelGateway:
         target = request.targets[0]
         if not await self._circuit.allow_request(key=target.key, deadline=request.deadline):
             raise ProviderFailure(ProviderFailureClass.CIRCUIT_OPEN)
+        if self._dispatch_gate is not None:
+            await self._dispatch_gate.authorize(request=request, target=target, ordinal=1)
         operation_id = await self._reserve_budget_attempt(request=request, target=target, ordinal=1)
         try:
             permit = await self._quota.acquire(bucket_key=target.key, deadline=request.deadline)

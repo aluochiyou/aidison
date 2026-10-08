@@ -63,6 +63,44 @@ def test_watchdog_counts_admission_as_progress_and_leaves_healthy_run_alone() ->
     assert finding.failure_class is None
 
 
+def test_watchdog_resets_window_after_progress_but_detects_a_later_loop() -> None:
+    run_id = uuid4()
+    now = datetime.now(UTC)
+    events = (
+        ProgressEvent(
+            run_id=run_id,
+            occurred_at=now,
+            kind=ProgressEventKind.INVOCATION_DISPATCHED,
+            invocation_hash="old-query",
+            token_cost=9_000,
+        ),
+        ProgressEvent(
+            run_id=run_id,
+            occurred_at=now + timedelta(seconds=1),
+            kind=ProgressEventKind.RESULT_ADMITTED,
+        ),
+        *tuple(
+            ProgressEvent(
+                run_id=run_id,
+                occurred_at=now + timedelta(seconds=index + 2),
+                kind=ProgressEventKind.INVOCATION_DISPATCHED,
+                invocation_hash="new-query",
+                token_cost=100,
+            )
+            for index in range(3)
+        ),
+    )
+
+    finding = evaluate_run_health(
+        events,
+        policy=ProgressWatchdogPolicy(max_duplicate_invocations=2),
+    )
+
+    assert finding.health is RunHealth.DUPLICATE_LOOP
+    assert finding.meaningful_progress_events == 1
+    assert finding.observed_token_cost == 300
+
+
 def test_watchdog_treats_user_wait_as_legitimate_wait_not_failure() -> None:
     finding = evaluate_run_health((_event(ProgressEventKind.USER_WAIT, seconds=0),))
     assert finding.health is RunHealth.WAITING_LEGITIMATELY
