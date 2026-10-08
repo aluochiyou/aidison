@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import Field
 
-from aidison.api.app import _research_quality_payload
+from aidison.application.research_quality import build_research_quality_payload
 from aidison.evaluation.contracts import FrozenModel, MetricResult, MetricStatus
 from aidison.research.consolidation import (
     ConsolidationInput,
@@ -374,7 +374,7 @@ def check_research_quality_projection(*, inputs: dict[str, Any]) -> MetricResult
             policy=value.policy,
         )
     )
-    quality = _research_quality_payload(
+    quality = build_research_quality_payload(
         coverage=value.coverage,
         snapshot=snapshot,
         evidence_diagnostics=value.evidence_diagnostics,

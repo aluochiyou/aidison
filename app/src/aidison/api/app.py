@@ -77,6 +77,10 @@ from aidison.application.agent_run_trajectory import (
     AgentRunTrajectory,
     AgentRunTrajectoryService,
 )
+from aidison.application.failure_regression import (
+    FailureRegressionCandidateCapture,
+    FailureRegressionCandidateService,
+)
 from aidison.application.impact_proposal_commit import ImpactProposalCommitApplication
 from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
 from aidison.application.proposal_commit import ProposalCommitApplication
@@ -85,6 +89,7 @@ from aidison.application.research_consolidation import (
     read_research_evidence_diagnostics,
     read_research_source_collection_diagnostics,
 )
+from aidison.application.research_quality import build_research_quality_payload
 from aidison.application.research_strategy_planning import (
     ResearchStrategyPlanningError,
     ResearchStrategyPlanningService,
@@ -181,86 +186,6 @@ _logger = logging.getLogger(__name__)
 SessionDependency = Annotated[AsyncSession, Depends()]
 _PROJECT_SNAPSHOT_PROJECTION_VERSION = "project-snapshot.v1"
 _PROJECT_EVENT_SCHEMA_VERSION = "project-event.v1"
-
-
-def _research_quality_payload(
-    *,
-    coverage: CoverageContract,
-    snapshot: Any,
-    evidence_diagnostics: dict[str, dict[str, object]] | None = None,
-    source_collection_diagnostics: dict[str, dict[str, object]] | None = None,
-    context_summary: dict[str, object] | None = None,
-) -> dict[str, Any]:
-    """Return the small, user-safe part of deterministic research consolidation.
-
-    Artifact references and raw model output stay in the audit store.  This
-    projection explains the decision in product terms: which coverage item is
-    missing, under-sourced, or conflicted, and what the system will do next.
-    """
-
-    contract_items = {item.key: item for item in coverage.keys}
-    def _diagnostic_for(coverage_key: str) -> dict[str, object]:
-        value = (evidence_diagnostics or {}).get(coverage_key, {})
-        return value if isinstance(value, dict) else {}
-
-    def _diagnostic_count(coverage_key: str) -> int:
-        value = _diagnostic_for(coverage_key).get("rejected_claim_count", 0)
-        return value if isinstance(value, int) else 0
-
-    def _diagnostic_reasons(coverage_key: str) -> list[str]:
-        value = _diagnostic_for(coverage_key).get("rejected_reason_codes", [])
-        return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
-
-    def _collection_for(coverage_key: str) -> dict[str, object]:
-        value = (source_collection_diagnostics or {}).get(coverage_key, {})
-        return value if isinstance(value, dict) else {}
-
-    def _collection_count(coverage_key: str) -> int:
-        value = _collection_for(coverage_key).get("collected_source_count", 0)
-        return value if isinstance(value, int) else 0
-
-    def _collection_strings(coverage_key: str, field: str) -> list[str]:
-        value = _collection_for(coverage_key).get(field, [])
-        return [item for item in value if isinstance(item, str)] if isinstance(value, list) else []
-
-    return {
-        "outcome": snapshot.sufficiency.outcome.value,
-        "reason_codes": list(snapshot.sufficiency.reason_codes),
-        "gap_coverage_keys": list(snapshot.sufficiency.gap_coverage_keys),
-        "conflict_count": len(snapshot.conflicts),
-        "context": context_summary,
-        "coverage": [
-            {
-                "coverage_key": item.coverage_key,
-                "question": contract_items[item.coverage_key].question,
-                "module_ids": list(contract_items[item.coverage_key].module_ids),
-                "priority": item.priority.value,
-                "status": item.status.value,
-                "observed_source_count": item.observed_source_count,
-                "min_distinct_sources": item.min_distinct_sources,
-                "observed_origin_count": item.observed_origin_count,
-                "min_distinct_origins": item.min_distinct_origins,
-                "missing_source_kinds": list(item.missing_source_kinds),
-                "observed_source_kinds": list(item.observed_source_kinds),
-                "conflict_ids": list(item.conflict_ids),
-                "requires_independent_verification": item.requires_independent_verification,
-                "independently_verified": item.independently_verified,
-                "rejected_claim_count": _diagnostic_count(item.coverage_key),
-                "rejected_reason_codes": _diagnostic_reasons(item.coverage_key),
-                "collected_source_count": _collection_count(item.coverage_key),
-                "collection_profiles": _collection_strings(
-                    item.coverage_key, "collection_profiles"
-                ),
-                "collected_source_kinds": _collection_strings(
-                    item.coverage_key, "collected_source_kinds"
-                ),
-                "unavailable_source_reason_codes": _collection_strings(
-                    item.coverage_key, "unavailable_reason_codes"
-                ),
-            }
-            for item in snapshot.coverage
-        ],
-    }
 
 
 async def _research_context_summary(
@@ -392,7 +317,7 @@ async def _research_quality_by_run(
                 run=run,
             )
             context_summary = await _research_context_summary(artifacts=artifacts, run=run)
-            summaries[row.id] = _research_quality_payload(
+            summaries[row.id] = build_research_quality_payload(
                 coverage=coverage,
                 snapshot=consolidation,
                 evidence_diagnostics=diagnostics,
@@ -2310,6 +2235,42 @@ def create_app(
             project_id=project_id,
             agent_run_id=run_id,
         )
+
+    @api.post(
+        "/api/projects/{project_id}/agent-runs/{run_id}/evaluation-candidates",
+        response_model=FailureRegressionCandidateCapture,
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def capture_failed_agent_run_for_evaluation(
+        project_id: UUID,
+        run_id: UUID,
+        idempotency_key: IdempotencyKey,
+        session: DbSession,
+    ) -> FailureRegressionCandidateCapture:
+        """Freeze one failed Run for human labeling; never auto-promote it."""
+
+        return await FailureRegressionCandidateService(
+            session=session,
+            artifact_root=Path(getattr(api.state, "artifact_root", "artifacts/data")),
+        ).capture(
+            project_id=project_id,
+            agent_run_id=run_id,
+            idempotency_key=idempotency_key,
+        )
+
+    @api.get(
+        "/api/projects/{project_id}/agent-runs/{run_id}/evaluation-candidates",
+        response_model=list[FailureRegressionCandidateCapture],
+    )
+    async def list_failed_agent_run_evaluation_candidates(
+        project_id: UUID,
+        run_id: UUID,
+        session: DbSession,
+    ) -> tuple[FailureRegressionCandidateCapture, ...]:
+        return await FailureRegressionCandidateService(
+            session=session,
+            artifact_root=Path(getattr(api.state, "artifact_root", "artifacts/data")),
+        ).list(project_id=project_id, agent_run_id=run_id)
 
     @api.post("/api/projects/{project_id}/agent-runs/{run_id}/cancel")
     async def cancel_agent_run(

@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from aidison.api.app import _research_quality_payload
+from aidison.application.research_quality import build_research_quality_payload
 from aidison.research.consolidation import (
     ClaimKey,
     ConsolidationInput,
@@ -54,7 +54,7 @@ def test_quality_projection_explains_insufficient_distinct_sources() -> None:
         )
     )
 
-    quality = _research_quality_payload(coverage=coverage, snapshot=snapshot)
+    quality = build_research_quality_payload(coverage=coverage, snapshot=snapshot)
 
     assert quality["outcome"] == "needs_more_evidence"
     assert quality["reason_codes"] == ["must_coverage_has_bounded_gap"]
@@ -133,7 +133,7 @@ def test_quality_projection_exposes_a_partial_subquery_collection_failure() -> N
         )
     )
 
-    quality = _research_quality_payload(
+    quality = build_research_quality_payload(
         coverage=coverage,
         snapshot=snapshot,
         source_collection_diagnostics={
