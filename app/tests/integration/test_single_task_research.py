@@ -49,6 +49,7 @@ from aidison.research.langgraph_contracts import (
 from aidison.research.single_task_graph import build_single_task_research_graph
 from aidison.research.source_collection import (
     CollectedResearchSource,
+    ProjectDocumentResearchSourceCollector,
     ResearchSourceCollectionError,
 )
 from aidison.research.source_observations import SourceIdentity, SourceKind
@@ -170,6 +171,48 @@ class _EvidenceResearcher(_FakeResearcher):
                     "applicability": "project-module",
                     "normalization_schema": "current-v1",
                     "normalized_value": "35A@12V",
+                },
+            ),
+        }
+
+
+class _ProjectDocumentEvidenceResearcher(_FakeResearcher):
+    """Assert that the model boundary receives the selected project document."""
+
+    def __init__(self) -> None:
+        self.observed_context: tuple[CollectedResearchSource, ...] = ()
+
+    async def research(
+        self,
+        *,
+        question: str,
+        input_refs: tuple[str, ...],
+        steering_instructions: tuple[str, ...] = (),
+        evidence_context: tuple[CollectedResearchSource, ...] = (),
+    ) -> object:
+        del input_refs, steering_instructions
+        assert len(evidence_context) == 1
+        source = evidence_context[0]
+        self.observed_context = evidence_context
+        assert source.normalized_document == (
+            "Battery A supports 6S and a continuous 40A discharge current."
+        )
+        return {
+            "question": question,
+            "summary": "The uploaded battery specification supports the proposed option.",
+            "recommended_option": "battery-a",
+            "alternatives": ("battery-b",),
+            "evidence_claims": (
+                {
+                    "coverage_key": "research.answer",
+                    "source_key": source.key,
+                    "quote_text": "Battery A supports 6S and a continuous 40A discharge current.",
+                    "claim": "Battery A supports a 6S configuration with 40A continuous discharge.",
+                    "subject_identity": "battery-a",
+                    "predicate": "continuous_discharge_current",
+                    "applicability": "project-module",
+                    "normalization_schema": "battery-current-v1",
+                    "normalized_value": "40A@6S",
                 },
             ),
         }
@@ -433,6 +476,118 @@ async def test_single_task_research_writes_raw_artifact_then_admits_result_and_p
             await connection.execute(
                 sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(sql.Identifier(schema_name))
             )
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_project_document_is_snapshotted_before_researcher_receives_it(
+    tmp_path: Path,
+) -> None:
+    """A user document becomes immutable Run input before provider dispatch.
+
+    This closes the real path, rather than testing the source collector in
+    isolation: project upload -> collector -> source snapshot -> researcher
+    -> evidence admission.  The original document is intentionally not used
+    as a mutable reference after the snapshot has been written.
+    """
+
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    document_content = "Battery A supports 6S and a continuous 40A discharge current."
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE projects CASCADE"))
+            await session.commit()
+        project_id, project_revision = await _prepared_project(factory, str(uuid4()))
+        api = create_app(factory, artifact_root=tmp_path)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            uploaded = await client.post(
+                f"/api/projects/{project_id}/source-documents",
+                json={
+                    "name": "battery-specification.md",
+                    "content": document_content,
+                    "media_type": "text/markdown",
+                },
+                headers={"Idempotency-Key": f"project-source:{uuid4()}"},
+            )
+        assert uploaded.status_code == 201, uploaded.text
+
+        async with factory() as session:
+            run = _run(project_id, basis_project_revision=project_revision)
+            control = AgentRunControl(session)
+            await control.create(run)
+            await session.commit()
+            claim = await control.claim_next(worker_id="project-source-worker", lease_seconds=60)
+            assert claim is not None
+            await session.commit()
+
+        task = TaskEnvelope(
+            run_id=run.id,
+            task_key="battery-research",
+            basis_hash=run.basis_hash,
+            plan_revision=1,
+            capability="research",
+            input_refs=(),
+            dependency_task_ids=(),
+            coverage_keys=("research.answer",),
+            allowed_tool_ids=(),
+            budget_ref="budget://run/project-source",
+            idempotency_key="project-source-research-1",
+        )
+        grant = ExecutionGrant(
+            task_id=task.id,
+            attempt_id=uuid4(),
+            generation=claim.generation,
+            lease_token=claim.lease_token,
+            deadline_ref="deadline://run/project-source",
+            idempotency_prefix="project-source-research-1",
+        )
+        researcher = _ProjectDocumentEvidenceResearcher()
+        execution = await SingleTaskResearchExecutor(
+            session_factory=factory,
+            artifact_root=tmp_path,
+            researcher=researcher,
+            source_collector=ProjectDocumentResearchSourceCollector(
+                session_factory=factory,
+                artifact_root=tmp_path,
+            ),
+        ).execute(
+            run=run,
+            claim=claim,
+            task=task,
+            grant=grant,
+            question="Which uploaded battery has sufficient current for the 6S design?",
+        )
+
+        assert execution.result.status is ResearchResultStatus.SUCCEEDED
+        assert len(researcher.observed_context) == 1
+        assert researcher.observed_context[0].source.kind is SourceKind.USER_UPLOAD
+        async with factory() as session:
+            artifacts = ContentAddressedArtifactStore(session, tmp_path)
+            snapshots = await artifacts.list_metadata(
+                project_id=project_id,
+                agent_run_id=run.id,
+                kind="research_source_snapshot",
+            )
+            assert len(snapshots) == 1
+            snapshot = snapshots[0]
+            assert snapshot.source_url == researcher.observed_context[0].source.canonical_locator
+            assert await artifacts.read_bytes(project_id=project_id, artifact_id=snapshot.id) == (
+                document_content.encode("utf-8")
+            )
+            report = await artifacts.read_json_ref(
+                project_id=project_id,
+                basis_hash=run.basis_hash,
+                ref=execution.result.source_collection_report_ref,
+                expected_kind="research_source_collection_report",
+            )
+        assert report["source_snapshot_refs"] == [snapshot.ref]
+    finally:
         await engine.dispose()
 
 
