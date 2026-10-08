@@ -21,7 +21,12 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aidison.infrastructure.project_documents import (
+    ProjectSourceDocumentIntegrityError,
+    ProjectSourceDocumentStore,
+)
 from aidison.research.evidence_diagnostics import ResearchSourceCollectionFailure
 from aidison.research.langgraph_contracts import TaskEnvelope
 from aidison.research.source_observations import SourceIdentity, SourceKind, source_origin_key
@@ -115,6 +120,83 @@ class GitHubSourceCollectionError(ResearchSourceCollectionError):
 
 class LocalFileSourceCollectionError(ResearchSourceCollectionError):
     """A classified failure at the explicit local-source read boundary."""
+
+
+class ProjectDocumentSourceCollectionError(ResearchSourceCollectionError):
+    """A classified failure while reading user-uploaded project source material."""
+
+
+class ProjectDocumentResearchSourceCollector:
+    """Expose active project documents as immutable, run-snapshotted input.
+
+    A document is selected only by the durable Project scope; neither an LLM
+    nor a task prompt can name a file path or read arbitrary host data. The
+    normal Research source snapshot is still written before model execution,
+    so later edits or quarantining do not rewrite an already-started Run.
+    """
+
+    def __init__(
+        self,
+        *,
+        session_factory: async_sessionmaker[AsyncSession],
+        artifact_root: Path,
+        max_documents: int = 32,
+    ) -> None:
+        if not 1 <= max_documents <= 64:
+            raise ValueError("project source document limit must be between 1 and 64")
+        self._session_factory = session_factory
+        self._artifact_root = artifact_root
+        self._max_documents = max_documents
+
+    async def collect(
+        self,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+    ) -> tuple[CollectedResearchSource, ...]:
+        del task, question
+        try:
+            async with self._session_factory() as session:
+                documents = ProjectSourceDocumentStore(session, self._artifact_root)
+                try:
+                    active = await documents.list_active(
+                        project_id=run.project_id, limit=self._max_documents
+                    )
+                    sources: list[CollectedResearchSource] = []
+                    observed_at = datetime.now(UTC)
+                    for document in active:
+                        _, content = await documents.read_text(
+                            project_id=run.project_id, document_id=document.id
+                        )
+                        sources.append(
+                            CollectedResearchSource(
+                                key=f"project-source-{document.id.hex}",
+                                source=SourceIdentity(
+                                    kind=SourceKind.USER_UPLOAD,
+                                    provider="aidison-project-document-v1",
+                                    canonical_locator=(
+                                        "aidison://project-source/"
+                                        f"{document.id}/{document.content_hash}"
+                                    ),
+                                ),
+                                normalized_document=content,
+                                media_type=document.media_type,
+                                representation="normalized-project-document-text-v1",
+                                parser_revision="project-document-upload-v1",
+                                observed_at=observed_at,
+                                coverage_source_kinds=(SourceKind.USER_UPLOAD.value,),
+                            )
+                        )
+                    return tuple(sources)
+                except ProjectSourceDocumentIntegrityError:
+                    # Persist the missing/corrupt lifecycle transition before
+                    # this Run fails closed; otherwise session close rolls it
+                    # back and a later run sees an apparently active document.
+                    await session.commit()
+                    raise
+        except ProjectSourceDocumentIntegrityError as error:
+            raise ProjectDocumentSourceCollectionError("project_document_unavailable") from error
 
 
 class LocalFileResearchSourceCollector:

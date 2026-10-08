@@ -23,6 +23,14 @@ class CreateProjectRequest(ApiModel):
     goal: str = Field(min_length=1, max_length=8_000)
 
 
+class UploadProjectSourceDocumentRequest(ApiModel):
+    """Text input is deliberately bounded before it reaches durable storage."""
+
+    name: str = Field(min_length=1, max_length=240)
+    content: str = Field(min_length=1, max_length=96_000)
+    media_type: Literal["text/plain", "text/markdown", "application/json"] = "text/markdown"
+
+
 class ModuleInput(ApiModel):
     key: str = Field(pattern=r"^[a-z][a-z0-9_-]{1,63}$")
     name: str = Field(min_length=1, max_length=160)

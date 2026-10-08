@@ -65,6 +65,7 @@ from aidison.api.schemas import (
     StartResearchRunRequest,
     StartSolutionRunRequest,
     SubmitObservationRequest,
+    UploadProjectSourceDocumentRequest,
 )
 from aidison.application.agent_run_application import (
     DEFAULT_IMPACT_PROPOSAL_RUNTIME_BINDING,
@@ -137,6 +138,11 @@ from aidison.infrastructure.orm import (
     DecisionRequestRow,
     DomainEventRow,
     ImpactAnalysisRow,
+)
+from aidison.infrastructure.project_documents import (
+    ProjectSourceDocumentIntegrityError,
+    ProjectSourceDocumentNotFoundError,
+    ProjectSourceDocumentStore,
 )
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.observability import (
@@ -857,6 +863,22 @@ def create_app(
     async def not_found(_: Request, exc: DomainNotFoundError) -> JSONResponse:
         return _error(404, ApiErrorCode.RESOURCE_NOT_FOUND, "requested resource was not found")
 
+    @api.exception_handler(ProjectSourceDocumentNotFoundError)
+    async def project_source_document_not_found(
+        _: Request, exc: ProjectSourceDocumentNotFoundError
+    ) -> JSONResponse:
+        return _error(404, ApiErrorCode.RESOURCE_NOT_FOUND, "requested resource was not found")
+
+    @api.exception_handler(ProjectSourceDocumentIntegrityError)
+    async def project_source_document_integrity(
+        _: Request, exc: ProjectSourceDocumentIntegrityError
+    ) -> JSONResponse:
+        return _error(
+            409,
+            ApiErrorCode.DOMAIN_CONFLICT,
+            "project source document is unavailable; inspect or replace it before research",
+        )
+
     @api.exception_handler(PreconditionFailedError)
     @api.exception_handler(OptimisticConcurrencyError)
     async def precondition_failed(_: Request, exc: Exception) -> JSONResponse:
@@ -1142,6 +1164,100 @@ def create_app(
             raise DomainNotFoundError("project not found")
         response.headers["ETag"] = f'"{project.revision}"'
         return project
+
+    @api.post(
+        "/api/projects/{project_id}/source-documents",
+        status_code=status.HTTP_201_CREATED,
+    )
+    async def upload_project_source_document(
+        project_id: UUID,
+        body: UploadProjectSourceDocumentRequest,
+        idempotency_key: IdempotencyKey,
+        response: Response,
+        session: DbSession,
+    ) -> Any:
+        """Register immutable user material without changing approved project facts.
+
+        This deliberately has no ``If-Match`` requirement: concurrent uploads
+        expand research context but do not alter a RequirementRevision, module
+        graph, or SolutionVersion. Exact retries remain idempotent and each
+        accepted command is retained in the project event stream.
+        """
+
+        store = PostgresDomainStore(session)
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        payload_hash = canonical_hash(
+            "upload-project-source-document",
+            project_id,
+            body.name,
+            body.content,
+            body.media_type,
+        )
+        command_key = f"project-source-document:{project_id}:{idempotency_key}"
+        receipt = await store.claim_command(command_key, payload_hash)
+        documents = ProjectSourceDocumentStore(
+            session,
+            Path(cast(Path, api.state.artifact_root)),
+        )
+        if receipt is not None:
+            document = await documents.get(
+                project_id=project_id, document_id=UUID(receipt)
+            )
+            response.headers["ETag"] = f'"{project.revision}"'
+            return document
+
+        document = await documents.put_text(
+            project_id=project_id,
+            name=body.name,
+            content=body.content,
+            media_type=body.media_type,
+            commit=False,
+        )
+        await store.save_command_receipt(command_key, payload_hash, str(document.id))
+        await store.append_event(
+            project_id,
+            "project_source_document.submitted",
+            {
+                "document_id": str(document.id),
+                "name": document.name,
+                "content_hash": document.content_hash,
+                "media_type": document.media_type,
+                "size_bytes": document.size_bytes,
+            },
+        )
+        await session.commit()
+        response.headers["ETag"] = f'"{project.revision}"'
+        return document
+
+    @api.get("/api/projects/{project_id}/source-documents")
+    async def list_project_source_documents(
+        project_id: UUID,
+        session: DbSession,
+    ) -> tuple[Any, ...]:
+        if await PostgresDomainStore(session).get_project(project_id) is None:
+            raise DomainNotFoundError("project not found")
+        return await ProjectSourceDocumentStore(
+            session,
+            Path(cast(Path, api.state.artifact_root)),
+        ).list_active(project_id=project_id)
+
+    @api.get("/api/projects/{project_id}/source-documents/{document_id}/content")
+    async def read_project_source_document(
+        project_id: UUID,
+        document_id: UUID,
+        session: DbSession,
+    ) -> Response:
+        document, content = await ProjectSourceDocumentStore(
+            session,
+            Path(cast(Path, api.state.artifact_root)),
+        ).read_text(project_id=project_id, document_id=document_id)
+        return Response(
+            content=content,
+            media_type=document.media_type,
+            headers={"X-Content-SHA256": document.content_hash},
+        )
 
     @api.post("/api/projects/{project_id}/requirements")
     async def approve_requirements(

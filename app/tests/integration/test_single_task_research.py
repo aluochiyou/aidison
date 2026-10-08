@@ -218,7 +218,10 @@ class _StaticResearchSourceCollector:
                 media_type="text/plain",
                 representation="normalized-document-v1",
                 parser_revision="fixture-parser-v1",
-                observed_at=datetime(2026, 9, 8, 9, 0, tzinfo=UTC),
+                # This fixture exercises admission success, not stale-source
+                # rejection. Keep its observation inside the real freshness
+                # window regardless of the calendar date on which CI runs.
+                observed_at=datetime.now(UTC),
                 coverage_source_kinds=("evidence", "specification"),
             ),
         )

@@ -52,6 +52,7 @@ from aidison.research.source_collection import (
     GitHubRepositorySourceCollector,
     LocalFileResearchSourceCollector,
     NoopResearchSourceCollector,
+    ProjectDocumentResearchSourceCollector,
     ResearchSourceCollector,
     TavilySearchResearchSourceCollector,
 )
@@ -334,6 +335,10 @@ async def run_research_worker(
             source_collector = _research_source_collector(
                 settings=settings,
                 client=source_client,
+                project_document_collector=ProjectDocumentResearchSourceCollector(
+                    session_factory=session_factory,
+                    artifact_root=settings.artifact_root,
+                ),
             )
             provider_settings = ProviderSettings()
             model = build_chat_model(
@@ -402,6 +407,7 @@ def _research_source_collector(
     *,
     settings: WorkerSettings,
     client: httpx.AsyncClient,
+    project_document_collector: ResearchSourceCollector | None = None,
 ) -> ResearchSourceCollector:
     """Build only explicitly configured trusted source readers.
 
@@ -411,6 +417,8 @@ def _research_source_collector(
     """
 
     collectors: list[ResearchSourceCollector] = []
+    if project_document_collector is not None:
+        collectors.append(project_document_collector)
     local_targets = _local_source_targets(settings.local_source_targets)
     if settings.local_source_root is None and local_targets:
         raise ValueError("AIDISON_LOCAL_SOURCE_TARGETS requires AIDISON_LOCAL_SOURCE_ROOT")

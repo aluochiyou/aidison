@@ -880,6 +880,37 @@ class ArtifactRow(Base):
     )
 
 
+class ProjectSourceDocumentRow(Base):
+    """Immutable textual input a user explicitly made available to a project."""
+
+    __tablename__ = "project_source_documents"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('active', 'missing', 'corrupt', 'quarantined')",
+            name="status",
+        ),
+        CheckConstraint("size_bytes > 0", name="size_positive"),
+        UniqueConstraint(
+            "project_id", "content_hash", name="uq_project_source_document_hash"
+        ),
+        Index("ix_project_source_documents_project_status", "project_id", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(240), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    media_type: Mapped[str] = mapped_column(String(120), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(120), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class AgentRunRow(Base):
     """Thin Control-plane row for a LangGraph-owned AgentRun.
 
