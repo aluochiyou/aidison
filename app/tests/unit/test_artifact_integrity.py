@@ -87,3 +87,30 @@ def test_audit_inventory_rejects_escaped_storage_key(tmp_path: Path) -> None:
 
     assert report["ok"] is False
     assert report["issues"][0]["issue"] == "invalid_path"
+
+
+def test_audit_inventory_checks_quarantined_project_document_bytes(tmp_path: Path) -> None:
+    content = b"quarantined project source"
+    key = f"project-sources/sha256/{sha256(content).hexdigest()[:2]}/payload"
+    path = tmp_path / key
+    path.parent.mkdir(parents=True)
+    path.write_bytes(content)
+
+    report = audit_inventory(
+        [
+            ArtifactInventoryEntry(
+                artifact_id="project_source_document:document-1",
+                storage_key=key,
+                content_hash=sha256(content).hexdigest(),
+                size_bytes=len(content),
+                status="quarantined",
+                expected_bytes=True,
+            )
+        ],
+        tmp_path,
+        strict_orphans=True,
+    )
+
+    assert report["ok"] is True
+    assert report["present_rows"] == 1
+    assert report["orphan_files"] == []

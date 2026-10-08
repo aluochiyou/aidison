@@ -13,7 +13,8 @@ from sqlalchemy import select
 
 from aidison.artifacts.contracts import ArtifactStatus
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
-from aidison.infrastructure.orm import ArtifactRow
+from aidison.infrastructure.orm import ArtifactRow, ProjectSourceDocumentRow
+from aidison.research.project_documents import ProjectSourceDocumentStatus
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,7 @@ class ArtifactInventoryEntry:
     content_hash: str
     size_bytes: int
     status: str
+    expected_bytes: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -60,7 +62,12 @@ def audit_inventory(
     non_present_rows = 0
 
     for entry in entries:
-        if entry.status != ArtifactStatus.PRESENT.value:
+        expected_bytes = (
+            entry.expected_bytes
+            if entry.expected_bytes is not None
+            else entry.status == ArtifactStatus.PRESENT.value
+        )
+        if not expected_bytes:
             non_present_rows += 1
             continue
         present_rows += 1
@@ -111,24 +118,45 @@ async def _load_inventory() -> list[ArtifactInventoryEntry]:
     factory = create_session_factory(engine)
     try:
         async with factory() as session:
-            rows = await session.scalars(select(ArtifactRow).order_by(ArtifactRow.id))
-            return [
+            artifact_rows = await session.scalars(select(ArtifactRow).order_by(ArtifactRow.id))
+            documents = await session.scalars(
+                select(ProjectSourceDocumentRow).order_by(ProjectSourceDocumentRow.id)
+            )
+            entries = [
                 ArtifactInventoryEntry(
-                    artifact_id=str(row.id),
+                    artifact_id=f"artifact:{row.id}",
                     storage_key=row.storage_key,
                     content_hash=row.content_hash,
                     size_bytes=row.size_bytes,
                     status=row.status,
                 )
-                for row in rows
+                for row in artifact_rows
             ]
+            entries.extend(
+                ArtifactInventoryEntry(
+                    artifact_id=f"project_source_document:{row.id}",
+                    storage_key=row.storage_key,
+                    content_hash=row.content_hash,
+                    size_bytes=row.size_bytes,
+                    status=row.status,
+                    # Quarantined bytes remain intentionally retained for
+                    # review/recovery and must be covered by the backup pair.
+                    expected_bytes=row.status
+                    in {
+                        ProjectSourceDocumentStatus.ACTIVE.value,
+                        ProjectSourceDocumentStatus.QUARANTINED.value,
+                    },
+                )
+                for row in documents
+            )
+            return entries
     finally:
         await engine.dispose()
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Read-only PostgreSQL/Artifact byte consistency check."
+        description="Read-only PostgreSQL/content-addressed byte consistency check."
     )
     parser.add_argument(
         "--artifact-root",
