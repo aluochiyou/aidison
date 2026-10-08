@@ -29,6 +29,10 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
         "AIDISON_WORKER_LEASE_SECONDS",
         "AIDISON_WORKER_POLL_SECONDS",
         "AIDISON_DURABLE_RECHECK_SECONDS",
+        "AIDISON_MODEL_CIRCUIT_FAILURE_THRESHOLD",
+        "AIDISON_MODEL_CIRCUIT_WINDOW_SECONDS",
+        "AIDISON_MODEL_CIRCUIT_OPEN_SECONDS",
+        "AIDISON_MODEL_CONTRACT_PROBE_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -42,6 +46,7 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.model_circuit_failure_threshold == 5
     assert settings.model_circuit_window_seconds == 60
     assert settings.model_circuit_open_seconds == 30
+    assert settings.model_contract_probe_timeout_seconds == 30
     assert settings.worker_id
 
 
@@ -123,6 +128,31 @@ def test_worker_check_selects_the_runtime_specific_dependency_gate(
 
     assert worker_module.main(["--check", "--runtime", runtime]) == 0
     assert calls == [expected_check]
+
+
+def test_worker_live_provider_probe_is_explicitly_opted_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def dependency_check(settings: WorkerSettings) -> None:
+        del settings
+        calls.append("dependencies")
+
+    async def provider_probe(settings: WorkerSettings) -> None:
+        del settings
+        calls.append("provider")
+
+    monkeypatch.setattr(worker_module, "check_research_dependencies", dependency_check)
+    monkeypatch.setattr(worker_module, "check_provider_contract", provider_probe)
+
+    assert worker_module.main(["--check", "--probe-provider-contract"]) == 0
+    assert calls == ["dependencies", "provider"]
+
+
+def test_worker_rejects_live_provider_probe_outside_check_mode() -> None:
+    with pytest.raises(SystemExit):
+        worker_module.main(["--probe-provider-contract"])
 
 
 def test_research_source_collector_is_noop_without_explicit_source_authority() -> None:

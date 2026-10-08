@@ -36,6 +36,10 @@ from aidison.observability import (
     build_runtime_tracer,
 )
 from aidison.providers.circuit_breaker import SlidingWindowProviderCircuit
+from aidison.providers.contract_probe import (
+    ProviderContractProbeResult,
+    probe_chat_json_contract,
+)
 from aidison.providers.gateway import ProviderSettings, build_chat_model, build_model_target
 from aidison.providers.model_gateway import (
     ModelGateway,
@@ -170,6 +174,12 @@ class WorkerSettings(AidisonSettings):
         gt=0,
         le=600,
     )
+    model_contract_probe_timeout_seconds: float = Field(
+        default=30.0,
+        validation_alias="AIDISON_MODEL_CONTRACT_PROBE_TIMEOUT_SECONDS",
+        gt=0,
+        le=120,
+    )
     research_model_reserved_tokens: int = Field(
         default=8_000,
         validation_alias="AIDISON_RESEARCH_MODEL_RESERVED_TOKENS",
@@ -233,6 +243,11 @@ def _parser() -> argparse.ArgumentParser:
         type=UUID,
         help="target exactly one Research AgentRun; requires --runtime research --once",
     )
+    parser.add_argument(
+        "--probe-provider-contract",
+        action="store_true",
+        help="with --check, send one live JSON-mode model probe",
+    )
     return parser
 
 
@@ -270,6 +285,23 @@ async def check_research_dependencies(settings: WorkerSettings) -> None:
         # local paths and token/allowlist pairs. It must not send a search or
         # source-read request during a dependency check.
         _research_source_collector(settings=settings, client=source_client)
+
+
+async def check_provider_contract(
+    settings: WorkerSettings,
+) -> ProviderContractProbeResult:
+    """Verify the live JSON-mode boundary only when an operator opts in."""
+
+    provider_settings = ProviderSettings()
+    model = build_chat_model(
+        provider_settings,
+        thinking="disabled",
+        max_tokens=64,
+    )
+    return await probe_chat_json_contract(
+        model,
+        timeout_seconds=settings.model_contract_probe_timeout_seconds,
+    )
 
 
 async def run_solution_worker(settings: WorkerSettings, *, once: bool = False) -> None:
@@ -600,6 +632,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     settings = WorkerSettings()
     if args.run_id is not None and (args.runtime != "research" or not args.once):
         _parser().error("--run-id requires --runtime research --once")
+    if args.probe_provider_contract and not args.check:
+        _parser().error("--probe-provider-contract requires --check")
     if args.check:
         check = (
             check_research_dependencies
@@ -607,6 +641,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             else check_solution_dependencies
         )
         asyncio.run(check(settings))
+        if args.probe_provider_contract:
+            asyncio.run(check_provider_contract(settings))
     elif args.runtime == "research":
         asyncio.run(run_research_worker(settings, once=args.once, run_id=args.run_id))
     elif args.runtime == "solution":
