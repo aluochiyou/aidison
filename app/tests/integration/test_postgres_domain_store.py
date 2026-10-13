@@ -479,7 +479,9 @@ async def test_postgres_closed_loop_is_idempotent_and_immutable() -> None:
             stored_project = await session.get(ProjectRow, project.id)
             assert stored_project is not None
             assert stored_project.revision == 10
-            assert stored_project.event_sequence == 11
+            # Blueprint creation is now a versioned structural event rather
+            # than an untracked relation-row write.
+            assert stored_project.event_sequence == 12
             assert stored_project.active_solution_version_id == revised.id
             assert (
                 await session.scalar(
@@ -496,7 +498,7 @@ async def test_postgres_closed_loop_is_idempotent_and_immutable() -> None:
                     .order_by(DomainEventRow.project_seq)
                 )
             )
-            assert event_sequences == list(range(1, 12))
+            assert event_sequences == list(range(1, 13))
 
             with pytest.raises(DuplicateCommandError):
                 await app.create_project(
