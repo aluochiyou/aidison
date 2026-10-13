@@ -87,6 +87,7 @@ from aidison.domain.models import (
     SpendBudgetRevision,
     UserAdjustment,
 )
+from aidison.domain.requirement_revision_events import replay_requirement_revision
 from aidison.infrastructure.orm import (
     AdjustmentBatchRow,
     CandidateRow,
@@ -385,7 +386,10 @@ class PostgresDomainStore(DomainStore):
             payload_id=requirement.id,
             payload_project_id=requirement.project_id,
         )
-        return requirement
+        return await self._event_authoritative_requirement_projection(
+            row=row,
+            relation_value=requirement,
+        )
 
     async def list_requirement_revisions(
         self,
@@ -397,7 +401,41 @@ class PostgresDomainStore(DomainStore):
             .order_by(RequirementRevisionRow.revision)
         )
         rows = (await self._session.scalars(statement)).all()
-        return [_decode(RequirementRevision, row.payload) for row in rows]
+        return [
+            await self._event_authoritative_requirement_projection(
+                row=row,
+                relation_value=_decode(RequirementRevision, row.payload),
+            )
+            for row in rows
+        ]
+
+    async def _event_authoritative_requirement_projection(
+        self,
+        *,
+        row: RequirementRevisionRow,
+        relation_value: RequirementRevision,
+    ) -> RequirementRevision:
+        """Prefer a complete post-cutover event stream over its relation row.
+
+        Pre-cutover revisions have no typed aggregate stream and remain a
+        compatibility projection.  For revisions written after the cutover,
+        the relation row is only a read-optimized projection: any mismatch is
+        corruption rather than a reason to silently return stale facts.
+        """
+
+        events = await self.list_aggregate_events(
+            row.project_id,
+            aggregate_type="requirement_revision",
+            aggregate_id=row.id,
+        )
+        if not events:
+            return relation_value
+        event_value = replay_requirement_revision(list(events)).value
+        if _payload(relation_value) != _payload(event_value):
+            raise PersistenceCorruptionError(
+                "RequirementRevision relation projection differs from event authority"
+            )
+        return event_value
 
     async def add_modules(self, modules: Sequence[Module]) -> None:
         self._session.add_all(

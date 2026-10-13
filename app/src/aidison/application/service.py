@@ -76,6 +76,7 @@ from aidison.domain.models import (
     UserAdjustment,
     UserAdjustmentKind,
 )
+from aidison.domain.requirement_revision_events import requirement_revision_event_metadata
 from aidison.solution.contracts import SolutionChangeKind, SolutionChangeSet
 from aidison.solution.impact import (
     StructuralImpactPartition,
@@ -1517,10 +1518,18 @@ class ProjectApplication:
             await self._store.add_modules(module_entities)
         if blueprint is not None:
             await self._store.add_project_blueprint(blueprint)
+        requirement_event_payload: dict[str, object] = {
+            "requirement": requirement.model_dump(mode="json"),
+            "module_count": len(module_entities),
+        }
         await self._store.append_event(
             project_id,
             "requirements.approved",
-            {"requirement_id": str(requirement.id), "module_count": len(module_entities)},
+            requirement_event_payload,
+            requirement_revision_event_metadata(
+                requirement=requirement,
+                payload=requirement_event_payload,
+            ),
         )
         if blueprint is not None:
             await self._store.append_event(

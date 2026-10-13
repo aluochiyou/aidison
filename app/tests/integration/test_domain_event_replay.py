@@ -14,6 +14,7 @@ from aidison.application.event_replay import (
 from aidison.application.service import ProjectApplication, canonical_hash
 from aidison.domain.events import replay_execution_plan
 from aidison.domain.models import ExecutionPlanProposal, ExecutionPlanStatus
+from aidison.domain.requirement_revision_events import replay_requirement_revision
 from aidison.infrastructure.database import (
     DatabaseSettings,
     create_engine,
@@ -85,12 +86,19 @@ async def test_execution_plan_relation_and_versioned_events_rebuild_the_same_sta
 
         async with factory() as session:
             store = PostgresDomainStore(session)
+            requirement_events = await store.list_aggregate_events(
+                project.id,
+                aggregate_type="requirement_revision",
+                aggregate_id=requirement.id,
+            )
             events = await store.list_aggregate_events(
                 project.id,
                 aggregate_type="execution_plan",
                 aggregate_id=proposal.id,
             )
+            replayed_requirement = replay_requirement_revision(list(requirement_events))
             replayed = replay_execution_plan(list(events))
+            stored_requirement = await store.get_requirement_revision(requirement.id)
             stored = await store.get_execution_plan_proposal(proposal.id)
             legacy_event = await session.scalar(
                 select(DomainEventRow).where(
@@ -99,6 +107,10 @@ async def test_execution_plan_relation_and_versioned_events_rebuild_the_same_sta
                 )
             )
 
+            assert stored_requirement is not None
+            assert replayed_requirement.value == stored_requirement == requirement
+            assert [event.aggregate_version for event in requirement_events] == [1]
+            assert all(event.schema_version == 1 for event in requirement_events)
             assert stored is not None
             assert replayed.proposal == stored == approved
             assert [event.aggregate_version for event in events] == [1, 2]
