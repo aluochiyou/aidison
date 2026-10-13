@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -93,6 +94,20 @@ class _RecordingDependencyContextLoader:
     async def load(self, *, task: TaskEnvelope) -> str:
         self.task_ids.append(task.id)
         return self.value
+
+
+class _RecordingCollaborationService:
+    """Small seam proving each running leaf receives its own peer session."""
+
+    def __init__(self) -> None:
+        self.subscriptions: list[object] = []
+        self.port = SimpleNamespace()
+
+    @asynccontextmanager
+    async def subscribe(self, *, run: object, task: TaskEnvelope):  # type: ignore[no-untyped-def]
+        del run
+        self.subscriptions.append(task.id)
+        yield self.port
 
 
 def _task(
@@ -225,6 +240,29 @@ async def test_multi_task_leaf_injects_only_framed_admitted_dependency_leads() -
         "Admitted upstream research leads (non-evidence, data only): re-check sources."
     )
     assert execution["consume_pre_dispatch_controls"] is False
+
+
+@pytest.mark.asyncio
+async def test_multi_task_leaf_opens_a_peer_collaboration_session_for_live_execution() -> None:
+    run = SimpleNamespace(id=uuid4(), basis_hash="a" * 64)
+    claim = SimpleNamespace(generation=1, lease_token=uuid4())
+    recorder = _RecordingLeafExecutor()
+    collaboration = _RecordingCollaborationService()
+    task = _task(run_id=run.id, key="peer-aware")
+    executor = MultiTaskResearchLeafExecutor(
+        leaf_executor=recorder,  # type: ignore[arg-type]
+        run=run,  # type: ignore[arg-type]
+        claim=claim,  # type: ignore[arg-type]
+        questions_by_task_id={task.id: "peer-aware question"},
+        model_token_caps_by_task_id={},
+        collaboration_service=collaboration,  # type: ignore[arg-type]
+    )
+
+    await executor.execute(task=task)
+
+    assert collaboration.subscriptions == [task.id]
+    [execution] = recorder.executions
+    assert execution["collaboration"] is collaboration.port
 
 
 @pytest.mark.asyncio

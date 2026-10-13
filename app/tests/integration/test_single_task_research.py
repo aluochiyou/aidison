@@ -33,6 +33,7 @@ from aidison.infrastructure.agent_run_controls import AgentRunControlRequestStor
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
+from aidison.research.collaboration import ResearchDiscoveryLead
 from aidison.research.consolidation import SufficiencyOutcome
 from aidison.research.coverage import CoverageContract, CoverageKey, CoveragePriority
 from aidison.research.evidence_diagnostics import (
@@ -294,6 +295,26 @@ class _PartiallyUnavailableSourceCollector(_StaticResearchSourceCollector):
             )
             for source in sources
         )
+
+
+class _RecordingCollaborationPort:
+    """Exercise the leaf's source-discovery handoff without trusting peer text."""
+
+    def __init__(self) -> None:
+        self.context_calls = 0
+        self.publications: list[tuple[str, tuple[ResearchDiscoveryLead, ...]]] = []
+
+    async def load_context(self) -> str:
+        self.context_calls += 1
+        return "Peer source discoveries (non-evidence): independently retrieve sources."
+
+    async def publish_source_discovery(
+        self,
+        *,
+        source_collection_report_ref: str,
+        leads: tuple[ResearchDiscoveryLead, ...],
+    ) -> None:
+        self.publications.append((source_collection_report_ref, leads))
 
 
 def _module_discovery_model() -> BaseChatModel:
@@ -928,6 +949,7 @@ async def test_single_task_research_only_exposes_quote_revalidated_collected_evi
             deadline_ref="deadline://run/evidence",
             idempotency_prefix="single-task-evidence",
         )
+        collaboration = _RecordingCollaborationPort()
         execution = await SingleTaskResearchExecutor(
             session_factory=factory,
             artifact_root=tmp_path,
@@ -939,6 +961,7 @@ async def test_single_task_research_only_exposes_quote_revalidated_collected_evi
             task=task,
             grant=grant,
             question="Which motor specification supports the option?",
+            collaboration=collaboration,
         )
 
         assert len(execution.result.evidence_refs) == 1
@@ -946,6 +969,12 @@ async def test_single_task_research_only_exposes_quote_revalidated_collected_evi
         assert execution.result.source_collection_report_ref is not None
         assert execution.result.evidence_refs[0].startswith("artifact+sha256://")
         assert execution.result.coverage_observation_refs[0].startswith("artifact+sha256://")
+        assert collaboration.context_calls == 2
+        [(published_report_ref, published_leads)] = collaboration.publications
+        assert published_report_ref == execution.result.source_collection_report_ref
+        assert [lead.canonical_locator for lead in published_leads] == [
+            "https://example.test/motor-a"
+        ]
         async with factory() as session:
             source_report_value = await ContentAddressedArtifactStore(
                 session, tmp_path

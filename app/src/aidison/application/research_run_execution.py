@@ -58,6 +58,7 @@ from aidison.research.adaptive_planning import (
     route_verifier_tasks,
 )
 from aidison.research.admitted_ready_set_graph import build_admitted_ready_set_graph
+from aidison.research.collaboration import ResearchCollaborationService
 from aidison.research.consolidation import SufficiencyOutcome, SufficiencyPolicy
 from aidison.research.coverage import (
     CoverageContract,
@@ -518,6 +519,10 @@ class ResearchRunExecutor:
                         run=run,
                     ),
                     reusable_memory_by_task_id=reusable_memory_by_task_id,
+                    collaboration_service=ResearchCollaborationService(
+                        session_factory=self._session_factory,
+                        artifact_root=self._artifact_root,
+                    ),
                 ),
                 finalizer=MultiTaskResearchProposalFinalizer(
                     session_factory=self._session_factory,

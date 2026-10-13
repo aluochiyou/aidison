@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     MetaData,
@@ -1208,6 +1209,40 @@ class AgentRunResultAdmissionRow(Base):
     result_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
     disposition: Mapped[str] = mapped_column(String(40), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ResearchCollaborationObservationRow(Base):
+    """Indexed pointer to an immutable, non-authoritative peer discovery message."""
+
+    __tablename__ = "research_collaboration_observations"
+    __table_args__ = (
+        CheckConstraint("kind IN ('source_discovery')", name="kind"),
+        UniqueConstraint("idempotency_key", name="uq_research_collaboration_idempotency"),
+        UniqueConstraint("sequence", name="uq_research_collaboration_sequence"),
+        Index(
+            "ix_research_collaboration_run_sequence",
+            "agent_run_id",
+            "sequence",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True)
+    sequence: Mapped[int] = mapped_column(BigInteger, Identity(), nullable=False)
+    project_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("projects.id", ondelete="RESTRICT"), nullable=False
+    )
+    agent_run_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), ForeignKey("agent_runs.id", ondelete="RESTRICT"), nullable=False
+    )
+    basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    producer_task_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    artifact_ref: Mapped[str] = mapped_column(String(512), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(300), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

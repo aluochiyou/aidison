@@ -24,6 +24,10 @@ from aidison.infrastructure.artifacts import (
 )
 from aidison.infrastructure.database import session_scope
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.research.collaboration import (
+    ResearchCollaborationPort,
+    ResearchDiscoveryLead,
+)
 from aidison.research.consolidation import (
     ClaimKey,
     CoverageObservationStatus,
@@ -271,6 +275,7 @@ class SingleTaskResearchExecutor:
         steering_instructions: tuple[str, ...] = (),
         consume_pre_dispatch_controls: bool = True,
         independently_verified: bool = False,
+        collaboration: ResearchCollaborationPort | None = None,
     ) -> SingleTaskResearchExecution:
         if task.run_id != run.id or grant.task_id != task.id:
             raise ValueError(
@@ -288,11 +293,15 @@ class SingleTaskResearchExecutor:
                 run=run,
                 claim=claim,
             )
+        pre_collection_context = (
+            await collaboration.load_context() if collaboration is not None else ""
+        )
+        collection_question = _append_peer_discovery_context(question, pre_collection_context)
         try:
             collected_sources = await self._source_collector.collect(
                 run=run,
                 task=task,
-                question=question,
+                question=collection_question,
             )
         except ResearchSourceCollectionError as error:
             if _is_recoverable_source_gap(error.reason_code):
@@ -326,10 +335,19 @@ class SingleTaskResearchExecutor:
             result_id=result_id,
             persisted_sources=persisted_sources,
         )
+        if collaboration is not None:
+            await collaboration.publish_source_discovery(
+                source_collection_report_ref=source_collection_report_ref,
+                leads=_source_discovery_leads(persisted_sources),
+            )
+        post_collection_context = (
+            await collaboration.load_context() if collaboration is not None else ""
+        )
         # Coverage keys are a server-owned execution contract.  The capability
         # receives a closed list rather than being asked to invent subtopics.
         authorized_question = (
-            f"{question}\n\nAuthorized Coverage Keys (closed list; use these exact keys only):\n"
+            f"{_append_peer_discovery_context(question, post_collection_context)}"
+            "\n\nAuthorized Coverage Keys (closed list; use these exact keys only):\n"
             + "\n".join(f"- {key}" for key in task.coverage_keys)
             + _evidence_sufficiency_instruction(task=task)
         )
@@ -1192,6 +1210,28 @@ def _task_module_id(*, task: TaskEnvelope, active_modules: tuple[object, ...]) -
         if isinstance(module_id, UUID):
             return module_id
     return None
+
+
+def _source_discovery_leads(
+    persisted_sources: dict[str, _PersistedResearchSource],
+) -> tuple[ResearchDiscoveryLead, ...]:
+    """Expose only source identities/snapshots to peer tasks, never source text."""
+
+    return tuple(
+        ResearchDiscoveryLead(
+            canonical_locator=item.collected.source.canonical_locator,
+            source_kind=item.collected.source.kind.value,
+            source_origin=source_origin_key(item.collected.source),
+            snapshot_ref=item.snapshot.artifact_ref,
+        )
+        for _, item in sorted(persisted_sources.items())
+    )
+
+
+def _append_peer_discovery_context(question: str, context: str) -> str:
+    if not context:
+        return question
+    return f"{question}\n\n{context}"
 
 
 __all__ = [

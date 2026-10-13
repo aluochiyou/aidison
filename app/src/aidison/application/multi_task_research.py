@@ -20,6 +20,7 @@ from aidison.infrastructure.agent_results import AgentResultStore
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.database import session_scope
 from aidison.research.admitted_ready_set_graph import ReadySetFinalizer, ReadyTaskExecutor
+from aidison.research.collaboration import ResearchCollaborationService
 from aidison.research.langgraph_contracts import (
     ExecutionGrant,
     ProposalManifest,
@@ -109,6 +110,7 @@ class MultiTaskResearchLeafExecutor(ReadyTaskExecutor):
         model_token_caps_by_task_id: dict[UUID, int],
         dependency_context_loader: DependencyContextLoader | None = None,
         reusable_memory_by_task_id: dict[UUID, tuple[ModuleMemoryItem, ...]] | None = None,
+        collaboration_service: ResearchCollaborationService | None = None,
     ) -> None:
         self._leaf_executor = leaf_executor
         self._run = run
@@ -117,6 +119,7 @@ class MultiTaskResearchLeafExecutor(ReadyTaskExecutor):
         self._model_token_caps_by_task_id = model_token_caps_by_task_id
         self._dependency_context_loader = dependency_context_loader
         self._reusable_memory_by_task_id = reusable_memory_by_task_id or {}
+        self._collaboration_service = collaboration_service
         # The persisted request rows are the authority.  This local lock only
         # prevents two concurrent LangGraph leaf futures from both attempting
         # to acknowledge the same control request before their provider call.
@@ -180,15 +183,28 @@ class MultiTaskResearchLeafExecutor(ReadyTaskExecutor):
         if self._dependency_context_loader is not None:
             dependency_context = await self._dependency_context_loader.load(task=task)
             question = _append_dependency_context(question, dependency_context)
-        await self._leaf_executor.execute(
-            run=self._run,
-            claim=self._claim,
-            task=task,
-            grant=grant,
-            question=question,
-            steering_instructions=steering_instructions,
-            consume_pre_dispatch_controls=False,
-        )
+        if self._collaboration_service is None:
+            await self._leaf_executor.execute(
+                run=self._run,
+                claim=self._claim,
+                task=task,
+                grant=grant,
+                question=question,
+                steering_instructions=steering_instructions,
+                consume_pre_dispatch_controls=False,
+            )
+            return
+        async with self._collaboration_service.subscribe(run=self._run, task=task) as collaboration:
+            await self._leaf_executor.execute(
+                run=self._run,
+                claim=self._claim,
+                task=task,
+                grant=grant,
+                question=question,
+                steering_instructions=steering_instructions,
+                consume_pre_dispatch_controls=False,
+                collaboration=collaboration,
+            )
 
 
 def _append_dependency_context(question: str, dependency_context: str) -> str:
