@@ -87,6 +87,7 @@ from aidison.domain.models import (
     SpendBudgetRevision,
     UserAdjustment,
 )
+from aidison.domain.module_configuration_events import replay_module_configuration
 from aidison.domain.project_blueprint_events import replay_project_blueprint
 from aidison.domain.requirement_revision_events import replay_requirement_revision
 from aidison.infrastructure.orm import (
@@ -788,7 +789,33 @@ class PostgresDomainStore(DomainStore):
                 .order_by(ModuleConfigurationRow.revision)
             )
         ).all()
-        return [_decode(ModuleConfiguration, row.payload) for row in rows]
+        return [
+            await self._event_authoritative_module_configuration_projection(
+                row=row,
+                relation_value=_decode(ModuleConfiguration, row.payload),
+            )
+            for row in rows
+        ]
+
+    async def _event_authoritative_module_configuration_projection(
+        self,
+        *,
+        row: ModuleConfigurationRow,
+        relation_value: ModuleConfiguration,
+    ) -> ModuleConfiguration:
+        events = await self.list_aggregate_events(
+            row.project_id,
+            aggregate_type="module_configuration",
+            aggregate_id=row.id,
+        )
+        if not events:
+            return relation_value
+        event_value = replay_module_configuration(list(events)).value
+        if _payload(relation_value) != _payload(event_value):
+            raise PersistenceCorruptionError(
+                "ModuleConfiguration relation projection differs from event authority"
+            )
+        return event_value
 
     async def update_module_configuration(
         self,

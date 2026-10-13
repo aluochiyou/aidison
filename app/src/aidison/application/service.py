@@ -76,6 +76,10 @@ from aidison.domain.models import (
     UserAdjustment,
     UserAdjustmentKind,
 )
+from aidison.domain.module_configuration_events import (
+    ModuleConfigurationEventType,
+    module_configuration_event_metadata,
+)
 from aidison.domain.project_blueprint_events import (
     ProjectBlueprintEventType,
     project_blueprint_event_metadata,
@@ -474,7 +478,17 @@ class ProjectApplication:
             await self._store.update_module_configuration(
                 superseded, expected_status=ModuleConfigurationStatus.ACTIVE
             )
+            await self._record_module_configuration_transition(
+                project_id=project_id,
+                configuration=superseded,
+                event_type=ModuleConfigurationEventType.SUPERSEDED,
+            )
         await self._store.add_module_configuration(configuration)
+        await self._record_module_configuration_transition(
+            project_id=project_id,
+            configuration=configuration,
+            event_type=ModuleConfigurationEventType.CREATED,
+        )
         await self._store.add_user_adjustment(adjustment)
         updated_batch = batch.model_copy(
             update={
@@ -953,16 +967,27 @@ class ProjectApplication:
         # ── Phase C: apply validated replacements ──
         for _module_id, replacement, current in planned:
             if current is not None:
+                superseded = current.model_copy(
+                    update={
+                        "status": ModuleConfigurationStatus.SUPERSEDED,
+                        "superseded_by_id": replacement.id,
+                    }
+                )
                 await self._store.update_module_configuration(
-                    current.model_copy(
-                        update={
-                            "status": ModuleConfigurationStatus.SUPERSEDED,
-                            "superseded_by_id": replacement.id,
-                        }
-                    ),
+                    superseded,
                     expected_status=ModuleConfigurationStatus.ACTIVE,
                 )
+                await self._record_module_configuration_transition(
+                    project_id=project.id,
+                    configuration=superseded,
+                    event_type=ModuleConfigurationEventType.SUPERSEDED,
+                )
             await self._store.add_module_configuration(replacement)
+            await self._record_module_configuration_transition(
+                project_id=project.id,
+                configuration=replacement,
+                event_type=ModuleConfigurationEventType.CREATED,
+            )
 
         await self._append_draft_history(
             project=project,
@@ -1615,6 +1640,57 @@ class ProjectApplication:
             project_id=project_id,
             blueprint=blueprint,
             event_type=ProjectBlueprintEventType.CREATED,
+        )
+
+    async def _record_module_configuration_transition(
+        self,
+        *,
+        project_id: UUID,
+        configuration: ModuleConfiguration,
+        event_type: ModuleConfigurationEventType,
+    ) -> None:
+        """Persist configuration lifecycle events without letting options mutate."""
+
+        if event_type is ModuleConfigurationEventType.SUPERSEDED:
+            await self._ensure_module_configuration_creation_event(
+                project_id=project_id,
+                configuration=configuration.model_copy(
+                    update={
+                        "status": ModuleConfigurationStatus.ACTIVE,
+                        "superseded_by_id": None,
+                    }
+                ),
+            )
+        payload: dict[str, object] = {
+            "configuration": configuration.model_dump(mode="json")
+        }
+        await self._store.append_event(
+            project_id,
+            event_type.value,
+            payload,
+            module_configuration_event_metadata(
+                configuration=configuration,
+                event_type=event_type,
+                payload=payload,
+            ),
+        )
+
+    async def _ensure_module_configuration_creation_event(
+        self,
+        *,
+        project_id: UUID,
+        configuration: ModuleConfiguration,
+    ) -> None:
+        if await self._store.has_aggregate_events(
+            project_id,
+            aggregate_type="module_configuration",
+            aggregate_id=configuration.id,
+        ):
+            return
+        await self._record_module_configuration_transition(
+            project_id=project_id,
+            configuration=configuration,
+            event_type=ModuleConfigurationEventType.CREATED,
         )
 
     async def _attach_fresh_module_lineages(
