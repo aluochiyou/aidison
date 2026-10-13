@@ -347,6 +347,7 @@ FIXTURE_CASES: tuple[EvaluationCase, ...] = (
                 },
                 "minimum_evidence_sources_for_must": 2,
                 "minimum_evidence_origins_for_must": 2,
+                "max_trusted_source_collection_calls": 32,
             },
             "expected": {
                 "must_coverage_total": 2,
