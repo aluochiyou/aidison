@@ -511,7 +511,7 @@ async def test_default_research_run_blocks_before_model_when_no_source_adapter_i
             assert replayed_run == run
             account = await AgentRunBudgetLedger(session).get_account_for_run(run.id)
             assert account.token_cap == plan["max_token_budget"]
-            assert account.tool_call_cap == 0
+            assert account.tool_call_cap == 16
             payload = await ContentAddressedArtifactStore(session, tmp_path).read_json_ref(
                 project_id=UUID(project_id),
                 basis_hash=run.basis_hash,
@@ -831,6 +831,14 @@ async def test_two_module_research_run_uses_admitted_parallel_tasks_and_commits_
             account = await AgentRunBudgetLedger(session).get_account_for_run(run.id)
             assert account.token_consumed == 62
             assert account.token_reserved == 0
+            assert account.tool_calls_consumed == 2
+            source_operations = await AgentRunBudgetLedger(session).list_operations_for_run(run.id)
+            assert [item.kind.value for item in source_operations].count("tool") == 2
+            assert all(
+                item.response_artifact_ref is not None
+                for item in source_operations
+                if item.kind.value == "tool"
+            )
             context_manifests = await ContentAddressedArtifactStore(
                 session, tmp_path
             ).list_metadata(

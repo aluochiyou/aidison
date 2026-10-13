@@ -65,6 +65,7 @@ from aidison.research.source_collection import (
     ResearchSourceCollector,
     is_recoverable_source_collection_failure,
 )
+from aidison.research.source_collection_control import RunScopedResearchSourceCollector
 from aidison.research.source_observations import (
     ObservationOutcome,
     SourceKind,
@@ -158,7 +159,10 @@ class SingleTaskResearchPayload(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    question: str = Field(min_length=1, max_length=2_000)
+    # A task question may carry bounded, non-evidence peer discovery leads.
+    # Keep it well below source-document limits while allowing the capability
+    # to echo the complete authorized question for replay/audit purposes.
+    question: str = Field(min_length=1, max_length=12_000)
     summary: str = Field(min_length=1, max_length=12_000)
     recommended_option: str = Field(min_length=1, max_length=2_000)
     alternatives: tuple[str, ...] = Field(min_length=1, max_length=8)
@@ -257,7 +261,7 @@ class SingleTaskResearchExecutor:
         session_factory: async_sessionmaker[AsyncSession],
         artifact_root: Path,
         researcher: SingleTaskResearcher,
-        source_collector: ResearchSourceCollector | None = None,
+        source_collector: ResearchSourceCollector | RunScopedResearchSourceCollector | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._artifact_root = artifact_root
@@ -298,11 +302,20 @@ class SingleTaskResearchExecutor:
         )
         collection_question = _append_peer_discovery_context(question, pre_collection_context)
         try:
-            collected_sources = await self._source_collector.collect(
-                run=run,
-                task=task,
-                question=collection_question,
-            )
+            if isinstance(self._source_collector, RunScopedResearchSourceCollector):
+                collected_sources = await self._source_collector.collect_for_task(
+                    run=run,
+                    claim=claim,
+                    task=task,
+                    grant=grant,
+                    question=collection_question,
+                )
+            else:
+                collected_sources = await self._source_collector.collect(
+                    run=run,
+                    task=task,
+                    question=collection_question,
+                )
         except ResearchSourceCollectionError as error:
             if _is_recoverable_source_gap(error.reason_code):
                 return await self._record_source_unavailable(

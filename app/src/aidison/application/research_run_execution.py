@@ -77,6 +77,10 @@ from aidison.research.researcher import (
 )
 from aidison.research.single_task_graph import build_single_task_research_graph
 from aidison.research.source_collection import NoopResearchSourceCollector, ResearchSourceCollector
+from aidison.research.source_collection_control import (
+    BudgetedResearchSourceCollector,
+    RunScopedResearchSourceCollector,
+)
 from aidison.research.strategy import ResearchCollectionPolicy, ResearchRunContract
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim, AgentRunKind, AgentRunStatus
 from aidison.runtime.minimal_graph import execution_thread_config
@@ -169,7 +173,16 @@ class ResearchRunExecutor:
         self._artifact_root = artifact_root
         self._checkpointer = checkpointer
         self._researcher = researcher
-        self._source_collector = source_collector or NoopResearchSourceCollector()
+        configured_collector = source_collector or NoopResearchSourceCollector()
+        self._source_collector: ResearchSourceCollector | RunScopedResearchSourceCollector = (
+            configured_collector
+            if isinstance(configured_collector, NoopResearchSourceCollector)
+            else BudgetedResearchSourceCollector(
+                collector=configured_collector,
+                session_factory=session_factory,
+                artifact_root=artifact_root,
+            )
+        )
         self._runtime_tracer = runtime_tracer or DisabledRuntimeTracer()
 
     def _graph_callback(self, *, run: AgentRun, graph_name: str) -> LangGraphRuntimeCallback:

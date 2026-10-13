@@ -157,7 +157,11 @@ class AgentRunApplication:
         await AgentRunBudgetLedger(self._session).create_account(
             agent_run_id=created.id,
             token_cap=plan.max_token_budget,
-            tool_call_cap=0,
+            tool_call_cap=(
+                compile_research_execution_policy(
+                    research_depth=plan.research_depth
+                ).max_trusted_source_collection_calls
+            ),
         )
         run_contract = ResearchRunContract(
             agent_run_id=created.id,

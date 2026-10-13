@@ -50,6 +50,11 @@ class ResearchExecutionPolicy(FrozenModel):
     policy_version: str = "research-execution-policy-v2"
     collection: ResearchCollectionPolicy
     adaptive: AdaptivePlanningPolicy
+    # One task-level collection may fan out to an explicitly configured source
+    # adapter, but it is still one user-budgeted external-effect boundary.
+    # Unlike the planning breadth policy, this cap is always finite so a Run
+    # can reserve every physical call in its durable ledger.
+    max_trusted_source_collection_calls: int = Field(default=16, ge=1, le=128)
     minimum_evidence_sources_for_must: int = Field(default=1, ge=1, le=5)
     minimum_evidence_origins_for_must: int = Field(default=1, ge=1, le=5)
 
@@ -75,6 +80,7 @@ def compile_research_execution_policy(
                 max_tasks_per_patch=4,
                 max_consecutive_no_progress=1,
             ),
+            max_trusted_source_collection_calls=8,
             minimum_evidence_sources_for_must=1,
             minimum_evidence_origins_for_must=1,
         ),
@@ -87,6 +93,7 @@ def compile_research_execution_policy(
                 search_depth="basic",
             ),
             adaptive=AdaptivePlanningPolicy(),
+            max_trusted_source_collection_calls=16,
             minimum_evidence_sources_for_must=1,
             minimum_evidence_origins_for_must=1,
         ),
@@ -104,6 +111,7 @@ def compile_research_execution_policy(
                 max_tasks_per_patch=None,
                 max_consecutive_no_progress=None,
             ),
+            max_trusted_source_collection_calls=32,
             minimum_evidence_sources_for_must=2,
             minimum_evidence_origins_for_must=2,
         ),
