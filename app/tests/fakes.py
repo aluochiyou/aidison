@@ -678,6 +678,23 @@ class InMemoryDomainStore:
         self.event_metadata.append(metadata)
         return sequence
 
+    async def has_aggregate_events(
+        self,
+        project_id: UUID,
+        *,
+        aggregate_type: str,
+        aggregate_id: UUID,
+    ) -> bool:
+        return any(
+            event_project_id == project_id
+            and metadata is not None
+            and metadata.aggregate_type == aggregate_type
+            and metadata.aggregate_id == aggregate_id
+            for (event_project_id, _, _, _), metadata in zip(
+                self.events, self.event_metadata, strict=True
+            )
+        )
+
     async def commit(self) -> None:
         return None
 

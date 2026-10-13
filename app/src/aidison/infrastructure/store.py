@@ -87,6 +87,7 @@ from aidison.domain.models import (
     SpendBudgetRevision,
     UserAdjustment,
 )
+from aidison.domain.project_blueprint_events import replay_project_blueprint
 from aidison.domain.requirement_revision_events import replay_requirement_revision
 from aidison.infrastructure.orm import (
     AdjustmentBatchRow,
@@ -702,7 +703,10 @@ class PostgresDomainStore(DomainStore):
             or row.status != blueprint.status.value
         ):
             raise PersistenceCorruptionError("ProjectBlueprint typed state differs from payload")
-        return blueprint
+        return await self._event_authoritative_project_blueprint_projection(
+            row=row,
+            relation_value=blueprint,
+        )
 
     async def list_project_blueprints(self, project_id: UUID) -> Sequence[ProjectBlueprint]:
         rows = (
@@ -712,7 +716,35 @@ class PostgresDomainStore(DomainStore):
                 .order_by(ProjectBlueprintRow.version)
             )
         ).all()
-        return [_decode(ProjectBlueprint, row.payload) for row in rows]
+        return [
+            await self._event_authoritative_project_blueprint_projection(
+                row=row,
+                relation_value=_decode(ProjectBlueprint, row.payload),
+            )
+            for row in rows
+        ]
+
+    async def _event_authoritative_project_blueprint_projection(
+        self,
+        *,
+        row: ProjectBlueprintRow,
+        relation_value: ProjectBlueprint,
+    ) -> ProjectBlueprint:
+        """Reject indexed blueprint drift once a typed structure stream exists."""
+
+        events = await self.list_aggregate_events(
+            row.project_id,
+            aggregate_type="project_blueprint",
+            aggregate_id=row.id,
+        )
+        if not events:
+            return relation_value
+        event_value = replay_project_blueprint(list(events)).value
+        if _payload(relation_value) != _payload(event_value):
+            raise PersistenceCorruptionError(
+                "ProjectBlueprint relation projection differs from event authority"
+            )
+        return event_value
 
     async def update_project_blueprint(
         self, blueprint: ProjectBlueprint, *, expected_status: BlueprintStatus
@@ -1884,6 +1916,27 @@ class PostgresDomainStore(DomainStore):
             )
             for row in rows
         ]
+
+    async def has_aggregate_events(
+        self,
+        project_id: UUID,
+        *,
+        aggregate_type: str,
+        aggregate_id: UUID,
+    ) -> bool:
+        """Cheap compatibility check before adopting a legacy relation row."""
+
+        statement = (
+            select(DomainEventRow.id)
+            .where(
+                DomainEventRow.project_id == project_id,
+                DomainEventRow.aggregate_type == aggregate_type,
+                DomainEventRow.aggregate_id == aggregate_id,
+                DomainEventRow.schema_version >= 1,
+            )
+            .limit(1)
+        )
+        return await self._session.scalar(statement) is not None
 
     # ── Spend Budget ──────────────────────────────────────────────────────
 

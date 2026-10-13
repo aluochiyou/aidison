@@ -76,6 +76,10 @@ from aidison.domain.models import (
     UserAdjustment,
     UserAdjustmentKind,
 )
+from aidison.domain.project_blueprint_events import (
+    ProjectBlueprintEventType,
+    project_blueprint_event_metadata,
+)
 from aidison.domain.requirement_revision_events import requirement_revision_event_metadata
 from aidison.solution.contracts import SolutionChangeKind, SolutionChangeSet
 from aidison.solution.impact import (
@@ -1146,10 +1150,25 @@ class ProjectApplication:
             active_modules=all_modules,
         )
         if prior is not None:
+            await self._ensure_project_blueprint_creation_event(
+                project_id=project.id,
+                blueprint=prior,
+            )
+            superseded_prior = prior.model_copy(update={"status": BlueprintStatus.SUPERSEDED})
             await self._store.update_project_blueprint(
-                prior.model_copy(update={"status": BlueprintStatus.SUPERSEDED}),
+                superseded_prior,
                 expected_status=BlueprintStatus.ACTIVE,
             )
+            await self._append_project_blueprint_event(
+                project_id=project.id,
+                blueprint=superseded_prior,
+                event_type=ProjectBlueprintEventType.SUPERSEDED,
+            )
+        await self._append_project_blueprint_event(
+            project_id=project.id,
+            blueprint=blueprint,
+            event_type=ProjectBlueprintEventType.CREATED,
+        )
         await self._store.update_project_reshape_proposal(
             resolved, expected_status=ProjectReshapeStatus.PROPOSED
         )
@@ -1505,9 +1524,21 @@ class ProjectApplication:
             current_blueprint = await self._store.get_project_blueprint(project.active_blueprint_id)
             if current_blueprint is None:
                 raise DomainConflictError("project references a missing active blueprint")
+            await self._ensure_project_blueprint_creation_event(
+                project_id=project_id,
+                blueprint=current_blueprint,
+            )
+            superseded_blueprint = current_blueprint.model_copy(
+                update={"status": BlueprintStatus.SUPERSEDED}
+            )
             await self._store.update_project_blueprint(
-                current_blueprint.model_copy(update={"status": BlueprintStatus.SUPERSEDED}),
+                superseded_blueprint,
                 expected_status=BlueprintStatus.ACTIVE,
+            )
+            await self._append_project_blueprint_event(
+                project_id=project_id,
+                blueprint=superseded_blueprint,
+                event_type=ProjectBlueprintEventType.SUPERSEDED,
             )
         await self._store.update_project(
             project=updated_project,
@@ -1532,12 +1563,59 @@ class ProjectApplication:
             ),
         )
         if blueprint is not None:
-            await self._store.append_event(
-                project_id,
-                "blueprint.created",
-                {"blueprint_id": str(blueprint.id), "version": blueprint.version},
+            await self._append_project_blueprint_event(
+                project_id=project_id,
+                blueprint=blueprint,
+                event_type=ProjectBlueprintEventType.CREATED,
             )
         return requirement, module_entities
+
+    async def _append_project_blueprint_event(
+        self,
+        *,
+        project_id: UUID,
+        blueprint: ProjectBlueprint,
+        event_type: ProjectBlueprintEventType,
+    ) -> None:
+        """Persist the exact approved structure beside its indexed read model."""
+
+        payload: dict[str, object] = {"blueprint": blueprint.model_dump(mode="json")}
+        await self._store.append_event(
+            project_id,
+            event_type.value,
+            payload,
+            project_blueprint_event_metadata(
+                blueprint=blueprint,
+                event_type=event_type,
+                payload=payload,
+            ),
+        )
+
+    async def _ensure_project_blueprint_creation_event(
+        self,
+        *,
+        project_id: UUID,
+        blueprint: ProjectBlueprint,
+    ) -> None:
+        """Adopt a pre-cutover active blueprint before recording its retirement.
+
+        The first structural mutation after the cutover writes a creation event
+        with the old immutable snapshot, then records the transition.  This
+        prevents a legacy relation row from producing an orphaned ``superseded``
+        event stream while keeping the migration online and reversible.
+        """
+
+        if await self._store.has_aggregate_events(
+            project_id,
+            aggregate_type="project_blueprint",
+            aggregate_id=blueprint.id,
+        ):
+            return
+        await self._append_project_blueprint_event(
+            project_id=project_id,
+            blueprint=blueprint,
+            event_type=ProjectBlueprintEventType.CREATED,
+        )
 
     async def _attach_fresh_module_lineages(
         self, modules: Sequence[Module]

@@ -508,6 +508,14 @@ class DomainStore(Protocol):
         metadata: DomainEventMetadata | None = None,
     ) -> int: ...
 
+    async def has_aggregate_events(
+        self,
+        project_id: UUID,
+        *,
+        aggregate_type: str,
+        aggregate_id: UUID,
+    ) -> bool: ...
+
     async def commit(self) -> None: ...
 
     async def rollback(self) -> None: ...
