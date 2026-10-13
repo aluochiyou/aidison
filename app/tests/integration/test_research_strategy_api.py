@@ -346,9 +346,10 @@ async def test_approved_strategy_freezes_scope_and_compiles_its_task_dag(
                     "max_consecutive_no_progress": None,
                     "partial_delivery_allowed": False,
                 },
-                "minimum_evidence_sources_for_must": 2,
-                "minimum_evidence_origins_for_must": 2,
-            }
+                    "minimum_evidence_sources_for_must": 2,
+                    "minimum_evidence_origins_for_must": 2,
+                    "max_trusted_source_collection_calls": 32,
+                }
             assert [item["task_key"] for item in run_contract["research_strategy"]["tasks"]] == [
                 "power.power.seed",
                 "control.constraints",
