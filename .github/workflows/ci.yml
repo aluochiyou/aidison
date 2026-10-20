@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend contracts and PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: aidison_test
+          POSTGRES_USER: aidison_test
+          POSTGRES_PASSWORD: aidison_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aidison_test -d aidison_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+asyncpg://aidison_test:aidison_test_password@127.0.0.1:5432/aidison_test
+      TEST_DATABASE_URL: postgresql+asyncpg://aidison_test:aidison_test_password@127.0.0.1:5432/aidison_test
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Python and uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+          working-directory: app
+          enable-cache: true
+      - name: Install locked dependencies
+        run: uv sync --frozen --all-groups
+      - name: Upgrade isolated test database
+        run: uv run alembic upgrade head
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Type check
+        run: uv run mypy src
+      - name: Test
+        run: uv run pytest -q
+
+  frontend:
+    name: Frontend tests and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: app/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: yarn
+          cache-dependency-path: app/web/yarn.lock
+      - name: Enable locked Yarn release
+        run: corepack enable
+      - name: Install locked dependencies
+        run: yarn install --frozen-lockfile
+      - name: Test
+        run: yarn test
+      - name: Check formatting
+        run: yarn format:check
+      - name: Lint
+        run: yarn lint
+      - name: Build
+        run: yarn build
+
+  production-images:
+    name: Production image build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      POSTGRES_PASSWORD: ci_only_url_safe_password_0123456789abcdef
+      AIDISON_ADMIN_USER: aidison
+      AIDISON_ADMIN_PASSWORD_HASH: $2a$14$xotpUT.hhphWNXBXt.gv/.o8xLC/BOifgD5I3dSox6QHbTAyBU/je
+      CLOUDFLARE_TUNNEL_TOKEN: ci-only-placeholder
+      DEEPSEEK_API_KEY: ci-only-placeholder
+    steps:
+      - uses: actions/checkout@v7
+      - name: Validate production topology
+        working-directory: app
+        run: docker compose -f compose.production.yaml config --quiet
+      - name: Build production images
+        working-directory: app
+        run: docker compose -f compose.production.yaml build
