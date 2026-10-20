@@ -91,6 +91,8 @@ from aidison.runtime.minimal_graph import execution_thread_config
 from aidison.runtime.run_health import RunHealthViolation
 from aidison.workstreams.memory_routing import MemoryRoute, MemoryRouteDecision
 
+_MAX_RESEARCH_TASK_QUESTION_CHARACTERS = 12_000
+
 
 @dataclass(frozen=True, slots=True)
 class ResearchRunExecution:
@@ -143,6 +145,8 @@ def _research_failure_summary(failure_code: str, error: Exception | None) -> str
         "research_model_timeout": "模型调用超过本轮允许时限，已停止等待",
         "research_run_duration_exceeded": "研究运行超过了已批准的最长时长，已停止继续派发",
         "research_model_provider_failed": "模型服务未能完成本次受控研究调用",
+        "research_execution_contract_invalid": "已批准的研究计划无法编译为受限任务，已停止执行",
+        "research_execution_failed": "研究执行遇到未分类的服务端错误，已安全终止本轮运行",
         "research_context_budget_exceeded": "本轮 Token 预算不足以容纳最小研究上下文",
         "research_contract_artifact_invalid": "研究运行合同或覆盖合同的 Artifact 不可用",
         "research_contract_load_failed": "无法加载冻结的研究运行合同",
@@ -257,6 +261,22 @@ class ResearchRunExecutor:
                 run=run,
                 claim=claim,
                 failure_code=run_health_failure_code(error.finding),
+            )
+            return ResearchRunExecution(readiness="blocked", agent_decision=None)
+        except DomainConflictError as error:
+            await self._fail_claim_if_current(
+                run=run,
+                claim=claim,
+                failure_code="research_execution_contract_invalid",
+                error=error,
+            )
+            return ResearchRunExecution(readiness="blocked", agent_decision=None)
+        except Exception as error:
+            await self._fail_claim_if_current(
+                run=run,
+                claim=claim,
+                failure_code="research_execution_failed",
+                error=error,
             )
             return ResearchRunExecution(readiness="blocked", agent_decision=None)
 
@@ -714,7 +734,7 @@ class ResearchRunExecutor:
                     *(f"{item.key}: {item.question}" for item in module_keys),
                 )
             )
-            if len(question) > 2_000:
+            if len(question) > _MAX_RESEARCH_TASK_QUESTION_CHARACTERS:
                 raise DomainConflictError("module research task exceeds the bounded question limit")
             task_key = f"research.module.{module.key}"
             task = TaskEnvelope(
@@ -835,7 +855,7 @@ class ResearchRunExecutor:
                     *method_guidance,
                 )
             )
-            if len(question) > 2_000:
+            if len(question) > _MAX_RESEARCH_TASK_QUESTION_CHARACTERS:
                 raise DomainConflictError("strategy task question exceeds bounded limit")
             task_id = task_ids[planned_task.task_key]
             task_envelopes.append(
@@ -1575,7 +1595,7 @@ class ResearchRunExecutor:
                     ),
                 )
             )
-            if len(question) > 2_000:
+            if len(question) > _MAX_RESEARCH_TASK_QUESTION_CHARACTERS:
                 raise DomainConflictError("research verifier task exceeds the question limit")
             materialized.append((task, question))
         return tuple(materialized)
@@ -1647,7 +1667,7 @@ class ResearchRunExecutor:
                     ),
                 )
             )
-            if len(question) > 2_000:
+            if len(question) > _MAX_RESEARCH_TASK_QUESTION_CHARACTERS:
                 raise DomainConflictError("bounded gap task exceeds the question limit")
             result.append((task, question))
         return tuple(result)

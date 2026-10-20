@@ -204,6 +204,68 @@ def test_strategy_tasks_compile_to_server_owned_coverage_and_dependency_envelope
     assert "Method compatibility.interface_check:" in questions[control_task.id]
 
 
+def test_strategy_compiler_accepts_auditable_questions_larger_than_legacy_2k_limit() -> None:
+    power = _module(key="power")
+    verbose_objective = "Compare electrical limits against the frozen requirement. " * 30
+    strategy = ResearchStrategyProposal(
+        summary="Compile a detailed but bounded research task.",
+        scope_module_ids=(power.id,),
+        tasks=(
+            ResearchStrategyTask(
+                task_key="power.deep-check",
+                title="Research power limits",
+                objective=verbose_objective,
+                module_ids=(power.id,),
+                priority="must",
+                expected_outputs=("evidence", "compatibility"),
+                stop_conditions=(
+                    "A source-backed compatibility conclusion is available. " * 10,
+                ),
+                research_lenses=("official electrical specifications",),
+            ),
+        ),
+        source_strategy="official",
+    )
+    basis_hash = _hash("verbose-strategy-basis")
+    coverage = compile_coverage_contract(
+        CoverageCompileInput(
+            basis_hash=basis_hash,
+            objective="Build a safe drone.",
+            modules=(power,),
+            strategy_tasks=strategy.tasks,
+        )
+    )
+    run = AgentRun(
+        project_id=power.project_id,
+        kind=AgentRunKind.RESEARCH,
+        basis_hash=basis_hash,
+        basis_project_revision=1,
+        runtime_binding=DEFAULT_RESEARCH_RUNTIME_BINDING,
+        thread_id="agent-run:verbose-strategy-test",
+        idempotency_key="verbose-strategy-test",
+        run_contract_ref=(
+            "artifact+sha256://" + _hash("run") + "/00000000-0000-0000-0000-000000000001"
+        ),
+        coverage_contract_ref=(
+            "artifact+sha256://"
+            + _hash("coverage")
+            + "/00000000-0000-0000-0000-000000000002"
+        ),
+    )
+
+    tasks, questions = ResearchRunExecutor._build_module_tasks(
+        run=run,
+        coverage=coverage,
+        modules=(power,),
+        strategy=strategy,
+    )
+
+    question = questions[tasks[0].id]
+    assert len(question) > 2_000
+    assert len(question) <= 12_000
+    assert verbose_objective in question
+
+
 def test_run_contract_rejects_strategy_scope_that_differs_from_frozen_scope() -> None:
     first_module = uuid4()
     second_module = uuid4()

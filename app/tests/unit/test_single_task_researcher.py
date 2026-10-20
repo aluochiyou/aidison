@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
@@ -23,6 +25,7 @@ from aidison.providers.model_gateway import (
 )
 from aidison.research.langgraph_contracts import ResearchResultStatus, TaskEnvelope
 from aidison.research.researcher import (
+    GatewayJsonModeSingleTaskResearcher,
     JsonModeResearchProviderAdapter,
     JsonModeSingleTaskResearcher,
     _research_messages,
@@ -212,6 +215,60 @@ def test_bounded_gateway_context_prefers_a_late_query_relevant_source_passage() 
 
     assert "motor current limit" in messages[1]["content"]
     assert "Company history" not in messages[1]["content"]
+
+
+def test_gateway_context_shrinks_source_excerpt_before_rejecting_a_valid_task() -> None:
+    source = CollectedResearchSource(
+        key="source-a",
+        source=SourceIdentity(
+            kind=SourceKind.WEB,
+            provider="test",
+            canonical_locator="https://example.test/source",
+        ),
+        normalized_document=(
+            "Generic catalog material. " * 500
+            + "The controller supports a 4S battery and a continuous current of 30A."
+        ),
+        media_type="text/plain",
+        representation="normalized-test-v1",
+        parser_revision="test-v1",
+        observed_at="2026-09-09T00:00:00Z",
+        coverage_source_kinds=("evidence",),
+    )
+    target = ModelTarget(
+        provider="fixture",
+        model="fixture-model",
+        revision="v1",
+        credential_pool_id="fixture-pool",
+        quota_group="research",
+        capabilities=("structured_output",),
+    )
+    researcher = GatewayJsonModeSingleTaskResearcher(
+        gateway=MagicMock(),
+        session_factory=MagicMock(),
+        artifact_root=Path("/tmp/aidison-test-artifacts"),
+        target=target,
+        reserved_tokens_per_call=5_000,
+        max_output_tokens=1_000,
+    )
+    task = _task(coverage_keys=("power.current",))
+
+    assembly, output_tokens = researcher._assemble_budgeted_context(
+        run=SimpleNamespace(basis_hash="a" * 64),
+        task=task,
+        question="Compare controller constraints.\n" + "requirement detail " * 100,
+        input_refs=(),
+        steering_instructions=(),
+        evidence_context=(source,),
+        reserved_tokens=5_000,
+    )
+
+    source_item = next(
+        item for item in assembly.manifest.items if item.source_ref == "source://source-a"
+    )
+    assert source_item.transform == "excerpt"
+    assert source_item.included_token_estimate < source_item.original_token_estimate
+    assert output_tokens == 1_000
 
 
 @pytest.mark.asyncio

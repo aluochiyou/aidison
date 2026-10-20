@@ -413,33 +413,37 @@ class GatewayJsonModeSingleTaskResearcher:
                 tokenizer_binding_hash=_sha256("conservative-char2-v1"),
                 renderer_version="research-context-renderer-v1",
             )
-            candidates = _research_context_candidates(
-                task=task,
-                system_prompt=self._system_prompt,
-                task_content=task_content,
-                evidence_context=evidence_context,
-                source_excerpt_characters=max(
-                    128,
-                    policy.input_token_budget * 2 // max(1, len(evidence_context)),
-                ),
+            initial_excerpt_characters = max(
+                128,
+                policy.input_token_budget * 2 // max(1, len(evidence_context)),
             )
-            try:
-                assembly = self._context_engine.assemble(
+            for source_excerpt_characters in _descending_excerpt_character_caps(
+                initial_excerpt_characters
+            ):
+                candidates = _research_context_candidates(
                     task=task,
-                    policy=policy,
-                    candidates=candidates,
-                    profile_definition_hash=_sha256(self._system_prompt),
-                    model_binding_hash=_sha256(self._target.key),
+                    system_prompt=self._system_prompt,
+                    task_content=task_content,
+                    evidence_context=evidence_context,
+                    source_excerpt_characters=source_excerpt_characters,
                 )
-            except ContextTooLargeError:
-                continue
-            selected_source_refs = {
-                item.source_ref
-                for item in assembly.manifest.items
-                if item.source_ref.startswith("source://")
-            }
-            if selected_source_refs:
-                return assembly, max_output_tokens
+                try:
+                    assembly = self._context_engine.assemble(
+                        task=task,
+                        policy=policy,
+                        candidates=candidates,
+                        profile_definition_hash=_sha256(self._system_prompt),
+                        model_binding_hash=_sha256(self._target.key),
+                    )
+                except ContextTooLargeError:
+                    break
+                selected_source_refs = {
+                    item.source_ref
+                    for item in assembly.manifest.items
+                    if item.source_ref.startswith("source://")
+                }
+                if selected_source_refs:
+                    return assembly, max_output_tokens
         raise ResearchContextBudgetError("research_minimum_context_exceeds_budget")
 
     def _output_tokens_for(self, task: TaskEnvelope) -> int:
@@ -579,6 +583,21 @@ def _conservative_text_tokens(text: str) -> int:
 
 def _sha256(value: str) -> str:
     return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _descending_excerpt_character_caps(initial: int) -> tuple[int, ...]:
+    """Retry source packing without weakening mandatory task or policy context.
+
+    A large proportional excerpt can legitimately be omitted by the context
+    engine even though a smaller evidence-bearing excerpt would fit.  The
+    bounded sequence keeps the first attempt information-rich, then shrinks
+    only untrusted source material until at least one source can be supplied.
+    """
+
+    if initial < 1:
+        raise ValueError("initial source excerpt budget must be positive")
+    candidates = (initial, 4_096, 2_048, 1_024, 512, 256, 128)
+    return tuple(dict.fromkeys(item for item in candidates if item <= initial))
 
 
 def _research_task_content(
