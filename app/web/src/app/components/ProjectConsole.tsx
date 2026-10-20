@@ -5,15 +5,11 @@ import useSWR from "swr";
 import { toast } from "sonner";
 import {
   Activity,
-  ArrowLeft,
   Bot,
-  Check,
   CircleAlert,
-  Code2,
   Database,
   FlaskConical,
   GitBranch,
-  RefreshCw,
   Search,
   ShieldCheck,
   Wrench,
@@ -25,6 +21,7 @@ import { DraftWorkbench } from "@/app/components/DraftWorkbench";
 import { ActivityFeed } from "@/app/components/ActivityFeed";
 import { RequirementsRevisionForm } from "@/app/components/RequirementsRevisionForm";
 import { ConversationPanel } from "@/app/components/ConversationPanel";
+import { ProjectConsoleHeader } from "@/app/components/ProjectConsoleHeader";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { getClient } from "@/lib/api";
@@ -46,17 +43,6 @@ import type {
   SpendBudgetProposal,
   WorkspaceAction,
 } from "@/app/types/types";
-
-const STAGES = [
-  ["intake", "项目"],
-  ["requirements", "需求"],
-  ["research", "研究"],
-  ["comparing", "比较"],
-  ["deciding", "决策"],
-  ["approved", "方案"],
-  ["verifying", "验证"],
-  ["revising", "修订"],
-] as const;
 
 interface ProjectConsoleProps {
   initialProject: Project;
@@ -289,32 +275,6 @@ function StatusTag({ status }: { status: string }) {
     <span className={`status-tag ${statusTone(status)}`}>
       {STATUS_LABELS[status] ?? status}
     </span>
-  );
-}
-
-function StageRail({ project }: { project: Project }) {
-  const activeIndex = STAGES.findIndex(([stage]) => stage === project.stage);
-  return (
-    <div
-      className="stage-rail"
-      aria-label={`当前阶段：${project.stage}`}
-      role="list"
-    >
-      {STAGES.map(([stage, label], index) => (
-        <div
-          className={`stage-stop ${index < activeIndex ? "is-done" : ""} ${
-            index === activeIndex ? "is-active" : ""
-          }`}
-          key={stage}
-          role="listitem"
-        >
-          <span>
-            {index < activeIndex ? <Check className="h-3 w-3" /> : index + 1}
-          </span>
-          <small>{label}</small>
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -2262,49 +2222,14 @@ export function ProjectConsole({
 
   return (
     <main className="console-shell">
-      <header className="console-header">
-        <div className="console-title-row">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onBack}
-          >
-            <ArrowLeft className="h-4 w-4" />
-            项目列表
-          </Button>
-          <div className="project-title">
-            <small>正在制作</small>
-            <h1>{project.name}</h1>
-          </div>
-          {developerMode ? (
-            <div className="truth-badge">
-              <Database className="h-4 w-4" />
-              <span>REV {String(project.revision).padStart(2, "0")}</span>
-              <i className={connected ? "is-online" : ""} />
-              {connected ? "LIVE" : "RECONNECTING"}
-            </div>
-          ) : null}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void refresh()}
-          >
-            <RefreshCw className="h-4 w-4" />
-            刷新
-          </Button>
-          <Button
-            aria-pressed={developerMode}
-            className="developer-mode-toggle"
-            onClick={() => setDeveloperMode((current) => !current)}
-            size="sm"
-            variant="ghost"
-          >
-            <Code2 className="h-4 w-4" />
-            {developerMode ? "退出开发者模式" : "开发者模式"}
-          </Button>
-        </div>
-        {developerMode ? <StageRail project={project} /> : null}
-      </header>
+      <ProjectConsoleHeader
+        project={project}
+        connected={connected}
+        developerMode={developerMode}
+        onBack={onBack}
+        onRefresh={() => void refresh()}
+        onToggleDeveloperMode={() => setDeveloperMode((current) => !current)}
+      />
 
       <div
         className={`console-body ${
