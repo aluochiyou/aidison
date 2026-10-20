@@ -126,6 +126,17 @@ class AgentRunBudgetLedger:
         ).all()
         return tuple(_operation(row) for row in rows)
 
+    async def get_operation_by_idempotency_key(
+        self,
+        idempotency_key: str,
+    ) -> AgentRunBudgetOperation | None:
+        row = await self._session.scalar(
+            select(AgentRunBudgetOperationRow).where(
+                AgentRunBudgetOperationRow.idempotency_key == idempotency_key
+            )
+        )
+        return None if row is None else _operation(row)
+
     async def reserve(
         self,
         *,
