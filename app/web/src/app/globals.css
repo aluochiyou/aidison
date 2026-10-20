@@ -788,15 +788,19 @@ button {
 .launch-copy h1 {
   max-width: 780px;
   margin: 0;
-  font-size: clamp(3.4rem, 7vw, 7.4rem);
+  font-size: clamp(3.25rem, 5.4vw, 5.8rem);
   font-stretch: condensed;
   font-weight: 700;
-  line-height: 0.9;
+  line-height: 0.94;
   letter-spacing: -0.055em;
 }
 
 .launch-copy h1 span {
   display: block;
+  white-space: nowrap;
+}
+
+.launch-title-accent {
   color: var(--copper);
 }
 
@@ -843,7 +847,9 @@ button {
 }
 
 .specimen-loop {
+  --node-radius: clamp(7rem, 34cqi, 10.5rem);
   position: relative;
+  container-type: inline-size;
   width: 100%;
   aspect-ratio: 1 / 1;
   margin: 1rem auto 0.9rem;
@@ -861,8 +867,9 @@ button {
   top: 50%;
   left: 50%;
   width: 4.6rem;
-  transform: translate(-50%, -50%) rotate(var(--node-angle)) translateY(-47%)
-    rotate(calc(var(--node-angle) * -1));
+  transform: translate(-50%, -50%) rotate(var(--node-angle))
+    translateY(calc(-1 * var(--node-radius)))
+    rotate(calc(-1 * var(--node-angle)));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3841,7 +3848,7 @@ button {
   }
 
   .launch-copy h1 {
-    font-size: clamp(3rem, 15vw, 5rem);
+    font-size: clamp(2.75rem, 11vw, 4.75rem);
   }
 
   .launch-specimen {
@@ -3849,11 +3856,30 @@ button {
   }
 
   .console-title-row {
-    grid-template-columns: auto 1fr auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    padding: 0.75rem 1.25rem;
+  }
+
+  .project-title {
+    order: -1;
+    flex: 1 0 100%;
+    min-width: 0;
+  }
+
+  .project-title h1 {
+    font-size: 1.25rem;
+    overflow-wrap: anywhere;
+  }
+
+  .developer-mode-toggle {
+    margin-left: auto;
   }
 
   .truth-badge {
-    grid-column: 2 / -1;
+    order: 2;
+    flex: 1 0 100%;
   }
 
   .stage-rail {
@@ -3913,6 +3939,12 @@ button {
 
   .draft-parameter-row button {
     grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .launch-copy h1 span {
+    white-space: normal;
   }
 }
 

@@ -81,8 +81,8 @@ export default function HomePage() {
           Local engineering workspace
         </div>
         <h1>
-          把 DIY 想法变成
-          <span>可验证的工程方案</span>
+          <span className="launch-title-primary">把 DIY 想法变成</span>
+          <span className="launch-title-accent">可验证的工程方案</span>
         </h1>
         <p>
           Aidison
