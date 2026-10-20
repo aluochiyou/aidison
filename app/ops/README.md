@@ -41,18 +41,37 @@ outbound-only public connection, so the router needs no port forwarding and the 
 published. Caddy Basic Auth is an origin-side fail-closed guard; Cloudflare Access should be enabled
 as a second identity gate.
 
-1. Copy `.env.production.example` to `.env.production` and fill the required values.
-2. In Cloudflare, create a remotely managed Tunnel and set its public hostname service to
-   `http://gateway:8080`. Configure an Access application for the same hostname before inviting
-   users.
-3. Start Docker Desktop, then run from `app/` in Windows PowerShell:
+1. In Cloudflare, create a remotely managed Tunnel and copy its connector token. Set the public
+   hostname service to `http://gateway:8080` and configure an Access application for the same
+   hostname before inviting users.
+2. Start Docker Desktop, then initialize the local secret file from `app/` in Windows PowerShell:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\initialize-production.ps1
+```
+
+The initializer asks for the administrator password and Tunnel Token without echoing them,
+generates a URL-safe PostgreSQL password, hashes the administrator password through Caddy stdin,
+and imports only the allowlisted Provider keys already present in `.env`. It creates the
+Git-ignored `.env.production` atomically and refuses to overwrite an existing file.
+
+3. Deploy from the same directory:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\deploy-production.ps1
 ```
 
-The script validates required secrets and the Compose model, builds the application images, starts
-the stack, and waits for the loopback-only edge health endpoint. It never prints secret values.
+Initialization and deployment can also be run together with
+`initialize-production.ps1 -Deploy`.
+
+The deployment script validates required secrets and the Compose model, builds the application
+images, starts the stack, and waits for the loopback-only edge health endpoint. It never prints
+secret values.
+
+For manual initialization, copy `.env.production.example` to `.env.production` and fill every
+required value. In Cloudflare, create a remotely managed Tunnel and route the public hostname to
+`http://gateway:8080`. Configure an Access application for the same hostname before inviting
+users.
 
 Before each production release, create the consistent PostgreSQL + Artifact pair with:
 
