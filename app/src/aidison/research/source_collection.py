@@ -11,12 +11,13 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import ipaddress
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import httpx
@@ -32,6 +33,22 @@ from aidison.research.langgraph_contracts import TaskEnvelope
 from aidison.research.project_documents import ProjectSourceDocument
 from aidison.research.source_observations import SourceIdentity, SourceKind, source_origin_key
 from aidison.runtime.agent_runs import AgentRun
+from aidison.tools.dispatcher import AuthorizedToolInvocation
+from aidison.tools.execution import (
+    ToolAdapterCallable,
+    ToolAdapterFailure,
+    ToolAdapterResponse,
+    ToolExecutionFailure,
+    ToolExecutionReplayUnavailable,
+    ToolExecutionResult,
+)
+from aidison.tools.source_catalog import (
+    FIRECRAWL_READ_TOOL_ID,
+    GITHUB_CONTENTS_TOOL_ID,
+    PROJECT_DOCUMENT_READ_TOOL_ID,
+    PROJECT_FILE_READ_TOOL_ID,
+    TAVILY_SEARCH_TOOL_ID,
+)
 
 
 class CollectedResearchSource(BaseModel):
@@ -78,6 +95,21 @@ class CollectedResearchSource(BaseModel):
         return self
 
 
+class ResearchSourceToolRuntime(Protocol):
+    """Task-bound durable execution seam for one physical source read."""
+
+    async def execute(
+        self,
+        *,
+        tool_id: str,
+        arguments: dict[str, Any],
+        purpose_code: str,
+        provider: str,
+        target: str,
+        invoke: ToolAdapterCallable,
+    ) -> ToolExecutionResult: ...
+
+
 class ResearchSourceCollector(Protocol):
     """Physical read-only source collection seam; authority remains outside models."""
 
@@ -87,11 +119,14 @@ class ResearchSourceCollector(Protocol):
         run: AgentRun,
         task: TaskEnvelope,
         question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
     ) -> tuple[CollectedResearchSource, ...]: ...
 
 
 class NoopResearchSourceCollector:
     """Safe default until a deployment configures an authorized source adapter."""
+
+    tool_ids: tuple[str, ...] = ()
 
     async def collect(
         self,
@@ -99,7 +134,9 @@ class NoopResearchSourceCollector:
         run: AgentRun,
         task: TaskEnvelope,
         question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
     ) -> tuple[CollectedResearchSource, ...]:
+        del run, task, question, tool_runtime
         return ()
 
 
@@ -127,6 +164,10 @@ class ProjectDocumentSourceCollectionError(ResearchSourceCollectionError):
     """A classified failure while reading user-uploaded project source material."""
 
 
+class FirecrawlSourceCollectionError(ResearchSourceCollectionError):
+    """A classified failure at the Firecrawl v2 scrape boundary."""
+
+
 class ProjectDocumentResearchSourceCollector:
     """Expose active project documents as immutable, run-snapshotted input.
 
@@ -135,6 +176,8 @@ class ProjectDocumentResearchSourceCollector:
     normal Research source snapshot is still written before model execution,
     so later edits or quarantining do not rewrite an already-started Run.
     """
+
+    tool_ids = (PROJECT_DOCUMENT_READ_TOOL_ID,)
 
     def __init__(
         self,
@@ -159,6 +202,7 @@ class ProjectDocumentResearchSourceCollector:
         run: AgentRun,
         task: TaskEnvelope,
         question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
     ) -> tuple[CollectedResearchSource, ...]:
         try:
             async with self._session_factory() as session:
@@ -170,9 +214,56 @@ class ProjectDocumentResearchSourceCollector:
                     sources: list[tuple[ProjectSourceDocument, CollectedResearchSource]] = []
                     observed_at = datetime.now(UTC)
                     for document in active:
-                        _, content = await documents.read_text(
-                            project_id=run.project_id, document_id=document.id
-                        )
+                        async def read_document(
+                            _invocation: AuthorizedToolInvocation,
+                            *,
+                            selected: ProjectSourceDocument = document,
+                        ) -> ToolAdapterResponse:
+                            try:
+                                _, content = await documents.read_text(
+                                    project_id=run.project_id,
+                                    document_id=selected.id,
+                                )
+                            except ProjectSourceDocumentIntegrityError as error:
+                                await session.commit()
+                                raise ToolAdapterFailure(
+                                    "project_document_unavailable"
+                                ) from error
+                            return ToolAdapterResponse(value={"content": content})
+
+                        if tool_runtime is None:
+                            _, content = await documents.read_text(
+                                project_id=run.project_id, document_id=document.id
+                            )
+                        else:
+                            try:
+                                executed = await tool_runtime.execute(
+                                    tool_id=PROJECT_DOCUMENT_READ_TOOL_ID,
+                                    arguments={
+                                        "document_id": document.id,
+                                        "content_hash": document.content_hash,
+                                    },
+                                    purpose_code="collect_project_evidence",
+                                    provider="aidison-project-document",
+                                    target=str(document.id),
+                                    invoke=read_document,
+                                )
+                            except ToolExecutionFailure as error:
+                                raise ProjectDocumentSourceCollectionError(
+                                    error.reason_code
+                                ) from error
+                            except ToolExecutionReplayUnavailable as error:
+                                raise ProjectDocumentSourceCollectionError(
+                                    "project_document_replay_unavailable"
+                                ) from error
+                            value = executed.value
+                            if not isinstance(value, dict) or not isinstance(
+                                value.get("content"), str
+                            ):
+                                raise ProjectDocumentSourceCollectionError(
+                                    "project_document_response_schema_invalid"
+                                )
+                            content = value["content"]
                         source = CollectedResearchSource(
                             key=f"project-source-{document.id.hex}",
                             source=SourceIdentity(
@@ -264,6 +355,8 @@ class LocalFileResearchSourceCollector:
     below ``source_root`` and checked again immediately before every read.
     """
 
+    tool_ids = (PROJECT_FILE_READ_TOOL_ID,)
+
     def __init__(
         self,
         *,
@@ -291,12 +384,51 @@ class LocalFileResearchSourceCollector:
         run: AgentRun,
         task: TaskEnvelope,
         question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
     ) -> tuple[CollectedResearchSource, ...]:
         del run, task, question
         observed_at = datetime.now(UTC)
         sources: list[CollectedResearchSource] = []
         for target in self._targets:
-            sources.append(await self._read_target(target=target, observed_at=observed_at))
+            if tool_runtime is None:
+                source = await self._read_target(target=target, observed_at=observed_at)
+            else:
+                async def read_target(
+                    _invocation: AuthorizedToolInvocation,
+                    *,
+                    selected: str = target,
+                ) -> ToolAdapterResponse:
+                    try:
+                        item = await self._read_target(
+                            target=selected,
+                            observed_at=observed_at,
+                        )
+                    except LocalFileSourceCollectionError as error:
+                        raise ToolAdapterFailure(error.reason_code) from error
+                    return ToolAdapterResponse(value=item.model_dump(mode="json"))
+
+                try:
+                    executed = await tool_runtime.execute(
+                        tool_id=PROJECT_FILE_READ_TOOL_ID,
+                        arguments={"target": target},
+                        purpose_code="collect_project_evidence",
+                        provider="aidison-project-file",
+                        target=target,
+                        invoke=read_target,
+                    )
+                except ToolExecutionFailure as error:
+                    raise LocalFileSourceCollectionError(error.reason_code) from error
+                except ToolExecutionReplayUnavailable as error:
+                    raise LocalFileSourceCollectionError(
+                        "local_source_replay_unavailable"
+                    ) from error
+                try:
+                    source = CollectedResearchSource.model_validate(executed.value)
+                except ValueError as error:
+                    raise LocalFileSourceCollectionError(
+                        "local_source_response_schema_invalid"
+                    ) from error
+            sources.append(source)
         return tuple(sources)
 
     @staticmethod
@@ -364,6 +496,8 @@ class GitHubRepositorySourceCollector:
     repository read authority.
     """
 
+    tool_ids = (GITHUB_CONTENTS_TOOL_ID,)
+
     _target_pattern = re.compile(
         r"^(?P<repository>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)@"
         r"(?P<ref>[A-Za-z0-9_.:/-]+):(?P<path>[A-Za-z0-9_.+/@-]+)$"
@@ -401,13 +535,59 @@ class GitHubRepositorySourceCollector:
         run: AgentRun,
         task: TaskEnvelope,
         question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
     ) -> tuple[CollectedResearchSource, ...]:
         del run, task, question
         observed_at = datetime.now(UTC)
-        sources = [
-            await self._fetch_target(target=target, observed_at=observed_at)
-            for target in self._targets
-        ]
+        sources: list[CollectedResearchSource] = []
+        for target in self._targets:
+            if tool_runtime is None:
+                source = await self._fetch_target(target=target, observed_at=observed_at)
+            else:
+                repository, ref, path = target
+
+                async def fetch_target(
+                    _invocation: AuthorizedToolInvocation,
+                    *,
+                    selected: tuple[str, str, str] = target,
+                ) -> ToolAdapterResponse:
+                    try:
+                        item = await self._fetch_target(
+                            target=selected,
+                            observed_at=observed_at,
+                        )
+                    except GitHubSourceCollectionError as error:
+                        if error.reason_code == "github_network_failure":
+                            raise
+                        raise ToolAdapterFailure(error.reason_code) from error
+                    return ToolAdapterResponse(value=item.model_dump(mode="json"))
+
+                try:
+                    executed = await tool_runtime.execute(
+                        tool_id=GITHUB_CONTENTS_TOOL_ID,
+                        arguments={
+                            "repository": repository,
+                            "ref": ref,
+                            "path": path,
+                        },
+                        purpose_code="collect_repository_evidence",
+                        provider="github-contents",
+                        target=f"{repository}@{ref}:{path}",
+                        invoke=fetch_target,
+                    )
+                except ToolExecutionFailure as error:
+                    raise GitHubSourceCollectionError(error.reason_code) from error
+                except ToolExecutionReplayUnavailable as error:
+                    raise GitHubSourceCollectionError(
+                        "github_replay_unavailable"
+                    ) from error
+                try:
+                    source = CollectedResearchSource.model_validate(executed.value)
+                except ValueError as error:
+                    raise GitHubSourceCollectionError(
+                        "github_response_schema_invalid"
+                    ) from error
+            sources.append(source)
         return tuple(sources)
 
     @classmethod
@@ -509,19 +689,44 @@ class CompositeResearchSourceCollector:
             raise ValueError("composite source collector needs at least one collector")
         self._collectors = tuple(collectors)
 
+    @property
+    def tool_ids(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    tool_id
+                    for collector in self._collectors
+                    for tool_id in getattr(collector, "tool_ids", ())
+                }
+            )
+        )
+
     async def collect(
         self,
         *,
         run: AgentRun,
         task: TaskEnvelope,
         question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
     ) -> tuple[CollectedResearchSource, ...]:
         collected_by_collector: list[list[CollectedResearchSource]] = []
         seen_source_ids: set[str] = set()
         recoverable_failures: list[ResearchSourceCollectionError] = []
         for collector in self._collectors:
             try:
-                sources = await collector.collect(run=run, task=task, question=question)
+                if tool_runtime is not None and source_tool_ids(collector):
+                    sources = await collector.collect(
+                        run=run,
+                        task=task,
+                        question=question,
+                        tool_runtime=tool_runtime,
+                    )
+                else:
+                    sources = await collector.collect(
+                        run=run,
+                        task=task,
+                        question=question,
+                    )
             except ResearchSourceCollectionError as error:
                 if not is_recoverable_source_collection_failure(error.reason_code):
                     raise
@@ -615,6 +820,139 @@ def _fairly_bounded_collector_sources(
     return tuple(selected)
 
 
+class FirecrawlWebReader:
+    """Read one public HTTPS page through Firecrawl v2 as a bounded fallback.
+
+    Discovery remains Tavily's responsibility.  This adapter is invoked only
+    when an already-discovered result has no usable raw body, so enabling it
+    does not duplicate every search result or silently broaden task scope.
+    """
+
+    tool_ids = (FIRECRAWL_READ_TOOL_ID,)
+    _endpoint = "https://api.firecrawl.dev/v2/scrape"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        client: httpx.AsyncClient,
+        max_document_characters: int = 32_000,
+    ) -> None:
+        if not api_key.strip():
+            raise ValueError("Firecrawl API key must not be empty")
+        if not 1 <= max_document_characters <= 96_000:
+            raise ValueError("Firecrawl document limit must be between 1 and 96000")
+        self._api_key = api_key
+        self._client = client
+        self._max_document_characters = max_document_characters
+
+    async def read(
+        self,
+        *,
+        url: str,
+        observed_at: datetime,
+        tool_runtime: ResearchSourceToolRuntime | None,
+    ) -> CollectedResearchSource:
+        normalized_url = _public_https_locator(url)
+        if normalized_url is None:
+            raise FirecrawlSourceCollectionError("firecrawl_url_not_public_https")
+
+        if tool_runtime is None:
+            value, _ = await self._scrape_direct(normalized_url)
+        else:
+            async def invoke(
+                _invocation: AuthorizedToolInvocation,
+            ) -> ToolAdapterResponse:
+                try:
+                    value, provider_request_id = await self._scrape_direct(normalized_url)
+                except FirecrawlSourceCollectionError as error:
+                    if error.reason_code == "firecrawl_network_failure":
+                        raise
+                    raise ToolAdapterFailure(error.reason_code) from error
+                return ToolAdapterResponse(
+                    value=value,
+                    provider_request_id=provider_request_id,
+                )
+
+            try:
+                executed = await tool_runtime.execute(
+                    tool_id=FIRECRAWL_READ_TOOL_ID,
+                    arguments={
+                        "url": normalized_url,
+                        "max_characters": self._max_document_characters,
+                    },
+                    purpose_code="read_complex_web_evidence",
+                    provider="firecrawl",
+                    target="scrape-v2",
+                    invoke=invoke,
+                )
+            except ToolExecutionFailure as error:
+                raise FirecrawlSourceCollectionError(error.reason_code) from error
+            except ToolExecutionReplayUnavailable as error:
+                raise FirecrawlSourceCollectionError(
+                    "firecrawl_replay_unavailable"
+                ) from error
+            value = executed.value
+
+        markdown = value.get("markdown") if isinstance(value, dict) else None
+        if not isinstance(markdown, str):
+            raise FirecrawlSourceCollectionError("firecrawl_response_schema_invalid")
+        document = markdown.strip()[: self._max_document_characters]
+        if not document:
+            raise FirecrawlSourceCollectionError("firecrawl_document_empty")
+        return CollectedResearchSource(
+            key=f"firecrawl-{sha256(normalized_url.encode()).hexdigest()[:20]}",
+            source=SourceIdentity(
+                kind=SourceKind.WEB,
+                provider="firecrawl-scrape-v2",
+                canonical_locator=normalized_url,
+            ),
+            normalized_document=document,
+            media_type="text/markdown",
+            representation="normalized-firecrawl-markdown-v2",
+            parser_revision="firecrawl-scrape-v2",
+            observed_at=observed_at,
+            coverage_source_kinds=("evidence",),
+        )
+
+    async def _scrape_direct(self, url: str) -> tuple[dict[str, object], str | None]:
+        try:
+            response = await self._client.post(
+                self._endpoint,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={
+                    "url": url,
+                    "formats": ["markdown"],
+                    "onlyMainContent": True,
+                    "removeBase64Images": True,
+                    "parsers": ["pdf"],
+                    "zeroDataRetention": True,
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            raise FirecrawlSourceCollectionError(
+                _firecrawl_http_failure_code(error.response.status_code)
+            ) from error
+        except httpx.RequestError as error:
+            raise FirecrawlSourceCollectionError("firecrawl_network_failure") from error
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise FirecrawlSourceCollectionError("firecrawl_response_invalid") from error
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise FirecrawlSourceCollectionError("firecrawl_response_schema_invalid")
+        data = body.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("markdown"), str):
+            raise FirecrawlSourceCollectionError("firecrawl_response_schema_invalid")
+        provider_request_id = response.headers.get("x-request-id")
+        metadata = data.get("metadata")
+        if provider_request_id is None and isinstance(metadata, dict):
+            scrape_id = metadata.get("scrapeId")
+            provider_request_id = scrape_id if isinstance(scrape_id, str) else None
+        return {"markdown": data["markdown"]}, provider_request_id
+
+
 class TavilySearchResearchSourceCollector:
     """Collect bounded raw webpage material through Tavily's read-only Search API.
 
@@ -634,6 +972,7 @@ class TavilySearchResearchSourceCollector:
         max_results: int | None = 3,
         max_queries: int | None = 3,
         max_document_characters: int = 32_000,
+        fallback_reader: FirecrawlWebReader | None = None,
     ) -> None:
         if not api_key.strip():
             raise ValueError("Tavily API key must not be empty")
@@ -648,6 +987,14 @@ class TavilySearchResearchSourceCollector:
         self._max_results = max_results
         self._max_queries = max_queries
         self._max_document_characters = max_document_characters
+        self._fallback_reader = fallback_reader
+
+    @property
+    def tool_ids(self) -> tuple[str, ...]:
+        configured = {TAVILY_SEARCH_TOOL_ID}
+        if self._fallback_reader is not None:
+            configured.update(self._fallback_reader.tool_ids)
+        return tuple(sorted(configured))
 
     async def collect(
         self,
@@ -655,6 +1002,7 @@ class TavilySearchResearchSourceCollector:
         run: AgentRun,
         task: TaskEnvelope,
         question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
     ) -> tuple[CollectedResearchSource, ...]:
         del run
         collection_policy = getattr(task, "collection_policy", None)
@@ -687,6 +1035,7 @@ class TavilySearchResearchSourceCollector:
                     query,
                     max_results=max_results_per_query,
                     search_depth=search_depth,
+                    tool_runtime=tool_runtime,
                 )
             except TavilySourceCollectionError as error:
                 # A deep task can have several independent Coverage Keys.  A
@@ -715,19 +1064,42 @@ class TavilySearchResearchSourceCollector:
                     continue
                 locator = result.get("url")
                 raw_content = result.get("raw_content")
-                if not isinstance(locator, str) or not isinstance(raw_content, str):
+                if not isinstance(locator, str):
                     continue
                 normalized_locator = _normalized_https_locator(locator)
-                document = raw_content.strip()[: self._max_document_characters]
-                if (
-                    normalized_locator is None
-                    or not document
-                    or normalized_locator in seen_query_locators
-                ):
+                if normalized_locator is None or normalized_locator in seen_query_locators:
+                    continue
+                document = (
+                    raw_content.strip()[: self._max_document_characters]
+                    if isinstance(raw_content, str)
+                    else ""
+                )
+                fallback_source: CollectedResearchSource | None = None
+                if not document and self._fallback_reader is not None:
+                    try:
+                        fallback_source = await self._fallback_reader.read(
+                            url=normalized_locator,
+                            observed_at=observed_at,
+                            tool_runtime=tool_runtime,
+                        )
+                    except FirecrawlSourceCollectionError as error:
+                        if not is_recoverable_source_collection_failure(error.reason_code):
+                            raise
+                        recoverable_failures.append(TavilySourceCollectionError(error.reason_code))
+                        if coverage_key is not None:
+                            collection_failures.append(
+                                ResearchSourceCollectionFailure(
+                                    coverage_key=coverage_key,
+                                    reason_code=error.reason_code,
+                                )
+                            )
+                        continue
+                if not document and fallback_source is None:
                     continue
                 seen_query_locators.add(normalized_locator)
                 query_candidates.append(
-                    CollectedResearchSource(
+                    fallback_source
+                    or CollectedResearchSource(
                         key=f"tavily-{sha256(normalized_locator.encode()).hexdigest()[:20]}",
                         source=SourceIdentity(
                             kind=SourceKind.WEB,
@@ -767,6 +1139,56 @@ class TavilySearchResearchSourceCollector:
         )
 
     async def _search(
+        self,
+        query: str,
+        *,
+        max_results: int | None,
+        search_depth: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
+    ) -> dict[str, list[object]]:
+        if tool_runtime is None:
+            return await self._search_direct(
+                query,
+                max_results=max_results,
+                search_depth=search_depth,
+            )
+
+        async def invoke(_invocation: AuthorizedToolInvocation) -> ToolAdapterResponse:
+            try:
+                value = await self._search_direct(
+                    query,
+                    max_results=max_results,
+                    search_depth=search_depth,
+                )
+            except TavilySourceCollectionError as error:
+                if error.reason_code == "tavily_network_failure":
+                    raise
+                raise ToolAdapterFailure(error.reason_code) from error
+            return ToolAdapterResponse(value=value)
+
+        try:
+            executed = await tool_runtime.execute(
+                tool_id=TAVILY_SEARCH_TOOL_ID,
+                arguments={
+                    "query": query,
+                    "max_results": max_results or 5,
+                    "search_depth": search_depth,
+                },
+                purpose_code="discover_web_evidence",
+                provider="tavily",
+                target="search-v1",
+                invoke=invoke,
+            )
+        except ToolExecutionFailure as error:
+            raise TavilySourceCollectionError(error.reason_code) from error
+        except ToolExecutionReplayUnavailable as error:
+            raise TavilySourceCollectionError("tavily_replay_unavailable") from error
+        value = executed.value
+        if not isinstance(value, dict) or not isinstance(value.get("results"), list):
+            raise TavilySourceCollectionError("tavily_response_schema_invalid")
+        return {"results": value["results"]}
+
+    async def _search_direct(
         self,
         query: str,
         *,
@@ -1005,6 +1427,27 @@ def _normalized_https_locator(value: str) -> str | None:
     return urlunsplit(("https", hostname, parsed.path or "/", parsed.query, ""))
 
 
+def _public_https_locator(value: str) -> str | None:
+    """Reject obvious local/private targets before delegating a remote scrape."""
+
+    normalized = _normalized_https_locator(value)
+    if normalized is None:
+        return None
+    hostname = urlsplit(normalized).hostname
+    assert hostname is not None
+    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+        (".localhost", ".local", ".internal")
+    ):
+        return None
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return normalized
+    if not address.is_global:
+        return None
+    return normalized
+
+
 def _tavily_http_failure_code(status_code: int) -> str:
     if status_code in {401, 403}:
         return "tavily_authentication_failed"
@@ -1013,6 +1456,16 @@ def _tavily_http_failure_code(status_code: int) -> str:
     if status_code >= 500:
         return "tavily_provider_unavailable"
     return "tavily_request_rejected"
+
+
+def _firecrawl_http_failure_code(status_code: int) -> str:
+    if status_code in {401, 403}:
+        return "firecrawl_authentication_failed"
+    if status_code in {402, 429}:
+        return "firecrawl_quota_exhausted"
+    if status_code >= 500:
+        return "firecrawl_provider_unavailable"
+    return "firecrawl_request_rejected"
 
 
 def _github_http_failure_code(response: httpx.Response) -> str:
@@ -1055,6 +1508,8 @@ def is_recoverable_source_collection_failure(reason_code: str) -> bool:
     """Whether a physical source outage may become a bounded coverage gap."""
 
     return reason_code in {
+        "firecrawl_network_failure",
+        "firecrawl_provider_unavailable",
         "github_network_failure",
         "github_provider_unavailable",
         "tavily_network_failure",
@@ -1062,17 +1517,29 @@ def is_recoverable_source_collection_failure(reason_code: str) -> bool:
     }
 
 
+def source_tool_ids(collector: object) -> tuple[str, ...]:
+    """Return the exact configured source capabilities without inspecting prompts."""
+
+    return tuple(sorted(set(getattr(collector, "tool_ids", ()))))
+
+
 __all__ = [
     "CollectedResearchSource",
     "CompositeResearchSourceCollector",
+    "FirecrawlSourceCollectionError",
+    "FirecrawlWebReader",
     "GitHubRepositorySourceCollector",
     "GitHubSourceCollectionError",
     "LocalFileResearchSourceCollector",
     "LocalFileSourceCollectionError",
     "is_recoverable_source_collection_failure",
     "NoopResearchSourceCollector",
+    "ProjectDocumentResearchSourceCollector",
+    "ProjectDocumentSourceCollectionError",
     "ResearchSourceCollectionError",
     "ResearchSourceCollector",
+    "ResearchSourceToolRuntime",
+    "source_tool_ids",
     "TavilySearchResearchSourceCollector",
     "TavilySourceCollectionError",
 ]

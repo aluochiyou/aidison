@@ -5,6 +5,7 @@ x-backend-environment: &backend-environment
   AIDISON_ARTIFACT_ROOT: /data/artifacts
   DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-${DASHSCOPE_API_KEY:-}}
   TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+  FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
 
 x-backend-service: &backend-service
   image: aidison-backend:local

@@ -50,10 +50,10 @@ class ResearchExecutionPolicy(FrozenModel):
     policy_version: str = "research-execution-policy-v2"
     collection: ResearchCollectionPolicy
     adaptive: AdaptivePlanningPolicy
-    # One task-level collection may fan out to an explicitly configured source
-    # adapter, but it is still one user-budgeted external-effect boundary.
-    # Unlike the planning breadth policy, this cap is always finite so a Run
-    # can reserve every physical call in its durable ledger.
+    # Historical field name retained for stored-contract compatibility.  The
+    # value now caps physical source reads (each HTTP/file/document call), not
+    # logical task-level collection rounds.  This keeps budget and replay
+    # accounting truthful when one task fans out across queries or adapters.
     max_trusted_source_collection_calls: int = Field(default=16, ge=1, le=128)
     minimum_evidence_sources_for_must: int = Field(default=1, ge=1, le=5)
     minimum_evidence_origins_for_must: int = Field(default=1, ge=1, le=5)

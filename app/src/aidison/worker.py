@@ -55,6 +55,7 @@ from aidison.research.researcher import (
 )
 from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
+    FirecrawlWebReader,
     GitHubRepositorySourceCollector,
     LocalFileResearchSourceCollector,
     NoopResearchSourceCollector,
@@ -128,6 +129,16 @@ class WorkerSettings(AidisonSettings):
         default=None,
         validation_alias="TAVILY_MAX_QUERIES",
         ge=1,
+    )
+    firecrawl_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias="FIRECRAWL_API_KEY",
+    )
+    firecrawl_timeout_seconds: float = Field(
+        default=30.0,
+        validation_alias="FIRECRAWL_TIMEOUT_SECONDS",
+        gt=0,
+        le=120,
     )
     local_source_root: Path | None = Field(
         default=None,
@@ -488,13 +499,24 @@ def _research_source_collector(
                 client=client,
             )
         )
+    if settings.firecrawl_api_key is not None and settings.tavily_api_key is None:
+        raise ValueError("FIRECRAWL_API_KEY requires TAVILY_API_KEY for bounded URL discovery")
     if settings.tavily_api_key is not None:
+        fallback_reader = (
+            FirecrawlWebReader(
+                api_key=settings.firecrawl_api_key.get_secret_value(),
+                client=client,
+            )
+            if settings.firecrawl_api_key is not None
+            else None
+        )
         collectors.append(
             TavilySearchResearchSourceCollector(
                 api_key=settings.tavily_api_key.get_secret_value(),
                 client=client,
                 max_results=settings.tavily_max_results,
                 max_queries=settings.tavily_max_queries,
+                fallback_reader=fallback_reader,
             )
         )
     if not collectors:
@@ -536,7 +558,11 @@ def _local_source_targets(value: str) -> tuple[str, ...]:
 def _source_client_timeout(settings: WorkerSettings) -> float:
     """One reusable client with the least restrictive configured source timeout."""
 
-    return max(settings.tavily_timeout_seconds, settings.github_timeout_seconds)
+    return max(
+        settings.tavily_timeout_seconds,
+        settings.github_timeout_seconds,
+        settings.firecrawl_timeout_seconds,
+    )
 
 
 async def run_impact_worker(settings: WorkerSettings, *, once: bool = False) -> None:

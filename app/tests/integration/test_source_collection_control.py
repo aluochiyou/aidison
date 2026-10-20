@@ -20,6 +20,7 @@ from aidison.research.langgraph_contracts import ExecutionGrant, TaskEnvelope
 from aidison.research.source_collection import (
     CollectedResearchSource,
     ResearchSourceCollectionError,
+    ResearchSourceToolRuntime,
 )
 from aidison.research.source_collection_control import (
     BudgetedResearchSourceCollector,
@@ -29,6 +30,9 @@ from aidison.research.source_observations import SourceIdentity, SourceKind
 from aidison.runtime.agent_run_budget import AgentRunBudgetState
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim, AgentRunKind
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
+from aidison.tools.dispatcher import AuthorizedToolInvocation
+from aidison.tools.execution import ToolAdapterResponse
+from aidison.tools.source_catalog import TAVILY_SEARCH_TOOL_ID
 
 pytestmark = pytest.mark.integration
 
@@ -68,6 +72,57 @@ class _RecordingCollector:
         )
 
 
+class _ToolAwareRecordingCollector:
+    tool_ids = (TAVILY_SEARCH_TOOL_ID,)
+
+    def __init__(self) -> None:
+        self.adapter_calls = 0
+
+    async def collect(
+        self,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
+    ) -> tuple[CollectedResearchSource, ...]:
+        assert tool_runtime is not None
+
+        async def invoke(_invocation: AuthorizedToolInvocation) -> ToolAdapterResponse:
+            self.adapter_calls += 1
+            return ToolAdapterResponse(value={"document": "durable physical result"})
+
+        executed = await tool_runtime.execute(
+            tool_id=TAVILY_SEARCH_TOOL_ID,
+            arguments={
+                "query": question,
+                "max_results": 1,
+                "search_depth": "basic",
+            },
+            purpose_code="discover_web_evidence",
+            provider="fixture-search",
+            target="search-v1",
+            invoke=invoke,
+        )
+        assert isinstance(executed.value, dict)
+        return (
+            CollectedResearchSource(
+                key="physical-source",
+                source=SourceIdentity(
+                    kind=SourceKind.WEB,
+                    provider="fixture-search",
+                    canonical_locator="https://example.test/physical-source",
+                ),
+                normalized_document=str(executed.value["document"]),
+                media_type="text/plain",
+                representation="normalized-document-v1",
+                parser_revision="fixture-parser-v1",
+                observed_at=datetime.now(UTC),
+                coverage_source_kinds=("evidence",),
+            ),
+        )
+
+
 def _run(*, project_id: UUID) -> AgentRun:
     return AgentRun(
         project_id=project_id,
@@ -91,7 +146,7 @@ def _run(*, project_id: UUID) -> AgentRun:
 async def _build_controlled_collector(
     *,
     artifact_root: Path,
-    collector: _RecordingCollector,
+    collector: _RecordingCollector | _ToolAwareRecordingCollector,
 ) -> tuple[
     AsyncEngine,
     async_sessionmaker[AsyncSession],
@@ -116,7 +171,7 @@ async def _build_controlled_collector(
         await AgentRunBudgetLedger(session).create_account(
             agent_run_id=run.id,
             token_cap=0,
-            tool_call_cap=1,
+            tool_call_cap=2,
         )
         await session.commit()
         claim = await AgentRunControl(session).claim_next(
@@ -135,7 +190,7 @@ async def _build_controlled_collector(
         input_refs=(),
         dependency_task_ids=(),
         coverage_keys=("research.answer",),
-        allowed_tool_ids=(),
+        allowed_tool_ids=getattr(collector, "tool_ids", ()),
         budget_ref="budget://source-collection/1",
         idempotency_key="source-collection-task-1",
     )
@@ -153,6 +208,41 @@ async def _build_controlled_collector(
         artifact_root=artifact_root,
     )
     return engine, factory, controlled, run, claim, task, grant
+
+
+@pytest.mark.asyncio
+async def test_tool_aware_collection_replays_each_physical_call(tmp_path: Path) -> None:
+    if "TEST_DATABASE_URL" not in os.environ:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    collector = _ToolAwareRecordingCollector()
+    engine, factory, controlled, run, claim, task, grant = await _build_controlled_collector(
+        artifact_root=tmp_path,
+        collector=collector,
+    )
+    try:
+        first = await controlled.collect_for_task(
+            run=run,
+            claim=claim,
+            task=task,
+            grant=grant,
+            question="battery evidence",
+        )
+        replayed = await controlled.collect_for_task(
+            run=run,
+            claim=claim,
+            task=task,
+            grant=grant,
+            question="battery evidence",
+        )
+
+        assert replayed[0].normalized_document == first[0].normalized_document
+        assert collector.adapter_calls == 1
+        async with factory() as session:
+            operations = await AgentRunBudgetLedger(session).list_operations_for_run(run.id)
+        assert len(operations) == 1
+        assert operations[0].state is AgentRunBudgetState.SETTLED
+    finally:
+        await engine.dispose()
 
 
 async def _read_outcome_artifact(

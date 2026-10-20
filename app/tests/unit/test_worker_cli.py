@@ -29,6 +29,8 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
         "AIDISON_WORKER_LEASE_SECONDS",
         "AIDISON_WORKER_POLL_SECONDS",
         "AIDISON_DURABLE_RECHECK_SECONDS",
+        "FIRECRAWL_API_KEY",
+        "FIRECRAWL_TIMEOUT_SECONDS",
         "AIDISON_MODEL_CIRCUIT_FAILURE_THRESHOLD",
         "AIDISON_MODEL_CIRCUIT_WINDOW_SECONDS",
         "AIDISON_MODEL_CIRCUIT_OPEN_SECONDS",
@@ -262,6 +264,34 @@ def test_research_source_collector_combines_authorized_tavily_and_github_readers
                 client=client,
             )
             assert isinstance(collector, CompositeResearchSourceCollector)
+
+    asyncio.run(exercise())
+
+
+def test_firecrawl_requires_tavily_discovery_and_extends_source_authority() -> None:
+    async def exercise() -> None:
+        async with httpx.AsyncClient() as client:
+            with pytest.raises(ValueError, match="requires TAVILY_API_KEY"):
+                _research_source_collector(
+                    settings=WorkerSettings(
+                        _env_file=None,
+                        firecrawl_api_key="fc-test-key",
+                    ),
+                    client=client,
+                )
+            collector = _research_source_collector(
+                settings=WorkerSettings(
+                    _env_file=None,
+                    tavily_api_key="tavily-test-token",
+                    firecrawl_api_key="fc-test-key",
+                ),
+                client=client,
+            )
+            assert isinstance(collector, CompositeResearchSourceCollector)
+            assert collector.tool_ids == (
+                "web.read.firecrawl",
+                "web.search.tavily",
+            )
 
     asyncio.run(exercise())
 

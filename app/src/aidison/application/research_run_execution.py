@@ -76,7 +76,11 @@ from aidison.research.researcher import (
     ResearchModelInvocationError,
 )
 from aidison.research.single_task_graph import build_single_task_research_graph
-from aidison.research.source_collection import NoopResearchSourceCollector, ResearchSourceCollector
+from aidison.research.source_collection import (
+    NoopResearchSourceCollector,
+    ResearchSourceCollector,
+    source_tool_ids,
+)
 from aidison.research.source_collection_control import (
     BudgetedResearchSourceCollector,
     RunScopedResearchSourceCollector,
@@ -103,6 +107,10 @@ def _research_failure_summary(failure_code: str, error: Exception | None) -> str
         "tavily_authentication_failed": "Tavily 检索凭据无效或无权访问",
         "tavily_quota_exhausted": "Tavily 检索配额已耗尽",
         "tavily_provider_unavailable": "Tavily 检索服务暂时不可用",
+        "firecrawl_network_failure": "Firecrawl 网页读取服务网络连接失败",
+        "firecrawl_authentication_failed": "Firecrawl 网页读取凭据无效或无权访问",
+        "firecrawl_quota_exhausted": "Firecrawl 网页读取配额已耗尽",
+        "firecrawl_provider_unavailable": "Firecrawl 网页读取服务暂时不可用",
         "tavily_request_rejected": "Tavily 拒绝了本次检索请求",
         "tavily_response_invalid": "Tavily 返回了无法解析的检索结果",
         "tavily_response_schema_invalid": "Tavily 返回的检索结构不符合预期",
@@ -174,6 +182,7 @@ class ResearchRunExecutor:
         self._checkpointer = checkpointer
         self._researcher = researcher
         configured_collector = source_collector or NoopResearchSourceCollector()
+        self._source_tool_ids = source_tool_ids(configured_collector)
         self._source_collector: ResearchSourceCollector | RunScopedResearchSourceCollector = (
             configured_collector
             if isinstance(configured_collector, NoopResearchSourceCollector)
@@ -344,7 +353,7 @@ class ResearchRunExecutor:
             input_refs=(run.coverage_contract_ref or "",),
             dependency_task_ids=(),
             coverage_keys=tuple(item.key for item in coverage.keys),
-            allowed_tool_ids=(),
+            allowed_tool_ids=self._source_tool_ids,
             budget_ref=f"budget://agent-run/{run.id}",
             idempotency_key=f"research.single_task:{run.id}",
             collection_policy=collection_policy,
@@ -490,6 +499,7 @@ class ResearchRunExecutor:
             modules=modules,
             strategy=strategy,
             collection_policy=collection_policy,
+            allowed_tool_ids=self._source_tool_ids,
         )
         reusable_memory_by_task_id, revalidation_task_ids = (
             await self._route_workstream_memory_for_tasks(
@@ -675,6 +685,7 @@ class ResearchRunExecutor:
         modules: tuple[Any, ...],
         strategy: ResearchStrategyProposal | None = None,
         collection_policy: ResearchCollectionPolicy | None = None,
+        allowed_tool_ids: tuple[str, ...] = (),
     ) -> tuple[tuple[TaskEnvelope, ...], dict[Any, str]]:
         if strategy is not None:
             return ResearchRunExecutor._build_strategy_tasks(
@@ -683,6 +694,7 @@ class ResearchRunExecutor:
                 modules=modules,
                 strategy=strategy,
                 collection_policy=collection_policy,
+                allowed_tool_ids=allowed_tool_ids,
             )
         tasks: list[TaskEnvelope] = []
         questions: dict[Any, str] = {}
@@ -718,7 +730,7 @@ class ResearchRunExecutor:
                 input_refs=(run.coverage_contract_ref or "", f"module://{module.id}"),
                 dependency_task_ids=(),
                 coverage_keys=tuple(item.key for item in module_keys),
-                allowed_tool_ids=(),
+                allowed_tool_ids=allowed_tool_ids,
                 budget_ref=f"budget://agent-run/{run.id}",
                 idempotency_key=f"research.module:{run.id}:{module.id}:1",
                 collection_policy=collection_policy,
@@ -735,6 +747,7 @@ class ResearchRunExecutor:
         modules: tuple[Any, ...],
         strategy: ResearchStrategyProposal,
         collection_policy: ResearchCollectionPolicy | None = None,
+        allowed_tool_ids: tuple[str, ...] = (),
     ) -> tuple[tuple[TaskEnvelope, ...], dict[Any, str]]:
         """Compile an approved strategy into server-owned task envelopes.
 
@@ -842,7 +855,7 @@ class ResearchRunExecutor:
                         task_ids[item] for item in planned_task.depends_on_task_keys
                     ),
                     coverage_keys=tuple(assigned_keys),
-                    allowed_tool_ids=(),
+                    allowed_tool_ids=allowed_tool_ids,
                     budget_ref=f"budget://agent-run/{run.id}",
                     idempotency_key=(
                         f"research.strategy:{run.id}:{planned_task.task_key}:1"
@@ -1092,9 +1105,9 @@ class ResearchRunExecutor:
                         ),
                         coverage_contract=coverage,
                         snapshot=consolidation.snapshot,
-                    allowed_tool_ids=(),
-                    budget_ref=f"budget://agent-run/{run.id}",
-                    policy=adaptive_policy,
+                        allowed_tool_ids=self._source_tool_ids,
+                        budget_ref=f"budget://agent-run/{run.id}",
+                        policy=adaptive_policy,
                     )
                 )
                 if plan.action is not AdaptivePlanAction.CREATE_GAP_PATCH or plan.patch is None:
@@ -1503,7 +1516,7 @@ class ResearchRunExecutor:
                 plan_revision=plan_revision,
                 coverage_contract=coverage,
                 snapshot=snapshot,
-                allowed_tool_ids=(),
+                allowed_tool_ids=self._source_tool_ids,
                 budget_ref=f"budget://agent-run/{run.id}",
             )
         )

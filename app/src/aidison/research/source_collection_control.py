@@ -19,11 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from aidison.infrastructure.agent_run_budget import AgentRunBudgetLedger
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.database import session_scope
+from aidison.infrastructure.tool_execution import PostgresReadToolExecutor
 from aidison.research.langgraph_contracts import ExecutionGrant, TaskEnvelope
 from aidison.research.source_collection import (
     CollectedResearchSource,
     ResearchSourceCollectionError,
     ResearchSourceCollector,
+    ResearchSourceToolRuntime,
+    source_tool_ids,
 )
 from aidison.runtime.agent_run_budget import (
     AgentRunBudgetOperation,
@@ -31,6 +34,16 @@ from aidison.runtime.agent_run_budget import (
     AgentRunBudgetState,
 )
 from aidison.runtime.agent_runs import AgentRun, AgentRunClaim
+from aidison.tools.dispatcher import (
+    DispatchAuthority,
+    ToolCallIntent,
+    ToolDispatcher,
+    ToolDispatchPolicy,
+    ToolEffectClass,
+    ToolProfileGrant,
+)
+from aidison.tools.execution import ToolAdapterCallable, ToolExecutionResult
+from aidison.tools.source_catalog import SOURCE_TOOL_DEFINITIONS, build_source_tool_registry
 
 
 @runtime_checkable
@@ -52,13 +65,94 @@ class SourceCollectionReplayUnavailable(RuntimeError):
     """A previous source operation cannot be safely replayed or re-dispatched."""
 
 
-class BudgetedResearchSourceCollector:
-    """Decorate one configured collector with durable execution accounting.
+class _TaskBoundSourceToolRuntime(ResearchSourceToolRuntime):
+    """Translate one trusted adapter call into the common durable tool kernel."""
 
-    A terminal success or classified failure outcome is persisted before the
-    operation is settled.  Therefore a same-generation retry can replay the
-    exact result instead of issuing a second physical collection merely
-    because a later research node crashed.
+    def __init__(
+        self,
+        *,
+        executor: PostgresReadToolExecutor,
+        run: AgentRun,
+        claim: AgentRunClaim,
+        task: TaskEnvelope,
+        grant: ExecutionGrant,
+        configured_tool_ids: tuple[str, ...],
+    ) -> None:
+        specs = tuple(
+            spec
+            for spec, _ in SOURCE_TOOL_DEFINITIONS
+            if spec.tool_id in configured_tool_ids
+        )
+        if {spec.tool_id for spec in specs} != set(configured_tool_ids):
+            raise ValueError("configured source collector has an unregistered tool identity")
+        self._executor = executor
+        self._run = run
+        self._claim = claim
+        self._authority = DispatchAuthority(
+            task=task,
+            grant=grant,
+            profile=ToolProfileGrant(
+                profile_ref=run.runtime_binding.profile_binding_ref,
+                allowed_tool_ids=tuple(sorted(configured_tool_ids)),
+                allowed_tool_classes=tuple(sorted({spec.tool_class for spec in specs})),
+                allowed_effect_classes=(ToolEffectClass.READ,),
+            ),
+            policy=ToolDispatchPolicy(
+                allowed_tool_classes=tuple(sorted({spec.tool_class for spec in specs})),
+                allowed_effect_classes=(ToolEffectClass.READ,),
+                available_risk_tiers=tuple(
+                    sorted({spec.risk_tier for spec in specs}, key=str)
+                ),
+            ),
+            deadline=claim.lease_expires_at,
+        )
+
+    async def execute(
+        self,
+        *,
+        tool_id: str,
+        arguments: dict[str, object],
+        purpose_code: str,
+        provider: str,
+        target: str,
+        invoke: ToolAdapterCallable,
+    ) -> ToolExecutionResult:
+        canonical = json.dumps(
+            {
+                "tool_id": tool_id,
+                "purpose_code": purpose_code,
+                "arguments": arguments,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return await self._executor.execute(
+            ToolCallIntent(
+                tool_call_id=f"source-{sha256(canonical.encode()).hexdigest()[:32]}",
+                tool_id=tool_id,
+                revision=1,
+                arguments=arguments,
+                purpose_code=purpose_code,
+            ),
+            authority=self._authority,
+            run=self._run,
+            claim=self._claim,
+            provider=provider,
+            target=target,
+            invoke=invoke,
+        )
+
+
+class BudgetedResearchSourceCollector:
+    """Bind configured source adapters to durable per-physical-call control.
+
+    Tool-aware production collectors use the common Tool Dispatcher and one
+    budget/recording entry per HTTP or file read.  Legacy/custom collectors
+    without declared tool identities retain the old whole-collection replay
+    path so tests and explicit extensions fail closed rather than silently
+    receiving broad source authority.
     """
 
     def __init__(
@@ -71,6 +165,16 @@ class BudgetedResearchSourceCollector:
         self._collector = collector
         self._session_factory = session_factory
         self._artifact_root = artifact_root
+        self._tool_ids = source_tool_ids(collector)
+        self._tool_executor = PostgresReadToolExecutor(
+            dispatcher=ToolDispatcher(build_source_tool_registry()),
+            session_factory=session_factory,
+            artifact_root=artifact_root,
+        )
+
+    @property
+    def tool_ids(self) -> tuple[str, ...]:
+        return self._tool_ids
 
     async def collect_for_task(
         self,
@@ -81,6 +185,21 @@ class BudgetedResearchSourceCollector:
         grant: ExecutionGrant,
         question: str,
     ) -> tuple[CollectedResearchSource, ...]:
+        if self._tool_ids:
+            runtime = _TaskBoundSourceToolRuntime(
+                executor=self._tool_executor,
+                run=run,
+                claim=claim,
+                task=task,
+                grant=grant,
+                configured_tool_ids=self._tool_ids,
+            )
+            return await self._collector.collect(
+                run=run,
+                task=task,
+                question=question,
+                tool_runtime=runtime,
+            )
         request_ref, request_hash = await self._persist_request(
             run=run,
             task=task,
