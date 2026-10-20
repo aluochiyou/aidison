@@ -5,7 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
-from aidison.application.service import ProjectApplication
+from aidison.application.service import DomainNotFoundError, ProjectApplication
 from aidison.domain.events import DomainEventMetadata
 from aidison.domain.models import (
     AdjustmentBatch,
@@ -159,6 +159,13 @@ class InMemoryDomainStore:
                 reverse=True,
             )[:limit]
         )
+
+    async def assert_project_revision(self, project_id: UUID, expected_revision: int) -> None:
+        project = self.projects.get(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        if project.revision != expected_revision:
+            raise OptimisticConcurrencyError("project revision is stale")
 
     async def update_project(self, project: Project, *, expected_revision: int) -> None:
         current = self.projects[project.id]
@@ -845,9 +852,7 @@ class InMemoryDomainStore:
     async def list_active_clarifications(
         self, session_id: UUID
     ) -> Sequence[ConversationClarification]:
-        turn_session = {
-            turn.id: turn.session_id for turn in self.conversation_turns.values()
-        }
+        turn_session = {turn.id: turn.session_id for turn in self.conversation_turns.values()}
         return sorted(
             (
                 item
@@ -858,12 +863,8 @@ class InMemoryDomainStore:
             key=lambda item: (item.created_at, str(item.id)),
         )
 
-    async def list_clarifications(
-        self, session_id: UUID
-    ) -> Sequence[ConversationClarification]:
-        turn_session = {
-            turn.id: turn.session_id for turn in self.conversation_turns.values()
-        }
+    async def list_clarifications(self, session_id: UUID) -> Sequence[ConversationClarification]:
+        turn_session = {turn.id: turn.session_id for turn in self.conversation_turns.values()}
         items = [
             item
             for item in self.conversation_clarifications.values()
@@ -893,15 +894,12 @@ class InMemoryDomainStore:
     async def list_active_action_proposals(
         self, session_id: UUID
     ) -> Sequence[ConversationActionProposal]:
-        turn_session = {
-            turn.id: turn.session_id for turn in self.conversation_turns.values()
-        }
+        turn_session = {turn.id: turn.session_id for turn in self.conversation_turns.values()}
         return sorted(
             (
                 item
                 for item in self.conversation_action_proposals.values()
-                if item.status.value == "proposed"
-                and turn_session.get(item.turn_id) == session_id
+                if item.status.value == "proposed" and turn_session.get(item.turn_id) == session_id
             ),
             key=lambda item: (item.created_at, str(item.id)),
         )
@@ -998,6 +996,7 @@ class InMemoryDomainStore:
             for item in self.spend_budget_impact_previews.values()
             if item.project_id == project_id
         ]
+
 
 def _string_tuple(value: object) -> tuple[str, ...]:
     if not isinstance(value, (list, tuple)):

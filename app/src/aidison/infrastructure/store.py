@@ -315,6 +315,22 @@ class PostgresDomainStore(DomainStore):
             raise DomainNotFoundError("project not found")
         return value
 
+    async def assert_project_revision(self, project_id: UUID, expected_revision: int) -> None:
+        """Serialize a revision-sensitive continuation without mutating Project.
+
+        A no-op ``update_project`` would create a duplicate revision manifest.
+        Locking the aggregate row provides the stale-write fence without
+        inventing a new canonical project version.
+        """
+
+        revision = await self._session.scalar(
+            select(ProjectRow.revision).where(ProjectRow.id == project_id).with_for_update()
+        )
+        if revision is None:
+            raise DomainNotFoundError("project not found")
+        if revision != expected_revision:
+            raise OptimisticConcurrencyError("project revision is stale")
+
     async def update_project(self, project: Project, *, expected_revision: int) -> None:
         previous = await self._session.scalar(
             select(ProjectRevisionManifestRow)
@@ -1865,9 +1881,7 @@ class PostgresDomainStore(DomainStore):
                 schema_version=metadata.schema_version if metadata is not None else 0,
                 aggregate_type=metadata.aggregate_type if metadata is not None else None,
                 aggregate_id=metadata.aggregate_id if metadata is not None else None,
-                aggregate_version=(
-                    metadata.aggregate_version if metadata is not None else None
-                ),
+                aggregate_version=(metadata.aggregate_version if metadata is not None else None),
                 occurred_at=metadata.occurred_at if metadata is not None else datetime.now(UTC),
                 payload_hash=metadata.payload_hash if metadata is not None else None,
                 correlation_id=metadata.correlation_id if metadata is not None else None,
@@ -2299,9 +2313,7 @@ class PostgresDomainStore(DomainStore):
 
     async def get_conversation_reply_to_turn(self, turn_id: UUID) -> ConversationTurn | None:
         result = await self._session.execute(
-            select(ConversationTurnRow).where(
-                ConversationTurnRow.in_reply_to_turn_id == turn_id
-            )
+            select(ConversationTurnRow).where(ConversationTurnRow.in_reply_to_turn_id == turn_id)
         )
         row = result.scalars().first()
         return self._turn_from_row(row) if row is not None else None
@@ -2456,9 +2468,7 @@ class PostgresDomainStore(DomainStore):
         rows = result.scalars().all()
         return tuple(self._clarification_from_row(row) for row in rows)
 
-    async def list_clarifications(
-        self, session_id: UUID
-    ) -> Sequence[ConversationClarification]:
+    async def list_clarifications(self, session_id: UUID) -> Sequence[ConversationClarification]:
         result = await self._session.execute(
             select(ConversationClarificationRow)
             .join(
@@ -2473,7 +2483,6 @@ class PostgresDomainStore(DomainStore):
         )
         rows = result.scalars().all()
         return tuple(self._clarification_from_row(row) for row in rows)
-
 
     async def get_conversation_clarification(
         self, clarification_id: UUID

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from aidison.application.ports import DomainStore
+from aidison.application.ports import DomainStore, OptimisticConcurrencyError
 from aidison.application.service import (
     DomainConflictError,
     DomainNotFoundError,
@@ -234,14 +234,16 @@ class ShoppingApplication:
         if not offers:
             return ()
 
-        # Re-assert the revision after the external call.  The no-op update is
-        # an atomic CAS in the PostgreSQL store and prevents snapshots from
-        # being attached to a solution that changed while the provider was
-        # responding.
-        await self._store.update_project(
-            project,
-            expected_revision=expected_project_revision,
-        )
+        # Re-assert the revision after the external read without creating a
+        # duplicate ProjectRevisionManifest.  The row lock serializes this
+        # continuation with concurrent project changes until snapshots commit.
+        try:
+            await self._store.assert_project_revision(
+                project_id,
+                expected_revision=expected_project_revision,
+            )
+        except OptimisticConcurrencyError as exc:
+            raise PreconditionFailedError("project revision is stale") from exc
 
         snapshots: list[OfferSnapshot] = []
         for offer in offers:

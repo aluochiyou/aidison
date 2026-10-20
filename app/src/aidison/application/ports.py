@@ -101,6 +101,10 @@ class DomainStore(Protocol):
 
     async def list_projects(self, *, limit: int = 50) -> Sequence[Project]: ...
 
+    async def assert_project_revision(self, project_id: UUID, expected_revision: int) -> None:
+        """Lock and verify the aggregate revision without creating a new version."""
+        ...
+
     async def update_project(self, project: Project, *, expected_revision: int) -> None: ...
 
     async def add_requirement_revision(self, requirement: RequirementRevision) -> None: ...
@@ -437,9 +441,7 @@ class DomainStore(Protocol):
     async def get_conversation_turn_by_idempotency(
         self, session_id: UUID, idempotency_key: str
     ) -> ConversationTurn | None: ...
-    async def get_conversation_reply_to_turn(
-        self, turn_id: UUID
-    ) -> ConversationTurn | None: ...
+    async def get_conversation_reply_to_turn(self, turn_id: UUID) -> ConversationTurn | None: ...
     async def list_conversation_turns(
         self, session_id: UUID, *, after: int = 0, limit: int = 50
     ) -> Sequence[ConversationTurn]: ...
@@ -468,9 +470,7 @@ class DomainStore(Protocol):
     async def list_active_clarifications(
         self, session_id: UUID
     ) -> Sequence[ConversationClarification]: ...
-    async def list_clarifications(
-        self, session_id: UUID
-    ) -> Sequence[ConversationClarification]:
+    async def list_clarifications(self, session_id: UUID) -> Sequence[ConversationClarification]:
         """List every clarification for a session (pending and resolved), in stable order.
 
         Read-only and used by the clarification-round gate to prevent the model
@@ -478,6 +478,7 @@ class DomainStore(Protocol):
         whether the earlier occurrence is still pending or has been resolved.
         """
         ...
+
     async def resolve_conversation_clarification(
         self, clarification_id: UUID, resolved_by_turn_id: UUID
     ) -> None: ...

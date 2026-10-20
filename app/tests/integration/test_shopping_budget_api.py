@@ -44,6 +44,8 @@ from aidison.infrastructure.orm import (
     AgentRunRow,
     CheckoutHandoffRow,
     EffectApprovalRow,
+    OfferSnapshotRow,
+    ProjectRevisionManifestRow,
     PurchaseProposalRow,
 )
 from aidison.infrastructure.store import PostgresDomainStore
@@ -257,6 +259,69 @@ async def _assert_read_only(
 
 
 @pytest.mark.asyncio
+async def test_offer_search_keeps_project_revision_and_manifest_stable() -> None:
+    """A provider read persists snapshots without manufacturing a Project version."""
+
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    provider = FakeShoppingProvider()
+    api = create_app(factory, shopping_provider=provider)
+    transport = httpx.ASGITransport(app=api)
+    try:
+        seeded_project, _solution = await _truncate_and_seed(factory)
+        async with factory() as session:
+            store = PostgresDomainStore(session)
+            current = await store.get_project(seeded_project.id)
+            assert current is not None
+            manifest_count_before = await session.scalar(
+                select(func.count())
+                .select_from(ProjectRevisionManifestRow)
+                .where(ProjectRevisionManifestRow.project_id == current.id)
+            )
+
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                f"/api/projects/{current.id}/shopping/offers/search",
+                headers={
+                    "If-Match": f'"{current.revision}"',
+                    "Idempotency-Key": f"offer-search:{uuid4()}",
+                },
+                json={
+                    "query": "power supply",
+                    "bom_line_id": _BOM_LINE_ID,
+                    "region": "CN",
+                    "max_results": 3,
+                },
+            )
+        assert response.status_code == 200, response.text
+        assert len(response.json()) == 1
+        assert provider.search_called == 1
+
+        async with factory() as session:
+            store = PostgresDomainStore(session)
+            after = await store.get_project(current.id)
+            assert after is not None and after.revision == current.revision
+            manifest_count_after = await session.scalar(
+                select(func.count())
+                .select_from(ProjectRevisionManifestRow)
+                .where(ProjectRevisionManifestRow.project_id == current.id)
+            )
+            snapshot_count = await session.scalar(
+                select(func.count())
+                .select_from(OfferSnapshotRow)
+                .where(OfferSnapshotRow.project_id == current.id)
+            )
+        assert manifest_count_after == manifest_count_before
+        assert snapshot_count == 1
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_budget_summary_within_budget_and_unknown_shipping() -> None:
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
@@ -288,11 +353,7 @@ async def test_budget_summary_within_budget_and_unknown_shipping() -> None:
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             within_response = await client.post(
                 f"/api/projects/{project.id}/shopping/budget-summary",
-                json={
-                    "selections": [
-                        {"offer_snapshot_id": str(known.id), "quantity": 2}
-                    ]
-                },
+                json={"selections": [{"offer_snapshot_id": str(known.id), "quantity": 2}]},
             )
             assert within_response.status_code == 200, within_response.text
             within = within_response.json()
@@ -307,9 +368,7 @@ async def test_budget_summary_within_budget_and_unknown_shipping() -> None:
             unknown_response = await client.post(
                 f"/api/projects/{project.id}/shopping/budget-summary",
                 json={
-                    "selections": [
-                        {"offer_snapshot_id": str(unknown_shipping.id), "quantity": 2}
-                    ]
+                    "selections": [{"offer_snapshot_id": str(unknown_shipping.id), "quantity": 2}]
                 },
             )
             assert unknown_response.status_code == 200, unknown_response.text
@@ -445,11 +504,7 @@ async def test_cross_project_selection_and_missing_bom_line_are_rejected() -> No
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
             cross_response = await client.post(
                 f"/api/projects/{project_a.id}/shopping/budget-summary",
-                json={
-                    "selections": [
-                        {"offer_snapshot_id": str(foreign.id), "quantity": 1}
-                    ]
-                },
+                json={"selections": [{"offer_snapshot_id": str(foreign.id), "quantity": 1}]},
             )
             assert cross_response.status_code == 409, cross_response.text
             assert cross_response.json()["error"]["code"] == "DOMAIN_CONFLICT"
