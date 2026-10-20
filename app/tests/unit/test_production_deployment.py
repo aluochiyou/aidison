@@ -26,6 +26,8 @@ def test_production_compose_exposes_only_loopback_gateway() -> None:
     gateway = services["gateway"]
     assert isinstance(gateway, dict)
     assert gateway["ports"] == ["127.0.0.1:${AIDISON_EDGE_PORT:-8080}:8080"]
+    assert gateway["cap_drop"] == ["ALL"]
+    assert gateway["cap_add"] == ["NET_BIND_SERVICE"]
 
     networks = compose["networks"]
     assert isinstance(networks, dict)
