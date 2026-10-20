@@ -2,7 +2,8 @@
 param(
     [string]$OutputRoot = "backups",
     [string]$ComposeFile = "compose.yaml",
-    [string]$ComposeProject = "aidison"
+    [string]$ComposeProject = "aidison",
+    [string]$EnvFile = ""
 )
 
 Set-StrictMode -Version Latest
@@ -24,7 +25,10 @@ function Invoke-Compose {
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = @(& docker compose --file $script:ComposePath --project-name $script:ProjectName @CommandArgs 2>&1)
+        $output = @(
+            & docker compose @script:ComposeEnvArgs --file $script:ComposePath `
+                --project-name $script:ProjectName @CommandArgs 2>&1
+        )
         $exitCode = $LASTEXITCODE
     }
     finally {
@@ -83,8 +87,16 @@ function Remove-StagingDirectory {
 
 $script:ComposePath = Resolve-FullPath $ComposeFile
 $script:ProjectName = $ComposeProject
+$script:ComposeEnvArgs = @()
 if (-not (Test-Path -LiteralPath $script:ComposePath -PathType Leaf)) {
     throw "Compose file does not exist: $script:ComposePath"
+}
+if ($EnvFile) {
+    $resolvedEnvFile = Resolve-FullPath $EnvFile
+    if (-not (Test-Path -LiteralPath $resolvedEnvFile -PathType Leaf)) {
+        throw "Compose env file does not exist: $resolvedEnvFile"
+    }
+    $script:ComposeEnvArgs = @("--env-file", $resolvedEnvFile)
 }
 if ($ComposeProject -notmatch '^[a-z0-9][a-z0-9_-]+$') {
     throw "ComposeProject must contain only lowercase letters, digits, underscore or hyphen"

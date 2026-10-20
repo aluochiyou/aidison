@@ -1,0 +1,235 @@
+name: aidison-production
+
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-backend-environment: &backend-environment
+  DATABASE_URL: postgresql+asyncpg://aidison:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/aidison
+  AIDISON_ENV: production
+  AIDISON_ARTIFACT_ROOT: /data/artifacts
+  DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:?set DEEPSEEK_API_KEY}
+  OPENCODE_API_KEY: ${OPENCODE_API_KEY:-}
+  TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+  TAVILY_TIMEOUT_SECONDS: ${TAVILY_TIMEOUT_SECONDS:-15}
+  TAVILY_MAX_RESULTS: ${TAVILY_MAX_RESULTS:-8}
+  FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-}
+  FIRECRAWL_TIMEOUT_SECONDS: ${FIRECRAWL_TIMEOUT_SECONDS:-30}
+  AIDISON_GITHUB_API_TOKEN: ${AIDISON_GITHUB_API_TOKEN:-}
+  AIDISON_GITHUB_SOURCE_TARGETS: ${AIDISON_GITHUB_SOURCE_TARGETS:-}
+  GITHUB_TIMEOUT_SECONDS: ${GITHUB_TIMEOUT_SECONDS:-15}
+  AIDISON_RUNTIME_LANGFUSE_ENABLED: ${AIDISON_RUNTIME_LANGFUSE_ENABLED:-0}
+  AIDISON_RUNTIME_LANGFUSE_PROJECT: ${AIDISON_RUNTIME_LANGFUSE_PROJECT:-aidison-runtime}
+  AIDISON_RUNTIME_LANGFUSE_PUBLIC_KEY: ${AIDISON_RUNTIME_LANGFUSE_PUBLIC_KEY:-}
+  AIDISON_RUNTIME_LANGFUSE_SECRET_KEY: ${AIDISON_RUNTIME_LANGFUSE_SECRET_KEY:-}
+  AIDISON_RUNTIME_LANGFUSE_BASE_URL: ${AIDISON_RUNTIME_LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+  AIDISON_RUNTIME_LANGFUSE_ENVIRONMENT: ${AIDISON_RUNTIME_LANGFUSE_ENVIRONMENT:-production}
+  AIDISON_RUNTIME_LANGFUSE_RELEASE: ${AIDISON_RUNTIME_LANGFUSE_RELEASE:-}
+  TAOBAO_APP_KEY: ${TAOBAO_APP_KEY:-}
+  TAOBAO_APP_SECRET: ${TAOBAO_APP_SECRET:-}
+
+x-backend-service: &backend-service
+  image: aidison-backend:${AIDISON_RELEASE:-local}
+  build:
+    context: .
+    dockerfile: Dockerfile
+  environment: *backend-environment
+  networks:
+    - app-internal
+    - outbound
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging: *bounded-logging
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: aidison
+      POSTGRES_USER: aidison
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - app-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aidison -d aidison"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+    shm_size: 256mb
+    mem_limit: 1g
+    cpus: 1.0
+    pids_limit: 256
+    logging: *bounded-logging
+
+  migrate:
+    <<: *backend-service
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+
+  api:
+    <<: *backend-service
+    command: ["uvicorn", "aidison.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - artifacts:/data/artifacts
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 4s
+      retries: 12
+      start_period: 15s
+    mem_limit: 1g
+    cpus: 2.0
+    pids_limit: 256
+
+  worker:
+    <<: *backend-service
+    command: ["python", "-m", "aidison.worker"]
+    environment:
+      <<: *backend-environment
+      AIDISON_WORKER_CONCURRENCY: ${AIDISON_WORKER_CONCURRENCY:-3}
+      AIDISON_WORKER_LEASE_SECONDS: ${AIDISON_WORKER_LEASE_SECONDS:-60}
+      AIDISON_WORKER_POLL_SECONDS: ${AIDISON_WORKER_POLL_SECONDS:-0.5}
+      AIDISON_MODEL_MAX_CONCURRENCY: ${AIDISON_MODEL_MAX_CONCURRENCY:-2}
+      AIDISON_MODEL_CIRCUIT_FAILURE_THRESHOLD: ${AIDISON_MODEL_CIRCUIT_FAILURE_THRESHOLD:-5}
+      AIDISON_MODEL_CIRCUIT_WINDOW_SECONDS: ${AIDISON_MODEL_CIRCUIT_WINDOW_SECONDS:-60}
+      AIDISON_MODEL_CIRCUIT_OPEN_SECONDS: ${AIDISON_MODEL_CIRCUIT_OPEN_SECONDS:-30}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - artifacts:/data/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-m", "aidison.worker", "--check"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    mem_limit: 2g
+    cpus: 3.0
+    pids_limit: 384
+
+  web:
+    image: aidison-web:${AIDISON_RELEASE:-local}
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        AIDISON_API_URL: http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app-internal
+      - edge
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 128
+    logging: *bounded-logging
+
+  gateway:
+    image: caddy:2.11.7-alpine
+    environment:
+      AIDISON_ADMIN_USER: ${AIDISON_ADMIN_USER:?set AIDISON_ADMIN_USER}
+      AIDISON_ADMIN_PASSWORD_HASH: ${AIDISON_ADMIN_PASSWORD_HASH:?set AIDISON_ADMIN_PASSWORD_HASH}
+    volumes:
+      - ./ops/Caddyfile.production:/etc/caddy/Caddyfile:ro
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      - edge
+    ports:
+      - "127.0.0.1:${AIDISON_EDGE_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/edge-health"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /config:size=8m,mode=0700
+      - /data:size=8m,mode=0700
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+    logging: *bounded-logging
+
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.2
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+    command:
+      [
+        "tunnel",
+        "--no-autoupdate",
+        "--metrics",
+        "0.0.0.0:2000",
+        "run",
+      ]
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - edge
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    mem_limit: 128m
+    cpus: 0.5
+    pids_limit: 64
+    logging: *bounded-logging
+
+networks:
+  app-internal:
+    internal: true
+  edge:
+  outbound:
+
+volumes:
+  postgres-data:
+  artifacts:
