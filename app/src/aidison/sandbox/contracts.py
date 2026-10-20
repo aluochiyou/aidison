@@ -45,6 +45,7 @@ class SandboxResourcePolicy(BaseModel):
     wall_clock_seconds: int = Field(ge=1, le=3_600)
     output_max_bytes: int = Field(ge=1, le=2_000_000_000)
     output_max_files: int = Field(ge=1, le=1_024)
+    stdio_max_bytes: int = Field(default=65_536, ge=1_024, le=10_000_000)
 
 
 class SandboxTaskSpec(BaseModel):

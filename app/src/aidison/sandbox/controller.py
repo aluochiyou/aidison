@@ -12,6 +12,7 @@ from aidison.sandbox.workspace import TaskWorkspace
 @dataclass(frozen=True)
 class SandboxLaunchCommand:
     argv: tuple[str, ...]
+    container_name: str
 
 
 class SandboxControllerError(RuntimeError):
@@ -31,10 +32,13 @@ class DockerSandboxController:
         policy = spec.resource_policy
         input_mount = f"type=bind,src={workspace.input_dir},dst=/input,readonly"
         output_mount = f"type=bind,src={workspace.output_dir},dst=/output"
+        container_name = f"aidison-sandbox-{spec.sandbox_task_id.hex}"
         argv = (
             "docker",
             "run",
             "--rm",
+            "--name",
+            container_name,
             "--read-only",
             "--cap-drop=ALL",
             "--security-opt",
@@ -64,4 +68,10 @@ class DockerSandboxController:
             "--arguments-json",
             json.dumps(spec.arguments, sort_keys=True, separators=(",", ":")),
         )
-        return SandboxLaunchCommand(argv=argv)
+        return SandboxLaunchCommand(argv=argv, container_name=container_name)
+
+    @staticmethod
+    def build_force_remove_command(container_name: str) -> tuple[str, ...]:
+        if not container_name.startswith("aidison-sandbox-") or len(container_name) != 48:
+            raise SandboxControllerError("sandbox cleanup target is not an exact task container")
+        return ("docker", "rm", "--force", container_name)

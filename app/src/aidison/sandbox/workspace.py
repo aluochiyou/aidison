@@ -45,6 +45,10 @@ class TaskWorkspace:
         for directory in (input_dir, output_dir, work_dir):
             directory.mkdir(parents=True, exist_ok=False)
             os.chmod(directory, 0o700)
+        # The container runs as uid/gid 65532 and must not inherit the host
+        # user's identity. The task root remains 0700 on the host; only the
+        # bind-mounted output directory is writable inside the sandbox.
+        os.chmod(output_dir, 0o733)
         return cls(
             spec=spec,
             root=task_root,
@@ -71,8 +75,8 @@ class TaskWorkspace:
             if sha256(target.read_bytes()).hexdigest() != artifact.content_hash:
                 target.unlink(missing_ok=True)
                 raise SandboxWorkspaceError("sandbox input hash does not match artifact manifest")
-            os.chmod(target, 0o400)
-        os.chmod(self.input_dir, 0o500)
+            os.chmod(target, 0o444)
+        os.chmod(self.input_dir, 0o555)
 
     def collect_outputs(
         self, *, allowed_relative_paths: tuple[str, ...]
@@ -114,6 +118,18 @@ class TaskWorkspace:
                 )
             )
         return tuple(outputs)
+
+    def cleanup(self) -> None:
+        """Remove only this exact task workspace after outputs were copied."""
+
+        task_root = self.root.resolve()
+        if (
+            task_root.is_symlink()
+            or task_root.name != f"task-{self.spec.sandbox_task_id}"
+            or task_root.parent == task_root
+        ):
+            raise SandboxWorkspaceError("sandbox cleanup target is not an exact task workspace")
+        shutil.rmtree(task_root, ignore_errors=False)
 
     @staticmethod
     def _safe_child(root: Path, relative_path: str) -> Path:
