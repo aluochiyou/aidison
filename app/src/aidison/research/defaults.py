@@ -4,7 +4,12 @@ These are plan-construction limits, not executable Agent profiles. A real
 AgentRun records its immutable ``RuntimeBinding.profile_binding_ref`` instead.
 """
 
-RESEARCH_DEFAULT_ALLOWED_TOOL_CLASSES = ("web_search", "repository_read")
+RESEARCH_DEFAULT_ALLOWED_TOOL_CLASSES = (
+    "web_search",
+    "web_read",
+    "repository_read",
+    "project_read",
+)
 RESEARCH_DEFAULT_MAX_CONCURRENCY = 8
 RESEARCH_DEFAULT_MAX_TOKEN_BUDGET = 200_000_000
 RESEARCH_DEFAULT_MAX_DURATION_SECONDS = 36_000

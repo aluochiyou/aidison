@@ -1,9 +1,9 @@
 """The single authorization choke point for LangGraph tool intentions.
 
-This R3-01 slice intentionally stops after deterministic authorization.  It
-does not call an adapter, reserve budget, retry, or own Artifact persistence;
-those physical-execution concerns attach to the returned authorized invocation
-in later R3 tickets.  No model-supplied input can carry runtime authority.
+Authorization is deliberately separate from physical execution.  The returned
+logical identity is stable across worker reclaim and retry generations, while
+claim identity remains available as execution provenance.  No model-supplied
+input can carry runtime authority.
 """
 
 from __future__ import annotations
@@ -125,9 +125,13 @@ class AuthorizedToolInvocation(BaseModel):
     tool_id: str
     revision: int = Field(ge=1)
     definition_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    purpose_code: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
+    tool_class: str = Field(pattern=r"^[a-z][a-z0-9_.-]{0,119}$")
+    effect_class: ToolEffectClass
+    risk_tier: ToolRiskTier
     canonical_arguments: dict[str, Any]
     logical_invocation_id: str = Field(pattern=r"^[a-f0-9]{64}$")
-    logical_idempotency_key: str = Field(min_length=1, max_length=500)
+    logical_idempotency_key: str = Field(min_length=1, max_length=300)
 
 
 class _RegisteredTool:
@@ -193,11 +197,13 @@ class ToolDispatcher:
             tool_id=spec.tool_id,
             revision=spec.revision,
             definition_hash=definition_hash,
+            purpose_code=intent.purpose_code,
+            tool_class=spec.tool_class,
+            effect_class=spec.effect_class,
+            risk_tier=spec.risk_tier,
             canonical_arguments=canonical_arguments,
             logical_invocation_id=logical_id,
-            logical_idempotency_key=(
-                f"{authority.grant.idempotency_prefix}:{spec.tool_id}:{spec.revision}:{logical_id}"
-            ),
+            logical_idempotency_key=f"tool:{logical_id}",
         )
 
     @staticmethod
@@ -233,10 +239,8 @@ class ToolDispatcher:
     ) -> str:
         payload = {
             "run_id": str(authority.task.run_id),
-            "task_id": str(authority.task.id),
-            "attempt_id": str(authority.grant.attempt_id),
-            "generation": authority.grant.generation,
-            "tool_call_id": intent.tool_call_id,
+            "basis_hash": authority.task.basis_hash,
+            "task_idempotency_key": authority.task.idempotency_key,
             "purpose_code": intent.purpose_code,
             "tool_definition_hash": spec.definition_hash,
             "arguments": canonical_arguments,

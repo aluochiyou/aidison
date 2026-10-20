@@ -87,9 +87,7 @@ def _authority(task: TaskEnvelope, *, t1_available: bool = True) -> DispatchAuth
             allowed_tool_classes=("web_search",),
             allowed_effect_classes=(ToolEffectClass.READ,),
             available_risk_tiers=(
-                (ToolRiskTier.T0, ToolRiskTier.T1)
-                if t1_available
-                else (ToolRiskTier.T0,)
+                (ToolRiskTier.T0, ToolRiskTier.T1) if t1_available else (ToolRiskTier.T0,)
             ),
         ),
         deadline=datetime.now(UTC) + timedelta(minutes=5),
@@ -111,7 +109,50 @@ def test_dispatcher_authorizes_only_the_six_way_intersection_and_canonicalizes_a
 
     assert authorized.task_id == task.id
     assert authorized.canonical_arguments == {"query": "motor current", "limit": 3}
-    assert authorized.logical_idempotency_key.startswith("run-1/task-power:web_search:1:")
+    assert authorized.logical_idempotency_key == f"tool:{authorized.logical_invocation_id}"
+    assert authorized.tool_class == "web_search"
+    assert authorized.effect_class is ToolEffectClass.READ
+    assert authorized.risk_tier is ToolRiskTier.T1
+
+
+def test_logical_identity_survives_worker_reclaim_and_ignores_provider_call_id() -> None:
+    task = _task()
+    first_authority = _authority(task)
+    reclaimed_authority = first_authority.model_copy(
+        update={
+            "grant": first_authority.grant.model_copy(
+                update={
+                    "attempt_id": uuid4(),
+                    "generation": 2,
+                    "lease_token": uuid4(),
+                }
+            )
+        }
+    )
+    first = _dispatcher().authorize(
+        ToolCallIntent(
+            tool_call_id="provider-call-1",
+            tool_id="web_search",
+            revision=1,
+            arguments={"query": "motor current", "limit": 3},
+            purpose_code="collect_specification",
+        ),
+        authority=first_authority,
+    )
+    reclaimed = _dispatcher().authorize(
+        ToolCallIntent(
+            tool_call_id="provider-call-2",
+            tool_id="web_search",
+            revision=1,
+            arguments={"query": "motor current", "limit": 3},
+            purpose_code="collect_specification",
+        ),
+        authority=reclaimed_authority,
+    )
+
+    assert reclaimed.logical_invocation_id == first.logical_invocation_id
+    assert reclaimed.logical_idempotency_key == first.logical_idempotency_key
+    assert reclaimed.attempt_id != first.attempt_id
 
 
 def test_task_denial_prevents_profile_authorized_tool_from_becoming_a_call() -> None:
@@ -143,9 +184,7 @@ def test_unavailable_tier_and_mismatched_grant_fail_closed() -> None:
     with pytest.raises(ToolDispatchDenied, match="risk tier"):
         _dispatcher().authorize(intent, authority=_authority(task, t1_available=False))
 
-    authority = _authority(task).model_copy(
-        update={"grant": _authority(_task()).grant}
-    )
+    authority = _authority(task).model_copy(update={"grant": _authority(_task()).grant})
     with pytest.raises(ToolDispatchDenied, match="ExecutionGrant"):
         _dispatcher().authorize(intent, authority=authority)
 
