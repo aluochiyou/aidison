@@ -1220,11 +1220,13 @@ class ResearchCollaborationObservationRow(Base):
     __tablename__ = "research_collaboration_observations"
     __table_args__ = (
         CheckConstraint("kind IN ('source_discovery')", name="kind"),
+        CheckConstraint("producer_generation >= 1", name="producer_generation_positive"),
         UniqueConstraint("idempotency_key", name="uq_research_collaboration_idempotency"),
         UniqueConstraint("sequence", name="uq_research_collaboration_sequence"),
         Index(
-            "ix_research_collaboration_run_sequence",
+            "ix_research_collaboration_run_scope_sequence",
             "agent_run_id",
+            "scope_hash",
             "sequence",
         ),
     )
@@ -1239,6 +1241,8 @@ class ResearchCollaborationObservationRow(Base):
     )
     basis_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     producer_task_id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), nullable=False)
+    producer_generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     kind: Mapped[str] = mapped_column(String(40), nullable=False)
     artifact_ref: Mapped[str] = mapped_column(String(512), nullable=False)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)

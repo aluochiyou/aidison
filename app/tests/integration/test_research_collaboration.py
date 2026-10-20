@@ -9,10 +9,11 @@ import pytest
 from sqlalchemy import func, select, text
 
 from aidison.application.service import ProjectApplication
-from aidison.infrastructure.agent_runs import AgentRunControl
+from aidison.infrastructure.agent_runs import AgentRunConflictError, AgentRunControl
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
 from aidison.infrastructure.orm import (
     AgentRunResultRow,
+    ArtifactRow,
     ProjectRow,
     ResearchCollaborationObservationRow,
 )
@@ -91,6 +92,12 @@ async def test_persisted_peer_source_discovery_survives_a_new_subscription(
             run = _run(project.id)
             await AgentRunControl(session).create(run)
             await session.commit()
+            claim = await AgentRunControl(session).claim_next(
+                worker_id="collaboration-worker",
+                lease_seconds=300,
+            )
+            assert claim is not None and claim.run_id == run.id
+            await session.commit()
 
         producer = _task(run=run, key="research.power-search")
         consumer = _task(run=run, key="research.motor-search")
@@ -100,16 +107,21 @@ async def test_persisted_peer_source_discovery_survives_a_new_subscription(
             source_origin="web-origin:https://example.test",
             snapshot_ref="artifact+sha256://" + _hash("snapshot") + f"/{uuid4()}",
         )
+        report_ref = "artifact+sha256://" + _hash("source-report") + f"/{uuid4()}"
         service = ResearchCollaborationService(
             session_factory=factory,
             artifact_root=tmp_path / "artifacts",
+            claim=claim,
+            tasks=(producer, consumer),
         )
         async with service.subscribe(run=run, task=consumer) as consumer_session:
             async with service.subscribe(run=run, task=producer) as producer_session:
                 await producer_session.publish_source_discovery(
-                    source_collection_report_ref=(
-                        "artifact+sha256://" + _hash("source-report") + f"/{uuid4()}"
-                    ),
+                    source_collection_report_ref=report_ref,
+                    leads=(lead,),
+                )
+                await producer_session.publish_source_discovery(
+                    source_collection_report_ref=report_ref,
                     leads=(lead,),
                 )
             live_context = await consumer_session.load_context()
@@ -122,6 +134,8 @@ async def test_persisted_peer_source_discovery_survives_a_new_subscription(
         recovered_service = ResearchCollaborationService(
             session_factory=factory,
             artifact_root=tmp_path / "artifacts",
+            claim=claim,
+            tasks=(producer, consumer),
         )
         async with recovered_service.subscribe(run=run, task=consumer) as recovered_session:
             recovered_context = await recovered_session.load_context()
@@ -137,5 +151,93 @@ async def test_persisted_peer_source_discovery_survives_a_new_subscription(
         assert result_count == 0
         assert stored_project is not None
         assert stored_project.revision == project.revision
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_stale_generation_cannot_publish_a_collaboration_artifact(tmp_path: Path) -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(
+                text("TRUNCATE TABLE research_collaboration_observations CASCADE")
+            )
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Stale collaboration fixture",
+                goal="Reject a stale producer before it writes a collaboration artifact",
+                idempotency_key=f"stale-collaboration-project-{uuid4()}",
+            )
+            run = _run(project.id)
+            await AgentRunControl(session).create(run)
+            await session.commit()
+            stale_claim = await AgentRunControl(session).claim_next(
+                worker_id="stale-collaboration-worker",
+                lease_seconds=300,
+            )
+            assert stale_claim is not None and stale_claim.run_id == run.id
+            await session.commit()
+
+        producer = _task(run=run, key="research.stale-producer")
+        consumer = _task(run=run, key="research.consumer")
+        service = ResearchCollaborationService(
+            session_factory=factory,
+            artifact_root=tmp_path / "artifacts",
+            claim=stale_claim,
+            tasks=(producer, consumer),
+        )
+        async with service.subscribe(run=run, task=producer) as producer_session:
+            async with factory() as session:
+                await session.execute(
+                    text(
+                        "UPDATE agent_runs SET lease_expires_at = now() - interval '1 second' "
+                        "WHERE id = :run_id"
+                    ),
+                    {"run_id": run.id},
+                )
+                await session.commit()
+                replacement = await AgentRunControl(session).claim_next(
+                    worker_id="replacement-collaboration-worker",
+                    lease_seconds=300,
+                )
+                assert replacement is not None
+                assert replacement.run_id == run.id
+                assert replacement.generation == stale_claim.generation + 1
+                await session.commit()
+
+            with pytest.raises(AgentRunConflictError, match="stale AgentRun claim"):
+                await producer_session.publish_source_discovery(
+                    source_collection_report_ref=(
+                        "artifact+sha256://" + _hash("stale-source-report") + f"/{uuid4()}"
+                    ),
+                    leads=(
+                        ResearchDiscoveryLead(
+                            canonical_locator="https://example.test/stale",
+                            source_kind="web",
+                            source_origin="web-origin:https://example.test",
+                            snapshot_ref=(
+                                "artifact+sha256://" + _hash("stale-snapshot") + f"/{uuid4()}"
+                            ),
+                        ),
+                    ),
+                )
+
+        async with factory() as session:
+            observation_count = await session.scalar(
+                select(func.count()).select_from(ResearchCollaborationObservationRow)
+            )
+            artifact_count = await session.scalar(
+                select(func.count())
+                .select_from(ArtifactRow)
+                .where(ArtifactRow.kind == "research_collaboration_source_discovery")
+            )
+        assert observation_count == 0
+        assert artifact_count == 0
     finally:
         await engine.dispose()

@@ -13,10 +13,12 @@ single-process deployment.
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID, uuid4
@@ -24,6 +26,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.artifacts import (
     ArtifactIntegrityError,
     ArtifactNotFoundError,
@@ -31,7 +34,7 @@ from aidison.infrastructure.artifacts import (
 )
 from aidison.infrastructure.research_collaboration import ResearchCollaborationStore
 from aidison.research.langgraph_contracts import TaskEnvelope
-from aidison.runtime.agent_runs import AgentRun
+from aidison.runtime.agent_runs import AgentRun, AgentRunClaim
 
 _MAX_CONTEXT_CHARACTERS = 1_200
 _MAX_VISIBLE_OBSERVATIONS = 12
@@ -61,6 +64,8 @@ class SourceDiscoveryPayload(BaseModel):
 
     schema_version: str = "research-source-discovery-v1"
     producer_task_id: UUID
+    producer_generation: int = Field(ge=1)
+    scope_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     source_collection_report_ref: str = Field(min_length=1, max_length=512)
     leads: tuple[ResearchDiscoveryLead, ...] = Field(min_length=1, max_length=32)
 
@@ -75,6 +80,8 @@ class ResearchCollaborationObservation(BaseModel):
     agent_run_id: UUID
     basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     producer_task_id: UUID
+    producer_generation: int = Field(ge=1)
+    scope_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     kind: ResearchCollaborationKind
     artifact_ref: str = Field(min_length=1, max_length=512)
     content_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -104,21 +111,31 @@ class _InProcessResearchBroker:
     """
 
     def __init__(self) -> None:
-        self._queues: dict[UUID, asyncio.Queue[ResearchCollaborationObservation]] = {}
+        self._queues: dict[
+            tuple[UUID, str, UUID], asyncio.Queue[ResearchCollaborationObservation]
+        ] = {}
 
-    def subscribe(self, task_id: UUID) -> asyncio.Queue[ResearchCollaborationObservation]:
-        if task_id in self._queues:
+    def subscribe(
+        self, *, run_id: UUID, scope_hash: str, task_id: UUID
+    ) -> asyncio.Queue[ResearchCollaborationObservation]:
+        key = (run_id, scope_hash, task_id)
+        if key in self._queues:
             raise ValueError("research task already has a collaboration subscription")
         queue: asyncio.Queue[ResearchCollaborationObservation] = asyncio.Queue(maxsize=16)
-        self._queues[task_id] = queue
+        self._queues[key] = queue
         return queue
 
-    def unsubscribe(self, task_id: UUID) -> None:
-        self._queues.pop(task_id, None)
+    def unsubscribe(self, *, run_id: UUID, scope_hash: str, task_id: UUID) -> None:
+        self._queues.pop((run_id, scope_hash, task_id), None)
 
     def publish(self, observation: ResearchCollaborationObservation) -> None:
-        for task_id, queue in tuple(self._queues.items()):
-            if task_id == observation.producer_task_id or queue.full():
+        for (run_id, scope_hash, task_id), queue in tuple(self._queues.items()):
+            if (
+                run_id != observation.agent_run_id
+                or scope_hash != observation.scope_hash
+                or task_id == observation.producer_task_id
+                or queue.full()
+            ):
                 continue
             queue.put_nowait(observation)
 
@@ -181,9 +198,20 @@ class ResearchCollaborationService:
         *,
         session_factory: async_sessionmaker[AsyncSession],
         artifact_root: Path,
+        claim: AgentRunClaim,
+        tasks: tuple[TaskEnvelope, ...],
     ) -> None:
+        if not tasks:
+            raise ValueError("research collaboration scope requires at least one task")
+        if any(task.run_id != claim.run_id for task in tasks):
+            raise ValueError("research collaboration scope contains a task from another run")
         self._session_factory = session_factory
         self._artifact_root = artifact_root
+        self._claim = claim
+        self._tasks_by_id = {task.id: task for task in tasks}
+        if len(self._tasks_by_id) != len(tasks):
+            raise ValueError("research collaboration scope task ids must be unique")
+        self._scope_hash = compile_research_collaboration_scope(tasks)
         self._broker = _InProcessResearchBroker()
 
     @asynccontextmanager
@@ -192,7 +220,17 @@ class ResearchCollaborationService:
     ) -> AsyncIterator[ResearchCollaborationPort]:
         if task.run_id != run.id or task.basis_hash != run.basis_hash:
             raise ValueError("collaboration task does not belong to this AgentRun basis")
-        queue = self._broker.subscribe(task.id)
+        if self._claim.run_id != run.id:
+            raise ValueError("collaboration claim does not belong to this AgentRun")
+        scoped_task = self._tasks_by_id.get(task.id)
+        if scoped_task != task:
+            raise ValueError("collaboration task is not part of the compiled scope")
+        await self._ensure_active_claim()
+        queue = self._broker.subscribe(
+            run_id=run.id,
+            scope_hash=self._scope_hash,
+            task_id=task.id,
+        )
         try:
             yield _TaskCollaborationSession(
                 _service=self,
@@ -201,7 +239,11 @@ class ResearchCollaborationService:
                 _queue=queue,
             )
         finally:
-            self._broker.unsubscribe(task.id)
+            self._broker.unsubscribe(
+                run_id=run.id,
+                scope_hash=self._scope_hash,
+                task_id=task.id,
+            )
 
     async def _list_after(
         self,
@@ -211,9 +253,11 @@ class ResearchCollaborationService:
         after_sequence: int,
     ) -> tuple[ResearchCollaborationObservation, ...]:
         async with self._session_factory() as session:
+            await AgentRunControl(session).ensure_active_claim(claim=self._claim)
             return await ResearchCollaborationStore(session).list_after(
                 agent_run_id=run.id,
                 basis_hash=run.basis_hash,
+                scope_hash=self._scope_hash,
                 consumer_task_id=consumer_task_id,
                 after_sequence=after_sequence,
                 limit=_MAX_VISIBLE_OBSERVATIONS,
@@ -229,12 +273,15 @@ class ResearchCollaborationService:
     ) -> None:
         payload = SourceDiscoveryPayload(
             producer_task_id=task.id,
+            producer_generation=self._claim.generation,
+            scope_hash=self._scope_hash,
             source_collection_report_ref=source_collection_report_ref,
             leads=tuple(
                 sorted(leads, key=lambda item: (item.source_origin, item.canonical_locator))
             ),
         )
         async with self._session_factory() as session:
+            await AgentRunControl(session).ensure_active_claim(claim=self._claim)
             artifacts = ContentAddressedArtifactStore(session, self._artifact_root)
             artifact = await artifacts.put_agent_run_json(
                 project_id=run.project_id,
@@ -249,6 +296,8 @@ class ResearchCollaborationService:
                 agent_run_id=run.id,
                 basis_hash=run.basis_hash,
                 producer_task_id=task.id,
+                producer_generation=self._claim.generation,
+                scope_hash=self._scope_hash,
                 kind=ResearchCollaborationKind.SOURCE_DISCOVERY,
                 artifact_ref=artifact.ref,
                 content_hash=artifact.content_hash,
@@ -292,12 +341,18 @@ class ResearchCollaborationService:
                 payload = SourceDiscoveryPayload.model_validate(value)
                 if payload.producer_task_id != observation.producer_task_id:
                     continue
+                if (
+                    payload.producer_generation != observation.producer_generation
+                    or payload.scope_hash != observation.scope_hash
+                ):
+                    continue
                 for lead in payload.leads:
                     lines.append(
                         "- peer_task="
-                        f"{payload.producer_task_id}; source_kind={lead.source_kind}; "
-                        f"origin={lead.source_origin}; locator={lead.canonical_locator}; "
-                        f"snapshot_ref={lead.snapshot_ref}"
+                        f"{payload.producer_task_id}; source_kind={_quoted(lead.source_kind)}; "
+                        f"origin={_quoted(lead.source_origin)}; "
+                        f"locator={_quoted(lead.canonical_locator)}; "
+                        f"snapshot_ref={_quoted(lead.snapshot_ref)}"
                     )
         if not lines:
             return ""
@@ -316,6 +371,44 @@ class ResearchCollaborationService:
             remaining -= len(clipped) + 1
         return "\n".join((header, *bounded))
 
+    async def _ensure_active_claim(self) -> None:
+        async with self._session_factory() as session:
+            await AgentRunControl(session).ensure_active_claim(claim=self._claim)
+
+
+def compile_research_collaboration_scope(tasks: tuple[TaskEnvelope, ...]) -> str:
+    """Hash the deterministic set of tasks that may exchange soft leads."""
+
+    if not tasks:
+        raise ValueError("research collaboration scope requires at least one task")
+    run_ids = {task.run_id for task in tasks}
+    basis_hashes = {task.basis_hash for task in tasks}
+    plan_revisions = {task.plan_revision for task in tasks}
+    if len(run_ids) != 1 or len(basis_hashes) != 1 or len(plan_revisions) != 1:
+        raise ValueError("collaboration scope tasks must share run, basis and plan revision")
+    payload = [
+        {
+            "id": str(task.id),
+            "run_id": str(task.run_id),
+            "basis_hash": task.basis_hash,
+            "plan_revision": task.plan_revision,
+            "task_key": task.task_key,
+            "capability": task.capability,
+            "input_refs": sorted(task.input_refs),
+            "dependency_task_ids": sorted(str(item) for item in task.dependency_task_ids),
+            "coverage_keys": sorted(task.coverage_keys),
+        }
+        for task in sorted(tasks, key=lambda item: str(item.id))
+    ]
+    canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return sha256(canonical.encode()).hexdigest()
+
+
+def _quoted(value: str) -> str:
+    """Keep untrusted locator text single-line and visibly data-shaped in prompts."""
+
+    return json.dumps(" ".join(value.split()), ensure_ascii=False)
+
 
 __all__ = [
     "ResearchCollaborationKind",
@@ -324,4 +417,5 @@ __all__ = [
     "ResearchCollaborationService",
     "ResearchDiscoveryLead",
     "SourceDiscoveryPayload",
+    "compile_research_collaboration_scope",
 ]

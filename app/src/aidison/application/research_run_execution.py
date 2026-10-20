@@ -535,6 +535,8 @@ class ResearchRunExecutor:
                     collaboration_service=ResearchCollaborationService(
                         session_factory=self._session_factory,
                         artifact_root=self._artifact_root,
+                        claim=claim,
+                        tasks=tasks,
                     ),
                 ),
                 finalizer=MultiTaskResearchProposalFinalizer(

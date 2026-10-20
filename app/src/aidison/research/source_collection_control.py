@@ -55,10 +55,10 @@ class SourceCollectionReplayUnavailable(RuntimeError):
 class BudgetedResearchSourceCollector:
     """Decorate one configured collector with durable execution accounting.
 
-    The full normalized source snapshot is persisted before the operation is
-    settled.  Therefore a same-generation retry can reuse the exact observed
-    bytes instead of issuing a second HTTP search merely because a later
-    research node crashed.
+    A terminal success or classified failure outcome is persisted before the
+    operation is settled.  Therefore a same-generation retry can replay the
+    exact result instead of issuing a second physical collection merely
+    because a later research node crashed.
     """
 
     def __init__(
@@ -99,7 +99,7 @@ class BudgetedResearchSourceCollector:
                 raise SourceCollectionReplayUnavailable(
                     "settled source collection has no replay artifact"
                 )
-            return await self._read_snapshot(
+            return await self._read_outcome(
                 run=run,
                 response_ref=operation.response_artifact_ref,
             )
@@ -111,7 +111,7 @@ class BudgetedResearchSourceCollector:
         try:
             sources = await self._collector.collect(run=run, task=task, question=question)
         except ResearchSourceCollectionError as error:
-            response_ref = await self._persist_failure_snapshot(
+            response_ref = await self._persist_failure_outcome(
                 run=run,
                 task=task,
                 reason_code=error.reason_code,
@@ -126,7 +126,11 @@ class BudgetedResearchSourceCollector:
             await self._mark_ambiguous(operation_id=operation.id, error=error)
             raise
 
-        response_ref = await self._persist_snapshot(run=run, task=task, sources=sources)
+        response_ref = await self._persist_success_outcome(
+            run=run,
+            task=task,
+            sources=sources,
+        )
         await self._settle(
             operation_id=operation.id,
             response_ref=response_ref,
@@ -223,7 +227,7 @@ class BudgetedResearchSourceCollector:
             )
             await session.commit()
 
-    async def _persist_snapshot(
+    async def _persist_success_outcome(
         self,
         *,
         run: AgentRun,
@@ -232,6 +236,7 @@ class BudgetedResearchSourceCollector:
     ) -> str:
         value = {
             "task_id": str(task.id),
+            "status": "succeeded",
             "sources": [source.model_dump(mode="json") for source in sources],
         }
         async with session_scope(self._session_factory) as session:
@@ -241,19 +246,24 @@ class BudgetedResearchSourceCollector:
                 project_id=run.project_id,
                 agent_run_id=run.id,
                 basis_hash=run.basis_hash,
-                kind="source_collection_response",
+                kind="source_collection_outcome",
                 value=value,
             )
         return artifact.ref
 
-    async def _persist_failure_snapshot(
+    async def _persist_failure_outcome(
         self,
         *,
         run: AgentRun,
         task: TaskEnvelope,
         reason_code: str,
     ) -> str:
-        value = {"task_id": str(task.id), "reason_code": reason_code, "sources": []}
+        value = {
+            "task_id": str(task.id),
+            "status": "failed",
+            "reason_code": reason_code,
+            "sources": [],
+        }
         async with session_scope(self._session_factory) as session:
             artifact = await ContentAddressedArtifactStore(
                 session, self._artifact_root
@@ -261,29 +271,37 @@ class BudgetedResearchSourceCollector:
                 project_id=run.project_id,
                 agent_run_id=run.id,
                 basis_hash=run.basis_hash,
-                kind="source_collection_failure",
+                kind="source_collection_outcome",
                 value=value,
             )
         return artifact.ref
 
-    async def _read_snapshot(
+    async def _read_outcome(
         self,
         *,
         run: AgentRun,
         response_ref: str,
     ) -> tuple[CollectedResearchSource, ...]:
         async with self._session_factory() as session:
-            value = await ContentAddressedArtifactStore(
-                session, self._artifact_root
-            ).read_json_ref(
+            value = await ContentAddressedArtifactStore(session, self._artifact_root).read_json_ref(
                 project_id=run.project_id,
                 basis_hash=run.basis_hash,
                 ref=response_ref,
-                expected_kind="source_collection_response",
+                expected_kind="source_collection_outcome",
             )
         if not isinstance(value, dict) or not isinstance(value.get("sources"), list):
             raise SourceCollectionReplayUnavailable("source collection replay payload is invalid")
-        return tuple(CollectedResearchSource.model_validate(item) for item in value["sources"])
+        status = value.get("status")
+        if status == "succeeded":
+            return tuple(CollectedResearchSource.model_validate(item) for item in value["sources"])
+        if status == "failed":
+            reason_code = value.get("reason_code")
+            if not isinstance(reason_code, str):
+                raise SourceCollectionReplayUnavailable(
+                    "source collection failure replay payload is invalid"
+                )
+            raise ResearchSourceCollectionError(reason_code)
+        raise SourceCollectionReplayUnavailable("source collection replay status is invalid")
 
 
 __all__ = [

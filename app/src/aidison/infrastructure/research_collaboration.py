@@ -57,6 +57,8 @@ class ResearchCollaborationStore:
             agent_run_id=observation.agent_run_id,
             basis_hash=observation.basis_hash,
             producer_task_id=observation.producer_task_id,
+            producer_generation=observation.producer_generation,
+            scope_hash=observation.scope_hash,
             kind=observation.kind.value,
             artifact_ref=observation.artifact_ref,
             content_hash=observation.content_hash,
@@ -87,6 +89,7 @@ class ResearchCollaborationStore:
         *,
         agent_run_id: UUID,
         basis_hash: str,
+        scope_hash: str,
         consumer_task_id: UUID,
         after_sequence: int,
         limit: int,
@@ -109,6 +112,7 @@ class ResearchCollaborationStore:
                 .where(
                     ResearchCollaborationObservationRow.agent_run_id == agent_run_id,
                     ResearchCollaborationObservationRow.basis_hash == basis_hash,
+                    ResearchCollaborationObservationRow.scope_hash == scope_hash,
                     ResearchCollaborationObservationRow.producer_task_id != consumer_task_id,
                     ResearchCollaborationObservationRow.sequence > after_sequence,
                 )
@@ -130,6 +134,8 @@ def _from_row(row: ResearchCollaborationObservationRow) -> ResearchCollaboration
         agent_run_id=row.agent_run_id,
         basis_hash=row.basis_hash,
         producer_task_id=row.producer_task_id,
+        producer_generation=row.producer_generation,
+        scope_hash=row.scope_hash,
         kind=ResearchCollaborationKind(row.kind),
         artifact_ref=row.artifact_ref,
         content_hash=row.content_hash,
