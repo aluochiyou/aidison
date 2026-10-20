@@ -110,3 +110,37 @@ jobs:
       - name: Build production images
         working-directory: app
         run: docker compose -f compose.production.yaml build
+      - name: Build and smoke-test fixed engineering sandbox
+        working-directory: app
+        run: |
+          docker build --tag aidison-engineering-sandbox:ci sandbox/engineering-calculator
+          image_id="$(docker image inspect aidison-engineering-sandbox:ci --format '{{.Id}}')"
+          output_dir="$(mktemp -d)"
+          trap 'rm -rf "$output_dir"' EXIT
+          chmod 0777 "$output_dir"
+          docker run --rm \
+            --read-only \
+            --cap-drop=ALL \
+            --security-opt no-new-privileges:true \
+            --pids-limit 16 \
+            --memory 64m \
+            --cpus 0.25 \
+            --ulimit nofile=64:64 \
+            --network=none \
+            --user 65532:65532 \
+            --mount "type=bind,src=$output_dir,dst=/output" \
+            --tmpfs /tmp:rw,noexec,nosuid,size=32m \
+            --tmpfs /work:rw,noexec,nosuid,size=32m \
+            --entrypoint /opt/aidison/entrypoints/engineering_calculate \
+            "$image_id" \
+            --arguments-json '{"request":{"calculation":"flight_endurance","battery_voltage_v":"22.2","battery_capacity_ah":"10","usable_fraction":"0.8","reserve_fraction":"0.15","average_power_w":"450"}}'
+          python3 - "$output_dir/result.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          payload = json.loads(pathlib.Path(sys.argv[1]).read_text())
+          assert payload["schema_version"] == "engineering-calculation-output/v1"
+          assert payload["result"]["endurance_minutes"] == "20.1280"
+          assert len(payload["input_hash"]) == 64
+          PY

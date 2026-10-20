@@ -59,6 +59,7 @@ def _spec(**changes: object) -> SandboxTaskSpec:
 def test_task_spec_rejects_mutable_images_and_shell_like_entrypoints() -> None:
     with pytest.raises(ValidationError, match="image_digest"):
         _spec(image_digest="registry.example/pdf-parser:latest")
+    assert _spec(image_digest="sha256:" + "c" * 64).image_digest.startswith("sha256:")
     with pytest.raises(ValidationError, match="entrypoint_id"):
         _spec(entrypoint_id="/bin/sh")
 

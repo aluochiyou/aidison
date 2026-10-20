@@ -11,6 +11,16 @@ from aidison.sandbox.controller import (
     SandboxControllerError,
     SandboxLaunchCommand,
 )
+from aidison.sandbox.engineering import (
+    ENGINEERING_CALCULATION_TOOL_ID,
+    ENGINEERING_OUTPUT_SCHEMA_REF,
+    EngineeringCalculationArguments,
+    EngineeringCalculationOutput,
+    EngineeringSandboxAdapter,
+    EngineeringSandboxProfile,
+    build_engineering_output_contracts,
+    build_engineering_tool_registry,
+)
 from aidison.sandbox.runner import (
     AsyncioDockerProcessBackend,
     LocalDockerSandboxRunner,
@@ -25,6 +35,12 @@ from aidison.sandbox.workspace import SandboxWorkspaceError, TaskWorkspace
 
 __all__ = [
     "DockerSandboxController",
+    "ENGINEERING_CALCULATION_TOOL_ID",
+    "ENGINEERING_OUTPUT_SCHEMA_REF",
+    "EngineeringCalculationArguments",
+    "EngineeringCalculationOutput",
+    "EngineeringSandboxAdapter",
+    "EngineeringSandboxProfile",
     "AsyncioDockerProcessBackend",
     "LocalDockerSandboxRunner",
     "SandboxControllerError",
@@ -41,4 +57,6 @@ __all__ = [
     "SandboxTaskSpec",
     "SandboxWorkspaceError",
     "TaskWorkspace",
+    "build_engineering_output_contracts",
+    "build_engineering_tool_registry",
 ]

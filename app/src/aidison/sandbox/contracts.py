@@ -60,7 +60,13 @@ class SandboxTaskSpec(BaseModel):
     producer_generation: int = Field(ge=1)
     basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     sandbox_profile_ref: str = Field(pattern=r"^sandbox-profile://.+", max_length=500)
-    image_digest: str = Field(pattern=r"^[^\s@]+@sha256:[a-f0-9]{64}$", max_length=500)
+    # A registry manifest digest is used in release deployments. A raw Docker
+    # image ID is also content-addressed and lets an operator freeze a locally
+    # built profile without weakening the contract to a mutable tag.
+    image_digest: str = Field(
+        pattern=r"^(?:[^\s@]+@)?sha256:[a-f0-9]{64}$",
+        max_length=500,
+    )
     entrypoint_id: str = Field(pattern=r"^[a-z][a-z0-9_-]{2,79}$")
     arguments: dict[str, object]
     input_artifacts: tuple[SandboxInputArtifact, ...] = Field(max_length=64)

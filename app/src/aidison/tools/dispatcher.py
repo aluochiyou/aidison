@@ -122,6 +122,7 @@ class AuthorizedToolInvocation(BaseModel):
     task_id: UUID
     attempt_id: UUID
     generation: int = Field(ge=1)
+    basis_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
     tool_id: str
     revision: int = Field(ge=1)
     definition_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
@@ -194,6 +195,7 @@ class ToolDispatcher:
             task_id=authority.task.id,
             attempt_id=authority.grant.attempt_id,
             generation=authority.grant.generation,
+            basis_hash=authority.task.basis_hash,
             tool_id=spec.tool_id,
             revision=spec.revision,
             definition_hash=definition_hash,
