@@ -33,7 +33,7 @@ from aidison.infrastructure.agent_run_controls import AgentRunControlRequestStor
 from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
-from aidison.research.collaboration import ResearchDiscoveryLead
+from aidison.research.collaboration import ResearchDiscoveryLead, ResearchSignalFinding
 from aidison.research.consolidation import SufficiencyOutcome
 from aidison.research.coverage import CoverageContract, CoverageKey, CoveragePriority
 from aidison.research.evidence_diagnostics import (
@@ -303,6 +303,9 @@ class _RecordingCollaborationPort:
     def __init__(self) -> None:
         self.context_calls = 0
         self.publications: list[tuple[str, tuple[ResearchDiscoveryLead, ...]]] = []
+        self.research_signals: list[
+            tuple[str, str, tuple[str, ...], tuple[ResearchSignalFinding, ...]]
+        ] = []
 
     async def load_context(self) -> str:
         self.context_calls += 1
@@ -315,6 +318,18 @@ class _RecordingCollaborationPort:
         leads: tuple[ResearchDiscoveryLead, ...],
     ) -> None:
         self.publications.append((source_collection_report_ref, leads))
+
+    async def publish_research_signal(
+        self,
+        *,
+        summary: str,
+        recommended_option: str,
+        alternatives: tuple[str, ...],
+        findings: tuple[ResearchSignalFinding, ...],
+    ) -> None:
+        self.research_signals.append(
+            (summary, recommended_option, alternatives, findings)
+        )
 
 
 def _module_discovery_model() -> BaseChatModel:
@@ -975,6 +990,13 @@ async def test_single_task_research_only_exposes_quote_revalidated_collected_evi
         assert [lead.canonical_locator for lead in published_leads] == [
             "https://example.test/motor-a"
         ]
+        [(signal_summary, recommended_option, alternatives, findings)] = (
+            collaboration.research_signals
+        )
+        assert signal_summary
+        assert recommended_option
+        assert alternatives
+        assert [item.coverage_key for item in findings] == ["research.answer"]
         async with factory() as session:
             source_report_value = await ContentAddressedArtifactStore(
                 session, tmp_path

@@ -27,6 +27,7 @@ from aidison.infrastructure.store import PostgresDomainStore
 from aidison.research.collaboration import (
     ResearchCollaborationPort,
     ResearchDiscoveryLead,
+    ResearchSignalFinding,
 )
 from aidison.research.consolidation import (
     ClaimKey,
@@ -410,6 +411,24 @@ class SingleTaskResearchExecutor:
             payload=payload,
             independently_verified=independently_verified,
         )
+        if collaboration is not None:
+            admitted_keys = set(admitted_coverage_keys)
+            await collaboration.publish_research_signal(
+                summary=payload.summary,
+                recommended_option=payload.recommended_option,
+                alternatives=payload.alternatives,
+                findings=tuple(
+                    ResearchSignalFinding(
+                        coverage_key=claim_value.coverage_key,
+                        subject_identity=claim_value.subject_identity,
+                        predicate=claim_value.predicate,
+                        normalized_value=claim_value.normalized_value,
+                        applicability=claim_value.applicability,
+                    )
+                    for claim_value in payload.evidence_claims
+                    if claim_value.coverage_key in admitted_keys
+                ),
+            )
         manifest_value = {
             "task_id": str(task.id),
             "payload": payload.model_dump(mode="json"),

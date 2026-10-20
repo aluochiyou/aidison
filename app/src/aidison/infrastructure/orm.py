@@ -1219,7 +1219,7 @@ class ResearchCollaborationObservationRow(Base):
 
     __tablename__ = "research_collaboration_observations"
     __table_args__ = (
-        CheckConstraint("kind IN ('source_discovery')", name="kind"),
+        CheckConstraint("kind IN ('source_discovery', 'research_signal')", name="kind"),
         CheckConstraint("producer_generation >= 1", name="producer_generation_positive"),
         UniqueConstraint("idempotency_key", name="uq_research_collaboration_idempotency"),
         UniqueConstraint("sequence", name="uq_research_collaboration_sequence"),

@@ -18,7 +18,11 @@ from aidison.infrastructure.orm import (
     ResearchCollaborationObservationRow,
 )
 from aidison.infrastructure.store import PostgresDomainStore
-from aidison.research.collaboration import ResearchCollaborationService, ResearchDiscoveryLead
+from aidison.research.collaboration import (
+    ResearchCollaborationService,
+    ResearchDiscoveryLead,
+    ResearchSignalFinding,
+)
 from aidison.research.langgraph_contracts import TaskEnvelope
 from aidison.runtime.agent_runs import AgentRun, AgentRunKind
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
@@ -124,9 +128,24 @@ async def test_persisted_peer_source_discovery_survives_a_new_subscription(
                     source_collection_report_ref=report_ref,
                     leads=(lead,),
                 )
+                await producer_session.publish_research_signal(
+                    summary="A matched motor and ESC pair may reduce integration risk.",
+                    recommended_option="Use the matched pair",
+                    alternatives=("Validate a mixed-brand pair",),
+                    findings=(
+                        ResearchSignalFinding(
+                            coverage_key="coverage.research.power-search",
+                            subject_identity="motor-esc-pair",
+                            predicate="compatibility_status",
+                            normalized_value="candidate_match",
+                            applicability="current module constraints",
+                        ),
+                    ),
+                )
             live_context = await consumer_session.load_context()
 
         assert "motor-esc-compatible" in live_context
+        assert "candidate_match" in live_context
         assert "non-evidence" in live_context
 
         # A fresh service has no in-memory queue. It must still recover the
@@ -147,7 +166,7 @@ async def test_persisted_peer_source_discovery_survives_a_new_subscription(
             )
             result_count = await session.scalar(select(func.count()).select_from(AgentRunResultRow))
             stored_project = await session.get(ProjectRow, project.id)
-        assert observation_count == 1
+        assert observation_count == 2
         assert result_count == 0
         assert stored_project is not None
         assert stored_project.revision == project.revision
