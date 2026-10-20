@@ -79,8 +79,8 @@ function cellFilled(
   if (row >= 1 && row <= 6 && col >= 1 && col <= 6) {
     const idx = (row - 1) * 6 + (col - 1);
     // Interleave bitsA low bits with bitsB low bits for more variation
-    const a = (bitsA >> (idx % 16)) & 1;
-    const b = (bitsB >> (idx % 16)) & 1;
+    const a = (bitsA >> idx % 16) & 1;
+    const b = (bitsB >> idx % 16) & 1;
     return a !== b; // XOR: ~50% fill with structured variation
   }
   return false;
@@ -104,10 +104,10 @@ export function ModulePixel({ seed, tone, size = 10 }: ModulePixelProps) {
       const color = frame
         ? palette.frame
         : isInterior && isCorner
-          ? palette.accent
-          : isInterior
-            ? palette.fill
-            : palette.empty;
+        ? palette.accent
+        : isInterior
+        ? palette.fill
+        : palette.empty;
       cells.push(
         <span
           aria-hidden="true"

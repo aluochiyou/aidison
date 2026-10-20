@@ -76,7 +76,11 @@ interface ArtifactViewerProps {
   onClose: () => void;
 }
 
-export function ArtifactViewer({ projectId, artifactId, onClose }: ArtifactViewerProps) {
+export function ArtifactViewer({
+  projectId,
+  artifactId,
+  onClose,
+}: ArtifactViewerProps) {
   const [meta, setMeta] = useState<ArtifactMeta | null>(null);
   const [content, setContent] = useState<string | null>(null);
   const [showContent, setShowContent] = useState(false);
@@ -99,7 +103,10 @@ export function ArtifactViewer({ projectId, artifactId, onClose }: ArtifactViewe
         const disp = deriveDisposition(m);
         if (disp === "inline") {
           try {
-            const text = await getClient().getArtifactContent(projectId, artifactId);
+            const text = await getClient().getArtifactContent(
+              projectId,
+              artifactId
+            );
             if (!cancelled) setContent(text);
           } catch {
             // /content may not exist yet; not a hard error
@@ -258,7 +265,10 @@ export function ArtifactViewer({ projectId, artifactId, onClose }: ArtifactViewe
                       asChild
                     >
                       <a
-                        href={getClient().getArtifactContentUrl(projectId, meta.id)}
+                        href={getClient().getArtifactContentUrl(
+                          projectId,
+                          meta.id
+                        )}
                         download
                         rel="noreferrer"
                       >
@@ -306,7 +316,10 @@ export function ArtifactViewer({ projectId, artifactId, onClose }: ArtifactViewe
                         className="artifact-download-btn"
                       >
                         <a
-                          href={getClient().getArtifactContentUrl(projectId, meta.id)}
+                          href={getClient().getArtifactContentUrl(
+                            projectId,
+                            meta.id
+                          )}
                           download
                           rel="noreferrer"
                         >

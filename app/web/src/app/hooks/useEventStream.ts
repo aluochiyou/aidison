@@ -145,10 +145,11 @@ export function useEventStream(
         if (page.length < EVENT_HISTORY_PAGE_SIZE) break;
       }
       if (controller.signal.aborted) return;
-      const compatibleHistory = history.filter(
-        (event) => isCompatibleEvent(event)
+      const compatibleHistory = history.filter((event) =>
+        isCompatibleEvent(event)
       );
-      if (compatibleHistory.length !== history.length) setRequiresSnapshotRefresh(true);
+      if (compatibleHistory.length !== history.length)
+        setRequiresSnapshotRefresh(true);
       if (compatibleHistory.length) {
         cursor = compatibleHistory.at(-1)?.id || cursor;
         localStorage.setItem(storageKey, cursor);

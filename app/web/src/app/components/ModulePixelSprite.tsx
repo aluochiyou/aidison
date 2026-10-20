@@ -103,11 +103,9 @@ export function ModulePixelSprite({
 
   for (let row = 0; row < 16; row++) {
     for (let col = 0; col < 16; col++) {
-      const isFrame =
-        row <= 0 || col <= 0 || row >= 15 || col >= 15;
+      const isFrame = row <= 0 || col <= 0 || row >= 15 || col >= 15;
       const isInnerFrame =
-        !isFrame &&
-        (row <= 1 || col <= 1 || row >= 14 || col >= 14);
+        !isFrame && (row <= 1 || col <= 1 || row >= 14 || col >= 14);
 
       let color: string | null = null;
 
@@ -137,7 +135,9 @@ export function ModulePixelSprite({
     }
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vbSize} ${vbSize}" width="${size}" height="${size}" shape-rendering="crispEdges">${rects.join("")}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${vbSize} ${vbSize}" width="${size}" height="${size}" shape-rendering="crispEdges">${rects.join(
+    ""
+  )}</svg>`;
 
   return (
     <span

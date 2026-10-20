@@ -309,7 +309,11 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
   // Browse BOM
   if (phase === "browse-bom") {
     return (
-      <div className="shopping-view" role="region" aria-label="Shopping">
+      <div
+        className="shopping-view"
+        role="region"
+        aria-label="Shopping"
+      >
         <header className="shopping-header">
           <h2>
             <Tag className="h-5 w-5" />
@@ -371,11 +375,17 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
 
         <div className="shopping-actions">
           <Button
-            disabled={selectedBomLines.size === 0 || searching || !searchEnabled}
+            disabled={
+              selectedBomLines.size === 0 || searching || !searchEnabled
+            }
             onClick={() => void searchOffers()}
           >
             <Search className="h-4 w-4" />
-            {searching ? "搜索中…" : searchEnabled ? "搜索报价" : "搜索当前不可用"}
+            {searching
+              ? "搜索中…"
+              : searchEnabled
+              ? "搜索报价"
+              : "搜索当前不可用"}
           </Button>
         </div>
         {integrationHealthError ? (
@@ -388,7 +398,11 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
   // Comparing offers (after search) — offers + explainable recommendations
   if (phase === "searching-offers" || phase === "comparing-offers") {
     return (
-      <div className="shopping-view" role="region" aria-label="报价比较">
+      <div
+        className="shopping-view"
+        role="region"
+        aria-label="报价比较"
+      >
         <header className="shopping-header">
           <h2>
             <Tag className="h-5 w-5" />
@@ -398,7 +412,11 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
             <span className="shopping-phase-badge">
               {selectedBomLines.size} 行
             </span>
-            <Button variant="ghost" size="sm" onClick={resetShopping}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetShopping}
+            >
               ← 返回 BOM
             </Button>
           </div>
@@ -421,7 +439,10 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
           const recLoading = recommendationsLoading.has(bomLineId);
 
           return (
-            <section className="offer-group" key={bomLineId}>
+            <section
+              className="offer-group"
+              key={bomLineId}
+            >
               <h3>
                 <Package className="h-4 w-4" />
                 {bomItem ? bomLabel(bomItem) : shortId(bomLineId)}
@@ -498,9 +519,9 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
                                 <Clock className="h-3 w-3" />
                                 <span>
                                   截至{" "}
-                                  {new Date(offer.expires_at).toLocaleDateString(
-                                    "zh-CN"
-                                  )}
+                                  {new Date(
+                                    offer.expires_at
+                                  ).toLocaleDateString("zh-CN")}
                                 </span>
                               </div>
                             )}
@@ -594,7 +615,9 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
           <div className="budget-action-bar">
             <span>
               已选 {budgetSelection.size} 行报价计入预算
-              {error ? <span className="shopping-error"> · {error}</span> : null}
+              {error ? (
+                <span className="shopping-error"> · {error}</span>
+              ) : null}
             </span>
             <Button
               disabled={budgetSelection.size === 0 || budgetLoading}
@@ -619,7 +642,11 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
     const statusLabel = classificationLabel(summary.classification);
 
     return (
-      <div className="shopping-view" role="region" aria-label="预算汇总">
+      <div
+        className="shopping-view"
+        role="region"
+        aria-label="预算汇总"
+      >
         <header className="shopping-header">
           <h2>
             <Wallet className="h-5 w-5" />
@@ -627,10 +654,18 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
           </h2>
           <div className="shopping-header-actions">
             <span className={`status-tag ${statusTone}`}>{statusLabel}</span>
-            <Button variant="ghost" size="sm" onClick={backToComparing}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={backToComparing}
+            >
               ← 返回报价
             </Button>
-            <Button variant="ghost" size="sm" onClick={resetShopping}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetShopping}
+            >
               返回 BOM
             </Button>
           </div>
@@ -680,7 +715,10 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
             {summary.lines.map((line) => {
               const tone = classificationTone(line.classification);
               return (
-                <div className="budget-line-card" key={line.offer_snapshot_id}>
+                <div
+                  className="budget-line-card"
+                  key={line.offer_snapshot_id}
+                >
                   <div className="budget-line-header">
                     <span className={`status-tag ${tone}`}>
                       {classificationLabel(line.classification)}
@@ -716,11 +754,7 @@ export function ShoppingView({ snapshot }: ShoppingViewProps) {
 
 // ── sub-component: one explainable recommendation ──
 
-function RecommendationItem({
-  rec,
-}: {
-  rec: ShoppingOfferRecommendation;
-}) {
+function RecommendationItem({ rec }: { rec: ShoppingOfferRecommendation }) {
   const expired = isExpired(rec.expires_at);
   const tone = classificationTone(rec.listed_price_classification);
   return (

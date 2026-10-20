@@ -34,17 +34,20 @@ const SCHEMA: RJSFSchema = {
     usage_context: {
       type: "string",
       title: "用途 / 使用场景",
-      description: "这个东西在哪里、怎么用（例如室内窗边自动浇花、作为宠物喂食器）。",
+      description:
+        "这个东西在哪里、怎么用（例如室内窗边自动浇花、作为宠物喂食器）。",
     },
     budget_context: {
       type: "string",
       title: "预算 / 成本范围",
-      description: "你愿意投入的成本范围（例如 500 元以内）。这只是需求约束，不代表已批准支出。",
+      description:
+        "你愿意投入的成本范围（例如 500 元以内）。这只是需求约束，不代表已批准支出。",
     },
     skill_context: {
       type: "string",
       title: "知识 / 技能水平",
-      description: "你掌握的技能或可用的维护能力（例如基础焊接、会用 3D 建模软件）。",
+      description:
+        "你掌握的技能或可用的维护能力（例如基础焊接、会用 3D 建模软件）。",
     },
     hard_constraints: {
       type: "array",
@@ -55,7 +58,8 @@ const SCHEMA: RJSFSchema = {
     preferences: {
       type: "array",
       title: "偏好",
-      description: "可以权衡的倾向，AI 会优先满足但不强制（例如优先 USB 供电、希望个人可维护）。",
+      description:
+        "可以权衡的倾向，AI 会优先满足但不强制（例如优先 USB 供电、希望个人可维护）。",
       items: { type: "string" },
     },
     available_resources: {
@@ -71,25 +75,55 @@ const UI_SCHEMA: UiSchema = {
   "ui:options": { submitButtonOptions: { norender: true } },
   goal: {
     "ui:widget": "textarea",
-    "ui:options": { rows: 3, placeholder: "用一句话描述你想让 AI 帮你完成的目标…" },
+    "ui:options": {
+      rows: 3,
+      placeholder: "用一句话描述你想让 AI 帮你完成的目标…",
+    },
   },
   usage_context: { "ui:widget": "textarea", "ui:options": { rows: 2 } },
   budget_context: { "ui:widget": "textarea", "ui:options": { rows: 2 } },
   skill_context: { "ui:widget": "textarea", "ui:options": { rows: 2 } },
-  hard_constraints: { items: { "ui:widget": "textarea", "ui:options": { rows: 2 } } },
-  preferences: { items: { "ui:widget": "textarea", "ui:options": { rows: 2 } } },
-  available_resources: { items: { "ui:widget": "textarea", "ui:options": { rows: 2 } } },
+  hard_constraints: {
+    items: { "ui:widget": "textarea", "ui:options": { rows: 2 } },
+  },
+  preferences: {
+    items: { "ui:widget": "textarea", "ui:options": { rows: 2 } },
+  },
+  available_resources: {
+    items: { "ui:widget": "textarea", "ui:options": { rows: 2 } },
+  },
 };
 
 /** 需求背景字段的兼容别名：新 draft 用 usage_context/budget_context/skill_context，
     旧 draft / 历史快照可能用其他键名，读取时按别名回退，缺失则取空字符串。 */
 const BACKGROUND_FIELD_ALIASES: Record<string, string[]> = {
-  usage_context: ["usage_context", "usage", "use_case", "usage_scenario", "purpose"],
-  budget_context: ["budget_context", "budget", "budget_range", "cost_range", "cost_ceiling"],
-  skill_context: ["skill_context", "knowledge_level", "skill_level", "knowledge", "skills"],
+  usage_context: [
+    "usage_context",
+    "usage",
+    "use_case",
+    "usage_scenario",
+    "purpose",
+  ],
+  budget_context: [
+    "budget_context",
+    "budget",
+    "budget_range",
+    "cost_range",
+    "cost_ceiling",
+  ],
+  skill_context: [
+    "skill_context",
+    "knowledge_level",
+    "skill_level",
+    "knowledge",
+    "skills",
+  ],
 };
 
-function readBackgroundField(value: Record<string, unknown>, canonical: string): string {
+function readBackgroundField(
+  value: Record<string, unknown>,
+  canonical: string
+): string {
   const aliases = BACKGROUND_FIELD_ALIASES[canonical] ?? [canonical];
   for (const alias of aliases) {
     const entry = value[alias];
@@ -98,10 +132,14 @@ function readBackgroundField(value: Record<string, unknown>, canonical: string):
   return "";
 }
 
-function asRequirementsDraft(value: Record<string, unknown> | null): RequirementsDraft | null {
+function asRequirementsDraft(
+  value: Record<string, unknown> | null
+): RequirementsDraft | null {
   if (!value || typeof value.goal !== "string") return null;
   const textList = (item: unknown): string[] =>
-    Array.isArray(item) ? item.filter((entry): entry is string => typeof entry === "string") : [];
+    Array.isArray(item)
+      ? item.filter((entry): entry is string => typeof entry === "string")
+      : [];
   return {
     goal: value.goal,
     usage_context: readBackgroundField(value, "usage_context"),
@@ -114,10 +152,15 @@ function asRequirementsDraft(value: Record<string, unknown> | null): Requirement
   };
 }
 
-function seed(snapshot: ProjectSnapshot, draft?: Record<string, unknown> | null): RequirementsDraft {
+function seed(
+  snapshot: ProjectSnapshot,
+  draft?: Record<string, unknown> | null
+): RequirementsDraft {
   const usableDraft = asRequirementsDraft(draft ?? null);
   if (usableDraft) return usableDraft;
-  const requirement = snapshot.requirements.find((item) => item.id === snapshot.project.active_requirement_revision_id);
+  const requirement = snapshot.requirements.find(
+    (item) => item.id === snapshot.project.active_requirement_revision_id
+  );
   return {
     goal: requirement?.goal ?? snapshot.project.goal,
     usage_context: requirement?.usage_context ?? "",
@@ -130,7 +173,17 @@ function seed(snapshot: ProjectSnapshot, draft?: Record<string, unknown> | null)
   };
 }
 
-export function RequirementsRevisionForm({ snapshot, onDone, draft, onDismissDraft }: { snapshot: ProjectSnapshot; onDone: () => Promise<unknown>; draft?: Record<string, unknown> | null; onDismissDraft?: () => void }) {
+export function RequirementsRevisionForm({
+  snapshot,
+  onDone,
+  draft,
+  onDismissDraft,
+}: {
+  snapshot: ProjectSnapshot;
+  onDone: () => Promise<unknown>;
+  draft?: Record<string, unknown> | null;
+  onDismissDraft?: () => void;
+}) {
   const initial = useMemo(() => seed(snapshot, draft), [snapshot, draft]);
   const [formData, setFormData] = useState<RequirementsDraft>(initial);
   const [busy, setBusy] = useState(false);
@@ -166,14 +219,23 @@ export function RequirementsRevisionForm({ snapshot, onDone, draft, onDismissDra
       unknowns: formData.unknowns,
     };
     try {
-      await getClient().approveRequirements(snapshot.project.id, snapshot.project.revision, payload);
+      await getClient().approveRequirements(
+        snapshot.project.id,
+        snapshot.project.revision,
+        payload
+      );
       toast.success(
         snapshot.project.active_requirement_revision_id
           ? "新的需求修订已批准"
           : "需求已确认；下一步请让 AI 生成模块结构"
       );
     } catch (error) {
-      const message = error && typeof error === "object" && "error" in error ? (error as { error: { message?: string } }).error.message : error instanceof Error ? error.message : "需求修订未保存";
+      const message =
+        error && typeof error === "object" && "error" in error
+          ? (error as { error: { message?: string } }).error.message
+          : error instanceof Error
+          ? error.message
+          : "需求修订未保存";
       toast.error(message ?? "需求修订未保存");
       setBusy(false);
       return;
@@ -182,14 +244,20 @@ export function RequirementsRevisionForm({ snapshot, onDone, draft, onDismissDra
       await onDone();
     } catch {
       // 忽略：需求确认本身已成功，失败信息由页面内的计划提示卡呈现。
-    } finally { setBusy(false); }
+    } finally {
+      setBusy(false);
+    }
   };
   return (
     <div className="action-block requirements-approve">
       <div className="action-title">
         <FileCheck2 className="h-5 w-5" />
         <div>
-          <small>{snapshot.project.active_requirement_revision_id ? "修订需求" : "确认需求边界"}</small>
+          <small>
+            {snapshot.project.active_requirement_revision_id
+              ? "修订需求"
+              : "确认需求边界"}
+          </small>
           <h2>
             {snapshot.project.active_requirement_revision_id
               ? "更新需求单"
@@ -230,8 +298,7 @@ export function RequirementsRevisionForm({ snapshot, onDone, draft, onDismissDra
         onChange={(event) => {
           const next = (event.formData ?? {}) as Partial<RequirementsDraft>;
           setFormData((current) => ({
-            goal:
-              typeof next.goal === "string" ? next.goal : current.goal,
+            goal: typeof next.goal === "string" ? next.goal : current.goal,
             usage_context:
               typeof next.usage_context === "string"
                 ? next.usage_context

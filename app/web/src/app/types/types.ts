@@ -50,7 +50,11 @@ export type DraftHistoryKind =
   | "unlock"
   | "snapshot_save"
   | "snapshot_restore";
-export type ProjectReshapeStatus = "proposed" | "applied" | "rejected" | "superseded";
+export type ProjectReshapeStatus =
+  | "proposed"
+  | "applied"
+  | "rejected"
+  | "superseded";
 export type RequirementsChangeProposalStatus =
   | "proposed"
   | "applied"
@@ -392,7 +396,12 @@ export interface ResearchStrategyTask {
   module_ids: string[];
   depends_on_task_keys: string[];
   priority: "must" | "should";
-  expected_outputs: ("evidence" | "candidate" | "compatibility" | "constraint")[];
+  expected_outputs: (
+    | "evidence"
+    | "candidate"
+    | "compatibility"
+    | "constraint"
+  )[];
   stop_conditions: string[];
   research_lenses: string[];
 }

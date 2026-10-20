@@ -117,7 +117,10 @@ export default function HomePage() {
           <span>你的想法 → 可验证的方案</span>
           <span>你决定 · AI 执行</span>
         </div>
-        <div className="specimen-loop" aria-hidden="true">
+        <div
+          className="specimen-loop"
+          aria-hidden="true"
+        >
           {[
             { icon: "✎", label: "需求" },
             { icon: "▦", label: "模块" },

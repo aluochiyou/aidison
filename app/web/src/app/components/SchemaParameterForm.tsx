@@ -44,7 +44,8 @@ function deepEqual(a: unknown, b: unknown): boolean {
   if (a === null || b === null) return a === b;
   if (Array.isArray(a) && Array.isArray(b)) {
     return (
-      a.length === b.length && a.every((item, index) => deepEqual(item, b[index]))
+      a.length === b.length &&
+      a.every((item, index) => deepEqual(item, b[index]))
     );
   }
   if (typeof a === "object" && typeof b === "object") {
@@ -76,7 +77,10 @@ export function SchemaParameterForm({
     () => ({
       type: "object",
       properties: Object.fromEntries(
-        Object.entries(options).map(([key, value]) => [key, propertySchema(value)])
+        Object.entries(options).map(([key, value]) => [
+          key,
+          propertySchema(value),
+        ])
       ),
       additionalProperties: false,
     }),
@@ -96,7 +100,9 @@ export function SchemaParameterForm({
   const hasChanges = useMemo(
     () =>
       !deepEqual(formData, options) &&
-      Object.keys(formData).some((key) => !deepEqual(formData[key], options[key])),
+      Object.keys(formData).some(
+        (key) => !deepEqual(formData[key], options[key])
+      ),
     [formData, options]
   );
 
@@ -153,7 +159,11 @@ export function SchemaParameterForm({
           <RotateCcw className="h-3.5 w-3.5" />
           重置
         </Button>
-        <Button disabled={busy || !hasChanges} size="sm" type="submit">
+        <Button
+          disabled={busy || !hasChanges}
+          size="sm"
+          type="submit"
+        >
           <Save className="h-3.5 w-3.5" />
           保存参数调整
         </Button>

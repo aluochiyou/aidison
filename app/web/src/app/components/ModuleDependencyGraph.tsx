@@ -93,7 +93,8 @@ function buildGraph(modules: Module[]): BuiltGraph {
         id: module.id,
         type: "moduleNode",
         position: {
-          x: index * (NODE_WIDTH + NODE_GAP_X) - totalWidth / 2 + NODE_WIDTH / 2,
+          x:
+            index * (NODE_WIDTH + NODE_GAP_X) - totalWidth / 2 + NODE_WIDTH / 2,
           y: layer * LAYER_GAP_Y,
         },
         data: {
@@ -136,20 +137,30 @@ function buildGraph(modules: Module[]): BuiltGraph {
 }
 
 /** Pixel sprite for graph nodes — larger & more detailed than ModulePixel. */
-function ModuleGraphNodeView({
-  data,
-  selected,
-}: NodeProps<ModuleGraphNode>) {
+function ModuleGraphNodeView({ data, selected }: NodeProps<ModuleGraphNode>) {
   const { module, tone, selectionLabel, locked } = data;
   return (
     <div
-      className={selected ? "crafting-graph-node is-open" : "crafting-graph-node"}
+      className={
+        selected ? "crafting-graph-node is-open" : "crafting-graph-node"
+      }
     >
-      <Handle className="crafting-graph-handle" position={Position.Top} type="target" />
+      <Handle
+        className="crafting-graph-handle"
+        position={Position.Top}
+        type="target"
+      />
       <span className="crafting-graph-node-pixel">
-        <ModulePixelSprite seed={module.key} tone={tone} size={72} />
+        <ModulePixelSprite
+          seed={module.key}
+          tone={tone}
+          size={72}
+        />
         {locked ? (
-          <LockKeyhole aria-label="已锁定" className="crafting-lock-badge" />
+          <LockKeyhole
+            aria-label="已锁定"
+            className="crafting-lock-badge"
+          />
         ) : null}
       </span>
       <span className="crafting-graph-node-copy">
@@ -354,7 +365,9 @@ export function ModuleDependencyGraph({
   if (!modules.length) {
     return (
       <div className="crafting-graph crafting-graph-empty">
-        <p className="crafting-empty">尚无可视化模块；批准需求后这里会显示模块依赖图。</p>
+        <p className="crafting-empty">
+          尚无可视化模块；批准需求后这里会显示模块依赖图。
+        </p>
       </div>
     );
   }
@@ -401,7 +414,10 @@ export function ModuleDependencyGraph({
           size={1.5}
           variant={BackgroundVariant.Lines}
         />
-        <Controls position="bottom-right" showInteractive={false} />
+        <Controls
+          position="bottom-right"
+          showInteractive={false}
+        />
       </ReactFlow>
       {draftChangeCount > 0 ? (
         <div className="crafting-graph-draft-notice">

@@ -380,7 +380,11 @@ a[role="button"]:not(.no-pixel-style):active,
 }
 
 .view-nav-item:hover {
-  background: color-mix(in srgb, var(--pixel-grass) 16%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--pixel-grass) 16%,
+    transparent
+  ) !important;
   color: var(--pixel-ink) !important;
 }
 
@@ -844,9 +848,12 @@ button {
   aspect-ratio: 1 / 1;
   margin: 1rem auto 0.9rem;
   border: 2px dashed color-mix(in srgb, var(--pixel-ink) 45%, transparent);
-  background:
-    radial-gradient(circle at center, rgba(36, 26, 18, 0.05) 1px, transparent 1px)
-      0 0 / 14px 14px;
+  background: radial-gradient(
+      circle at center,
+      rgba(36, 26, 18, 0.05) 1px,
+      transparent 1px
+    )
+    0 0 / 14px 14px;
 }
 
 .specimen-loop-node {
@@ -854,8 +861,8 @@ button {
   top: 50%;
   left: 50%;
   width: 4.6rem;
-  transform: translate(-50%, -50%) rotate(var(--node-angle))
-    translateY(-47%) rotate(calc(var(--node-angle) * -1));
+  transform: translate(-50%, -50%) rotate(var(--node-angle)) translateY(-47%)
+    rotate(calc(var(--node-angle) * -1));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -1885,6 +1892,149 @@ button {
 .action-block button {
   gap: 0.45rem;
   border-radius: 2px;
+}
+
+.research-plan-settings {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 2px solid var(--pixel-ink);
+  background: #f7edcf;
+  box-shadow: inset 0 0 0 3px rgba(166, 106, 55, 0.2);
+}
+
+.research-plan-note {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-left: 4px solid var(--pixel-grass);
+  color: var(--pixel-ink);
+  background: rgba(255, 255, 255, 0.58);
+  font-size: 0.72rem;
+  line-height: 1.55;
+}
+
+.research-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.research-field,
+.research-scope {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px solid rgba(36, 26, 18, 0.52);
+  color: var(--pixel-ink);
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.research-field-wide {
+  grid-column: 1 / -1;
+}
+
+.research-field input,
+.research-field textarea,
+.research-field select {
+  width: 100%;
+  min-width: 0;
+  border: 2px solid var(--pixel-ink);
+  color: var(--pixel-ink);
+  background: #fffef8;
+  font: 0.72rem/1.45 "Cascadia Code", monospace;
+}
+
+.research-field input,
+.research-field select {
+  min-height: 2.5rem;
+  padding: 0.45rem 0.55rem;
+}
+
+.research-field textarea {
+  min-height: 5rem;
+  padding: 0.55rem;
+  resize: vertical;
+}
+
+.research-field small,
+.research-plan-actions small {
+  color: rgba(36, 26, 18, 0.7);
+  font-size: 0.6rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.research-scope {
+  padding-top: 0.5rem;
+}
+
+.research-scope legend {
+  padding: 0 0.3rem;
+  font: 700 0.68rem "Cascadia Code", monospace;
+}
+
+.research-scope-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.research-scope-options label,
+.research-check {
+  display: inline-flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.research-scope-options label {
+  min-height: 2.2rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid rgba(36, 26, 18, 0.45);
+  background: #fffef8;
+  font-size: 0.66rem;
+}
+
+.research-scope-options input,
+.research-check input {
+  width: 1rem;
+  height: 1rem;
+  margin: 0;
+  accent-color: var(--pixel-grass);
+}
+
+.research-check {
+  padding: 0.65rem 0.75rem;
+  border: 1px dashed var(--pixel-ink);
+  color: var(--pixel-ink);
+  background: rgba(94, 141, 67, 0.1);
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.research-plan-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  align-items: center;
+}
+
+@media (max-width: 900px) {
+  .research-plan-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .research-field-wide {
+    grid-column: auto;
+  }
 }
 
 .proposal-actions {
@@ -4455,7 +4605,9 @@ button {
 
 /* 工程目标是唯一的长文本事实字段，独占整行；用途/预算/技能等背景字段
    与硬约束/偏好/已有资源一起按可用宽度自适应分列。 */
-.requirements-approve .requirements-rjsf-form > .form-group[id="requirements_goal"] {
+.requirements-approve
+  .requirements-rjsf-form
+  > .form-group[id="requirements_goal"] {
   grid-column: 1 / -1;
 }
 

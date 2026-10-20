@@ -44,8 +44,16 @@ const NAV_ITEMS: {
   label: string;
   icon: React.ReactNode;
 }[] = [
-  { view: "run-center", label: "运行中心", icon: <Monitor className="h-4 w-4" /> },
-  { view: "cost-workbench", label: "成本工作台", icon: <Beaker className="h-4 w-4" /> },
+  {
+    view: "run-center",
+    label: "运行中心",
+    icon: <Monitor className="h-4 w-4" />,
+  },
+  {
+    view: "cost-workbench",
+    label: "成本工作台",
+    icon: <Beaker className="h-4 w-4" />,
+  },
   { view: "research", label: "研究证据", icon: <Beaker className="h-4 w-4" /> },
   {
     view: "decision-inbox",
@@ -151,7 +159,12 @@ export function ViewShell({
   const renderMainView = () => {
     switch (view) {
       case "run-center":
-        return <RunCenter snapshot={snapshot} onRefresh={onRefresh} />;
+        return (
+          <RunCenter
+            snapshot={snapshot}
+            onRefresh={onRefresh}
+          />
+        );
       case "cost-workbench":
         return <CostWorkbench snapshot={snapshot} />;
       case "research":

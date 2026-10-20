@@ -566,7 +566,8 @@ export function DraftWorkbench({
 }: DraftWorkbenchProps) {
   const [busyPlanId, setBusyPlanId] = useState<string | null>(null);
   const [busyReshapeId, setBusyReshapeId] = useState<string | null>(null);
-  const [submittingRelationProposal, setSubmittingRelationProposal] = useState(false);
+  const [submittingRelationProposal, setSubmittingRelationProposal] =
+    useState(false);
   const [relationshipChangeReason, setRelationshipChangeReason] = useState("");
   const [busySnapshotId, setBusySnapshotId] = useState<string | null>(null);
   const [openModuleId, setOpenModuleId] = useState<string | null>(null);
@@ -584,29 +585,24 @@ export function DraftWorkbench({
   };
 
   // Draft edge state — local-only, not sent to the server
-  const [draftEdges, setDraftEdges] = useState<Set<string>>(
-    () => new Set()
-  );
+  const [draftEdges, setDraftEdges] = useState<Set<string>>(() => new Set());
   const [removedEdges, setRemovedEdges] = useState<Set<string>>(
     () => new Set()
   );
 
-  const handleDraftEdgeAdd = useCallback(
-    (source: string, target: string) => {
-      const key = `${source}->${target}`;
-      setDraftEdges((prev) => {
-        const next = new Set(prev);
-        next.add(key);
-        return next;
-      });
-      setRemovedEdges((prev) => {
-        const next = new Set(prev);
-        next.delete(key);
-        return next;
-      });
-    },
-    []
-  );
+  const handleDraftEdgeAdd = useCallback((source: string, target: string) => {
+    const key = `${source}->${target}`;
+    setDraftEdges((prev) => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
+    setRemovedEdges((prev) => {
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+  }, []);
 
   /**
    * Toggle a dependency edge's Draft removal state.
@@ -615,28 +611,25 @@ export function DraftWorkbench({
    * - If the edge is canonical (from the snapshot), toggle removedEdges.
    * - If the edge is already in removedEdges, restore it.
    */
-  const handleEdgeToggle = useCallback(
-    (edgeKey: string) => {
-      setDraftEdges((prev) => {
-        if (prev.has(edgeKey)) {
-          const next = new Set(prev);
-          next.delete(edgeKey);
-          return next;
-        }
-        return prev;
-      });
-      setRemovedEdges((prev) => {
+  const handleEdgeToggle = useCallback((edgeKey: string) => {
+    setDraftEdges((prev) => {
+      if (prev.has(edgeKey)) {
         const next = new Set(prev);
-        if (next.has(edgeKey)) {
-          next.delete(edgeKey);
-        } else {
-          next.add(edgeKey);
-        }
+        next.delete(edgeKey);
         return next;
-      });
-    },
-    []
-  );
+      }
+      return prev;
+    });
+    setRemovedEdges((prev) => {
+      const next = new Set(prev);
+      if (next.has(edgeKey)) {
+        next.delete(edgeKey);
+      } else {
+        next.add(edgeKey);
+      }
+      return next;
+    });
+  }, []);
 
   const configurations = useMemo(
     () => snapshot.module_configurations ?? [],
@@ -719,7 +712,9 @@ export function DraftWorkbench({
   const submitRelationshipProposal = async () => {
     const baseEdges = new Set(
       snapshot.modules.flatMap((module) =>
-        module.dependency_ids.map((dependencyId) => `${dependencyId}->${module.id}`)
+        module.dependency_ids.map(
+          (dependencyId) => `${dependencyId}->${module.id}`
+        )
       )
     );
     for (const edge of removedEdges) baseEdges.delete(edge);
@@ -754,12 +749,10 @@ export function DraftWorkbench({
           unchanged_module_ids: snapshot.modules
             .filter((module) => !changedModuleIds.has(module.id))
             .map((module) => module.id),
-          dependency_edges: [...baseEdges]
-            .sort()
-            .map((edge) => {
-              const [source_module_id, target_module_id] = edge.split("->");
-              return { source_module_id, target_module_id };
-            }),
+          dependency_edges: [...baseEdges].sort().map((edge) => {
+            const [source_module_id, target_module_id] = edge.split("->");
+            return { source_module_id, target_module_id };
+          }),
         }
       );
       setDraftEdges(new Set());
@@ -815,7 +808,8 @@ export function DraftWorkbench({
         snapshot.project.revision,
         decision,
         scopeHash,
-        decision === "approved" && plan?.allowed_coordination_modes.includes("decompose") === true
+        decision === "approved" &&
+          plan?.allowed_coordination_modes.includes("decompose") === true
       );
       report({
         kind: "success",
@@ -1118,7 +1112,8 @@ export function DraftWorkbench({
             selectedNames={selectedNames}
           />
         )}
-        {workbenchView === "graph" && (draftEdges.size > 0 || removedEdges.size > 0) ? (
+        {workbenchView === "graph" &&
+        (draftEdges.size > 0 || removedEdges.size > 0) ? (
           <div className="crafting-relationship-actions">
             <div className="crafting-relationship-copy">
               <strong>关系修改尚未生效</strong>
@@ -1129,7 +1124,9 @@ export function DraftWorkbench({
                 aria-label="修改理由（可选）"
                 className="crafting-relationship-reason"
                 maxLength={500}
-                onChange={(event) => setRelationshipChangeReason(event.target.value)}
+                onChange={(event) =>
+                  setRelationshipChangeReason(event.target.value)
+                }
                 placeholder="修改理由（可选）：例如，为降低接口耦合，将通信模块改为依赖飞控模块。"
                 value={relationshipChangeReason}
               />
@@ -1154,7 +1151,9 @@ export function DraftWorkbench({
                 size="sm"
               >
                 <GitBranch className="h-3.5 w-3.5" />
-                {submittingRelationProposal ? "正在创建提案…" : "提交模块关系提案"}
+                {submittingRelationProposal
+                  ? "正在创建提案…"
+                  : "提交模块关系提案"}
               </Button>
             </div>
           </div>
@@ -1281,9 +1280,7 @@ export function DraftWorkbench({
                     {developerMode
                       ? `并发 ≤ ${
                           plan.max_concurrency
-                        } · 预算 ≤ ${plan.max_token_budget.toLocaleString()} · 时长 ≤ ${
-                          plan.max_duration_seconds.toLocaleString()
-                        } 秒 · 结果需确认 ${
+                        } · 预算 ≤ ${plan.max_token_budget.toLocaleString()} · 时长 ≤ ${plan.max_duration_seconds.toLocaleString()} 秒 · 结果需确认 ${
                           plan.requires_result_approval ? "是" : "否"
                         } · scope ${shortHash(plan.scope_hash)}`
                       : "确认后，AI 只会在这份计划的范围内工作；结果仍由你决定是否采用。"}

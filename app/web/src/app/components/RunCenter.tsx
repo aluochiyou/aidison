@@ -13,7 +13,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { getClient } from "@/lib/api";
-import type { ProjectSnapshot, ResearchQualitySummary } from "@/app/types/types";
+import type {
+  ProjectSnapshot,
+  ResearchQualitySummary,
+} from "@/app/types/types";
 
 interface RunCenterProps {
   snapshot: ProjectSnapshot;
@@ -27,7 +30,10 @@ function formatTime(value: string): string {
     : parsed.toLocaleString("zh-CN", { hour12: false });
 }
 
-const QUALITY_OUTCOME_LABELS: Record<ResearchQualitySummary["outcome"], string> = {
+const QUALITY_OUTCOME_LABELS: Record<
+  ResearchQualitySummary["outcome"],
+  string
+> = {
   waiting: "等待正在进行的研究任务",
   needs_more_evidence: "正在补充缺失证据",
   needs_verification: "需要交叉核验",
@@ -49,12 +55,14 @@ function reasonLabel(code: string): string {
   const labels: Record<string, string> = {
     all_must_coverage_satisfied: "所有关键问题均已获得足够证据支持",
     must_coverage_has_bounded_gap: "关键问题仍有可补充的证据缺口",
-    must_coverage_requires_independent_verification: "关键问题需要独立来源交叉核验",
+    must_coverage_requires_independent_verification:
+      "关键问题需要独立来源交叉核验",
     must_conflict_requires_verification: "关键问题出现相互冲突的证据，需要核验",
     must_coverage_still_in_flight: "关键问题仍在等待已启动的任务返回",
     must_coverage_gap_cannot_expand: "关键问题存在缺口，但当前运行不能继续扩展",
     independent_verification_unavailable: "当前运行无法执行独立核验",
-    must_conflict_without_verifier: "关键问题存在冲突，但当前运行没有可用核验路径",
+    must_conflict_without_verifier:
+      "关键问题存在冲突，但当前运行没有可用核验路径",
     research_quality_projection_unavailable: "研究质量记录或其冻结依据无法读取",
   };
   return labels[code] ?? code;
@@ -103,9 +111,9 @@ function ResearchQuality({
       <p>{quality.reason_codes.map(reasonLabel).join("；")}</p>
       {quality.context?.manifest_count ? (
         <small>
-          本轮上下文预算：已编译 {quality.context.manifest_count} 份任务上下文，选入
-          {" "}{quality.context.selected_source_count} 份来源片段，估算输入
-          {" "}{quality.context.input_token_estimate} tokens。
+          本轮上下文预算：已编译 {quality.context.manifest_count}{" "}
+          份任务上下文，选入 {quality.context.selected_source_count}{" "}
+          份来源片段，估算输入 {quality.context.input_token_estimate} tokens。
           {quality.context.omitted_source_count
             ? `另有 ${quality.context.omitted_source_count} 份来源片段因上下文预算未选入`
             : "没有来源片段因预算省略"}
@@ -124,10 +132,15 @@ function ResearchQuality({
         <ul className="quality-issue-list">
           {issues.map((item) => (
             <li key={item.coverage_key}>
-              <strong>{COVERAGE_STATUS_LABELS[item.status] ?? item.status}</strong>
+              <strong>
+                {COVERAGE_STATUS_LABELS[item.status] ?? item.status}
+              </strong>
               {item.module_ids.length ? (
                 <small>
-                  模块：{item.module_ids.map((id) => moduleNames.get(id) ?? id).join("、")}
+                  模块：
+                  {item.module_ids
+                    .map((id) => moduleNames.get(id) ?? id)
+                    .join("、")}
                 </small>
               ) : (
                 <small>模块：项目整体</small>
@@ -135,7 +148,8 @@ function ResearchQuality({
               <span>{item.question}</span>
               {item.status === "insufficient_sources" ? (
                 <small>
-                  已获得 {item.observed_source_count} 份不同来源文档，至少需要 {item.min_distinct_sources} 份。
+                  已获得 {item.observed_source_count} 份不同来源文档，至少需要{" "}
+                  {item.min_distinct_sources} 份。
                   {item.min_distinct_origins > 1
                     ? `其中覆盖 ${item.observed_origin_count} 个不同来源站点，至少需要 ${item.min_distinct_origins} 个。`
                     : ""}
@@ -145,7 +159,9 @@ function ResearchQuality({
                 <small>缺少：{item.missing_source_kinds.join("、")}</small>
               ) : null}
               {item.observed_source_kinds.length ? (
-                <small>已验证来源：{item.observed_source_kinds.join("、")}</small>
+                <small>
+                  已验证来源：{item.observed_source_kinds.join("、")}
+                </small>
               ) : null}
               {item.collected_source_count ? (
                 <small>
@@ -159,17 +175,22 @@ function ResearchQuality({
               {item.unavailable_source_reason_codes.length ? (
                 <small>
                   本轮未取得来源：
-                  {item.unavailable_source_reason_codes.map(sourceGapReasonLabel).join("、")}
+                  {item.unavailable_source_reason_codes
+                    .map(sourceGapReasonLabel)
+                    .join("、")}
                   。系统会在预算与补题上限允许时换角度继续检索。
                 </small>
               ) : null}
-              {item.requires_independent_verification && !item.independently_verified ? (
+              {item.requires_independent_verification &&
+              !item.independently_verified ? (
                 <small>仍需独立来源交叉核验。</small>
               ) : null}
               {item.rejected_claim_count ? (
                 <small>
                   模型提出的 {item.rejected_claim_count} 条论断未进入证据链：
-                  {item.rejected_reason_codes.map(evidenceReasonLabel).join("、")}
+                  {item.rejected_reason_codes
+                    .map(evidenceReasonLabel)
+                    .join("、")}
                 </small>
               ) : null}
             </li>
@@ -186,8 +207,12 @@ function ResearchQuality({
 export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [controllingRunId, setControllingRunId] = useState<string | null>(null);
-  const [steeringByRunId, setSteeringByRunId] = useState<Record<string, string>>({});
-  const [resolvingDecisionId, setResolvingDecisionId] = useState<string | null>(null);
+  const [steeringByRunId, setSteeringByRunId] = useState<
+    Record<string, string>
+  >({});
+  const [resolvingDecisionId, setResolvingDecisionId] = useState<string | null>(
+    null
+  );
   const [commandError, setCommandError] = useState<string | null>(null);
   const work = snapshot.workspace?.work ?? [];
   const agentRuns = snapshot.agent_runs ?? [];
@@ -195,7 +220,9 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
     (plan) => plan.status === "approved" || plan.status === "proposed"
   );
   const budgets = snapshot.agent_run_budget_accounts ?? [];
-  const moduleNames = new Map((snapshot.modules ?? []).map((module) => [module.id, module.name]));
+  const moduleNames = new Map(
+    (snapshot.modules ?? []).map((module) => [module.id, module.name])
+  );
   const pendingRunDecisions = (snapshot.agent_run_decisions ?? []).filter(
     (decision) => decision.status === "pending"
   );
@@ -204,7 +231,11 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
     setCancellingRunId(runId);
     setCommandError(null);
     try {
-      await getClient().cancelAgentRun(snapshot.project.id, runId, snapshot.project.revision);
+      await getClient().cancelAgentRun(
+        snapshot.project.id,
+        runId,
+        snapshot.project.revision
+      );
       onRefresh();
     } catch (error: unknown) {
       setCommandError(
@@ -243,7 +274,11 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
     setControllingRunId(run.id);
     setCommandError(null);
     try {
-      await getClient().resumeAgentRun(snapshot.project.id, run.id, snapshot.project.revision);
+      await getClient().resumeAgentRun(
+        snapshot.project.id,
+        run.id,
+        snapshot.project.revision
+      );
       onRefresh();
     } catch (error: unknown) {
       setCommandError(
@@ -295,10 +330,14 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
     setResolvingDecisionId(decision.id);
     setCommandError(null);
     try {
-      await getClient().resolveAgentRunDecision(decision.id, snapshot.project.revision, {
-        decision: answer,
-        basis_hash: decision.basis_hash,
-      });
+      await getClient().resolveAgentRunDecision(
+        decision.id,
+        snapshot.project.revision,
+        {
+          decision: answer,
+          basis_hash: decision.basis_hash,
+        }
+      );
       onRefresh();
     } catch (error: unknown) {
       setCommandError(
@@ -312,7 +351,10 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
   };
 
   return (
-    <section className="research-evidence-view" aria-label="运行中心">
+    <section
+      className="research-evidence-view"
+      aria-label="运行中心"
+    >
       <header className="research-evidence-header">
         <div>
           <small>RUN CENTER</small>
@@ -327,27 +369,42 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
       {work.length === 0 ? (
         <div className="decision-empty">
           <Activity className="h-6 w-6" />
-          <p>当前没有正在执行或可审计的工作。批准执行计划后，运行会在这里出现。</p>
+          <p>
+            当前没有正在执行或可审计的工作。批准执行计划后，运行会在这里出现。
+          </p>
         </div>
       ) : (
         <div className="decision-options-list">
           {work.toReversed().map((item) => (
-            <article className="decision-option-card" key={item.run_id}>
+            <article
+              className="decision-option-card"
+              key={item.run_id}
+            >
               <div className="decision-option-header">
                 <strong>{item.user_label}</strong>
                 <span className="status-tag">{item.state}</span>
               </div>
               <div className="decision-option-meta">
                 <span>
-                  <ListChecks className="h-3.5 w-3.5" /> {item.completed_units} / {item.total_units || "?"} 单元证据完成
+                  <ListChecks className="h-3.5 w-3.5" /> {item.completed_units}{" "}
+                  / {item.total_units || "?"} 单元证据完成
                 </span>
                 <span>
-                  <Clock3 className="h-3.5 w-3.5" /> 更新于 {formatTime(item.updated_at)}
+                  <Clock3 className="h-3.5 w-3.5" /> 更新于{" "}
+                  {formatTime(item.updated_at)}
                 </span>
               </div>
-              {item.failed_units > 0 ? <p>有 {item.failed_units} 个单元需要后续检查。</p> : null}
-              {item.partial_units > 0 ? <p>有 {item.partial_units} 个单元仅部分覆盖，仍在等待补题或核验。</p> : null}
-              {item.latest_error ? <p className="impact-meta">当前状态：{item.latest_error}</p> : null}
+              {item.failed_units > 0 ? (
+                <p>有 {item.failed_units} 个单元需要后续检查。</p>
+              ) : null}
+              {item.partial_units > 0 ? (
+                <p>
+                  有 {item.partial_units} 个单元仅部分覆盖，仍在等待补题或核验。
+                </p>
+              ) : null}
+              {item.latest_error ? (
+                <p className="impact-meta">当前状态：{item.latest_error}</p>
+              ) : null}
             </article>
           ))}
         </div>
@@ -363,20 +420,31 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                 !run.cancel_requested &&
                 !["succeeded", "failed", "cancelled"].includes(run.status);
               const pausePending = run.control_requests.some(
-                (request) => request.kind === "pause" && request.status === "requested"
+                (request) =>
+                  request.kind === "pause" && request.status === "requested"
               );
               const pauseAcknowledged = run.control_requests.some(
-                (request) => request.kind === "pause" && request.status === "acknowledged"
+                (request) =>
+                  request.kind === "pause" && request.status === "acknowledged"
               );
               const canPause =
-                ["queued", "running"].includes(run.status) && !run.cancel_requested && !pausePending;
+                ["queued", "running"].includes(run.status) &&
+                !run.cancel_requested &&
+                !pausePending;
               const canResume = run.status === "waiting" && pauseAcknowledged;
-              const canSteer = ["queued", "running"].includes(run.status) && !run.cancel_requested;
+              const canSteer =
+                ["queued", "running"].includes(run.status) &&
+                !run.cancel_requested;
               const isControlling = controllingRunId === run.id;
               return (
-                <article className="decision-option-card" key={run.id}>
+                <article
+                  className="decision-option-card"
+                  key={run.id}
+                >
                   <div className="decision-option-header">
-                    <strong>{run.kind === "research" ? "研究运行" : run.kind}</strong>
+                    <strong>
+                      {run.kind === "research" ? "研究运行" : run.kind}
+                    </strong>
                     <span className="status-tag">{run.status}</span>
                   </div>
                   <div className="decision-option-meta">
@@ -385,7 +453,11 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                   </div>
                   {run.research_progress ? (
                     <p className="impact-meta">
-                      初始策略任务 {run.research_progress.initial_task_count} 个；已准入结果 {run.research_progress.admitted_task_count} 个，其中证据完成 {run.research_progress.succeeded_task_count} 个、部分覆盖 {run.research_progress.partial_task_count} 个
+                      初始策略任务 {run.research_progress.initial_task_count}{" "}
+                      个；已准入结果 {run.research_progress.admitted_task_count}{" "}
+                      个，其中证据完成{" "}
+                      {run.research_progress.succeeded_task_count} 个、部分覆盖{" "}
+                      {run.research_progress.partial_task_count} 个
                       {run.research_progress.additional_task_count
                         ? `（含 ${run.research_progress.additional_task_count} 个补题或核验任务）`
                         : ""}
@@ -395,11 +467,18 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                   {run.latest_error ? (
                     <p className="impact-meta">停止原因：{run.latest_error}</p>
                   ) : null}
-                  {run.cancel_requested ? <p>取消已请求，运行将在下一个安全点停止。</p> : null}
-                  {run.kind === "research" && run.research_quality ? (
-                  <ResearchQuality quality={run.research_quality} moduleNames={moduleNames} />
+                  {run.cancel_requested ? (
+                    <p>取消已请求，运行将在下一个安全点停止。</p>
                   ) : null}
-                  {run.control_requests.some((request) => request.status === "requested") ? (
+                  {run.kind === "research" && run.research_quality ? (
+                    <ResearchQuality
+                      quality={run.research_quality}
+                      moduleNames={moduleNames}
+                    />
+                  ) : null}
+                  {run.control_requests.some(
+                    (request) => request.status === "requested"
+                  ) ? (
                     <p>有待处理的运行控制请求。</p>
                   ) : null}
                   {canCancel ? (
@@ -437,7 +516,9 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                   ) : null}
                   {canSteer ? (
                     <div className="run-steering-control">
-                      <label htmlFor={`run-steering-${run.id}`}>引导后续研究</label>
+                      <label htmlFor={`run-steering-${run.id}`}>
+                        引导后续研究
+                      </label>
                       <div>
                         <input
                           id={`run-steering-${run.id}`}
@@ -454,14 +535,18 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                         <button
                           type="button"
                           className="decision-option-action"
-                          disabled={isControlling || !(steeringByRunId[run.id]?.trim())}
+                          disabled={
+                            isControlling || !steeringByRunId[run.id]?.trim()
+                          }
                           onClick={() => void submitSteering(run)}
                         >
                           <Send className="h-4 w-4" />
                           提交引导
                         </button>
                       </div>
-                      <small>只影响尚未派发的研究任务，不修改已批准的项目事实或研究范围。</small>
+                      <small>
+                        只影响尚未派发的研究任务，不修改已批准的项目事实或研究范围。
+                      </small>
                     </div>
                   ) : null}
                 </article>
@@ -473,12 +558,18 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
         )}
       </section>
 
-      <section className="research-section" aria-label="待确认的研究提案">
+      <section
+        className="research-section"
+        aria-label="待确认的研究提案"
+      >
         <h3>待确认的研究提案</h3>
         {pendingRunDecisions.length ? (
           <div className="decision-options-list">
             {pendingRunDecisions.map((decision) => (
-              <article className="decision-option-card run-decision-card" key={decision.id}>
+              <article
+                className="decision-option-card run-decision-card"
+                key={decision.id}
+              >
                 <div className="decision-option-header">
                   <strong>研究结果已就绪，等待你的判断</strong>
                   <span className="status-tag">待确认</span>
@@ -487,20 +578,25 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                   <>
                     <p>{decision.proposal_preview.question}</p>
                     <div className="run-decision-module-list">
-                      {decision.proposal_preview.module_summaries.map((item) => (
-                        <article key={`${decision.id}-${item.module_id}`}>
-                          <small>
-                            {snapshot.modules.find((module) => module.id === item.module_id)
-                              ?.name ?? "模块"}
-                            ：研究结论 · {item.evidence_count} 条已准入证据
-                          </small>
-                          <strong>{item.recommended_option}</strong>
-                          <p>{item.summary}</p>
-                          {item.alternatives.length ? (
-                            <small>备选：{item.alternatives.join("；")}</small>
-                          ) : null}
-                        </article>
-                      ))}
+                      {decision.proposal_preview.module_summaries.map(
+                        (item) => (
+                          <article key={`${decision.id}-${item.module_id}`}>
+                            <small>
+                              {snapshot.modules.find(
+                                (module) => module.id === item.module_id
+                              )?.name ?? "模块"}
+                              ：研究结论 · {item.evidence_count} 条已准入证据
+                            </small>
+                            <strong>{item.recommended_option}</strong>
+                            <p>{item.summary}</p>
+                            {item.alternatives.length ? (
+                              <small>
+                                备选：{item.alternatives.join("；")}
+                              </small>
+                            ) : null}
+                          </article>
+                        )
+                      )}
                     </div>
                     {decision.proposal_preview.unsupported_module_ids.length ? (
                       <p className="impact-meta">
@@ -508,8 +604,9 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                         {decision.proposal_preview.unsupported_module_ids
                           .map(
                             (moduleId) =>
-                              snapshot.modules.find((module) => module.id === moduleId)
-                                ?.name ?? "未命名模块"
+                              snapshot.modules.find(
+                                (module) => module.id === moduleId
+                              )?.name ?? "未命名模块"
                           )
                           .join("、")}
                         没有已准入证据支持的推荐。请查看研究质量缺口或重新规划。
@@ -517,10 +614,14 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                     ) : null}
                   </>
                 ) : (
-                  <p>提案正文暂不可读取；请先查看 Artifact 审计记录，确认后再操作。</p>
+                  <p>
+                    提案正文暂不可读取；请先查看 Artifact
+                    审计记录，确认后再操作。
+                  </p>
                 )}
                 <p className="impact-meta">
-                  {decision.proposal_preview && !decision.proposal_preview.adoption_allowed
+                  {decision.proposal_preview &&
+                  !decision.proposal_preview.adoption_allowed
                     ? "当前缺少证据支持，不能采纳本轮推荐；拒绝只关闭本轮研究，不会修改项目事实。"
                     : "采纳会把本轮推荐方案写入项目的下一步决策；拒绝只关闭本轮研究，不会修改项目事实。"}
                 </p>
@@ -537,8 +638,8 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
                     {resolvingDecisionId === decision.id
                       ? "正在提交…"
                       : decision.proposal_preview?.adoption_allowed
-                        ? "采纳推荐方案"
-                        : "证据不足，无法采纳"}
+                      ? "采纳推荐方案"
+                      : "证据不足，无法采纳"}
                   </button>
                   <button
                     type="button"
@@ -561,14 +662,25 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
         <h3>已批准的执行边界</h3>
         {plans.length ? (
           plans.map((plan) => (
-            <article className="decision-option-card" key={plan.id}>
+            <article
+              className="decision-option-card"
+              key={plan.id}
+            >
               <strong>{plan.objective}</strong>
               <p>{plan.work_summary.join("；") || "没有额外工作说明。"}</p>
               <div className="decision-option-meta">
                 <span>并发上限：{plan.max_concurrency}</span>
-                <span>Token 上限：{plan.max_token_budget.toLocaleString()}</span>
-                <span>最长时长：{plan.max_duration_seconds.toLocaleString()} 秒</span>
-                <span>{plan.requires_result_approval ? "结果需要你的确认" : "结果可自动完成"}</span>
+                <span>
+                  Token 上限：{plan.max_token_budget.toLocaleString()}
+                </span>
+                <span>
+                  最长时长：{plan.max_duration_seconds.toLocaleString()} 秒
+                </span>
+                <span>
+                  {plan.requires_result_approval
+                    ? "结果需要你的确认"
+                    : "结果可自动完成"}
+                </span>
               </div>
             </article>
           ))
@@ -581,14 +693,26 @@ export function RunCenter({ snapshot, onRefresh }: RunCenterProps) {
         <h3>本轮预算</h3>
         {budgets.length ? (
           budgets.map((budget) => (
-            <article className="decision-option-card" key={budget.id}>
+            <article
+              className="decision-option-card"
+              key={budget.id}
+            >
               <div className="decision-option-header">
-                <strong><Coins className="h-4 w-4" /> 研究预算</strong>
+                <strong>
+                  <Coins className="h-4 w-4" /> 研究预算
+                </strong>
                 <span className="status-tag">{budget.state}</span>
               </div>
               <div className="decision-option-meta">
-                <span>Token：{budget.token_consumed.toLocaleString()} 已消耗，{budget.token_reserved.toLocaleString()} 已预留 / {budget.token_cap.toLocaleString()}</span>
-                <span>工具调用：{budget.tool_calls_consumed} 已消耗，{budget.tool_calls_reserved} 已预留 / {budget.tool_call_cap}</span>
+                <span>
+                  Token：{budget.token_consumed.toLocaleString()} 已消耗，
+                  {budget.token_reserved.toLocaleString()} 已预留 /{" "}
+                  {budget.token_cap.toLocaleString()}
+                </span>
+                <span>
+                  工具调用：{budget.tool_calls_consumed} 已消耗，
+                  {budget.tool_calls_reserved} 已预留 / {budget.tool_call_cap}
+                </span>
               </div>
             </article>
           ))

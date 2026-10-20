@@ -36,8 +36,7 @@ interface ConversationPanelProps {
   onOpenRequirementsForm?: () => void;
 }
 
-const INITIAL_REQUIREMENTS_DRAFT_MARKER =
-  "_aidison_initial_requirements_draft";
+const INITIAL_REQUIREMENTS_DRAFT_MARKER = "_aidison_initial_requirements_draft";
 
 /** 需求草案的轻量预览：目标 + 模块名，帮助用户决定是否带入表单。 */
 interface RequirementsDraftPreviewData {
@@ -111,9 +110,14 @@ function researchPlanPreview(payload: Record<string, unknown> | undefined) {
     entries.push(`Token 预算 ${payload.max_token_budget.toLocaleString()}`);
   }
   if (typeof payload.max_duration_seconds === "number") {
-    entries.push(`最长时长 ${payload.max_duration_seconds.toLocaleString()} 秒`);
+    entries.push(
+      `最长时长 ${payload.max_duration_seconds.toLocaleString()} 秒`
+    );
   }
-  if (payload.requires_independent_verification === true && researchDepth !== "deep") {
+  if (
+    payload.requires_independent_verification === true &&
+    researchDepth !== "deep"
+  ) {
     entries.push("要求独立核验");
   }
   const sourceStrategy = payload.source_strategy;
@@ -129,7 +133,9 @@ function researchPlanPreview(payload: Record<string, unknown> | undefined) {
   return entries;
 }
 
-function isInitialRequirementsDraft(proposal: ConversationActionProposal): boolean {
+function isInitialRequirementsDraft(
+  proposal: ConversationActionProposal
+): boolean {
   return (
     proposal.kind === "rewrite_requirements" &&
     proposal.proposed_payload?.[INITIAL_REQUIREMENTS_DRAFT_MARKER] === true
@@ -150,10 +156,14 @@ function friendlyError(error: unknown): string {
       ? error.message
       : "";
   if (status === 409) {
-    return `操作被拒绝（409）：${message || "请求已过期或已被处理"}。请刷新后重试。`;
+    return `操作被拒绝（409）：${
+      message || "请求已过期或已被处理"
+    }。请刷新后重试。`;
   }
   if (status === 412) {
-    return `项目版本已更新（412）：${message || "revision 不匹配"}。请刷新后重试。`;
+    return `项目版本已更新（412）：${
+      message || "revision 不匹配"
+    }。请刷新后重试。`;
   }
   return message || "操作失败，请稍后重试。";
 }
@@ -464,10 +474,7 @@ export function ConversationPanel({
               <h2>还没有活动对话</h2>
             </div>
           </div>
-          <p>
-            AI
-            会基于项目事实与你自由对话，澄清和行动建议也会出现在这里。
-          </p>
+          <p>AI 会基于项目事实与你自由对话，澄清和行动建议也会出现在这里。</p>
           <Button
             disabled={creating}
             onClick={() => void startSession()}
@@ -532,7 +539,10 @@ export function ConversationPanel({
           </div>
 
           {clarifications.length > 1 ? (
-            <p className="conversation-more-questions" role="status">
+            <p
+              className="conversation-more-questions"
+              role="status"
+            >
               还有 {clarifications.length - 1}{" "}
               个问题待确认，回答完上面的问题后会依次出现。
             </p>
@@ -597,13 +607,16 @@ export function ConversationPanel({
             <span>{openProposals.length}</span>
           </div>
           {openProposals.map((proposal) => (
-            <div className="action-block" key={proposal.id}>
+            <div
+              className="action-block"
+              key={proposal.id}
+            >
               <div className="action-title">
                 <Check className="h-5 w-5" />
                 <div>
                   <small>
                     {proposal.kind
-                      ? (PROPOSAL_KIND_LABELS[proposal.kind] ?? "行动提案")
+                      ? PROPOSAL_KIND_LABELS[proposal.kind] ?? "行动提案"
                       : "行动提案"}
                   </small>
                   <h2>{proposal.summary ?? proposal.title ?? "未命名提案"}</h2>
@@ -618,7 +631,8 @@ export function ConversationPanel({
               {proposal.kind === "start_research" &&
               researchPlanPreview(proposal.proposed_payload).length ? (
                 <p className="run-callout">
-                  计划边界：{researchPlanPreview(proposal.proposed_payload).join("；")}
+                  计划边界：
+                  {researchPlanPreview(proposal.proposed_payload).join("；")}
                 </p>
               ) : null}
               <div className="proposal-actions">

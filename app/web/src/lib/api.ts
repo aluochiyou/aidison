@@ -154,7 +154,10 @@ class AidisonClient {
   async discoverInitialModules(
     projectId: string,
     revision: number,
-    body: { planning_brief?: string; structure_depth?: "focused" | "standard" | "deep" } = {}
+    body: {
+      planning_brief?: string;
+      structure_depth?: "focused" | "standard" | "deep";
+    } = {}
   ) {
     return this.req<{
       reshape_proposal: import("@/app/types/types").ProjectReshapeProposal;
@@ -175,11 +178,15 @@ class AidisonClient {
     return this.req<{
       selection_lock: import("@/app/types/types").SelectionLock;
       project_revision: number;
-    }>("POST", `/api/projects/${projectId}/modules/${moduleId}/selection-locks`, {
-      body,
-      prefix: "selection-lock",
-      ifMatch: revision,
-    });
+    }>(
+      "POST",
+      `/api/projects/${projectId}/modules/${moduleId}/selection-locks`,
+      {
+        body,
+        prefix: "selection-lock",
+        ifMatch: revision,
+      }
+    );
   }
 
   async unlockSelectionLock(lockId: string, revision: number) {
@@ -221,7 +228,11 @@ class AidisonClient {
     });
   }
 
-  async saveSolutionSnapshot(projectId: string, revision: number, label: string) {
+  async saveSolutionSnapshot(
+    projectId: string,
+    revision: number,
+    label: string
+  ) {
     return this.req<{
       solution_snapshot: import("@/app/types/types").SolutionSnapshot;
       project_revision: number;
@@ -590,7 +601,9 @@ class AidisonClient {
     limit = 10
   ): Promise<import("@/app/types/types").ShoppingOfferRecommendations> {
     const res = await fetch(
-      `${this.baseUrl}/api/projects/${projectId}/shopping/recommendations/${encodeURIComponent(
+      `${
+        this.baseUrl
+      }/api/projects/${projectId}/shopping/recommendations/${encodeURIComponent(
         bomLineId
       )}?limit=${limit}`
     );
@@ -654,7 +667,10 @@ class AidisonClient {
   }
 
   // GET /api/projects/{projectId}/artifacts/{id}/content
-  async getArtifactContent(projectId: string, artifactId: string): Promise<string> {
+  async getArtifactContent(
+    projectId: string,
+    artifactId: string
+  ): Promise<string> {
     const res = await fetch(
       `${this.baseUrl}/api/projects/${projectId}/artifacts/${artifactId}/content`
     );

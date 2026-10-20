@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const dir = dirname(fileURLToPath(import.meta.url));
-const component = readFileSync(join(dir, "RequirementsRevisionForm.tsx"), "utf8");
+const component = readFileSync(
+  join(dir, "RequirementsRevisionForm.tsx"),
+  "utf8"
+);
 const css = readFileSync(join(dir, "../globals.css"), "utf8");
 const types = readFileSync(join(dir, "../types/types.ts"), "utf8");
 const api = readFileSync(join(dir, "../../lib/api.ts"), "utf8");
@@ -67,7 +70,11 @@ test("初始手填表单不写入虚构的资源、偏好、未知项或约束",
   ]) {
     assert.ok(!component.includes(value), `初始表单不应预填：${value}`);
   }
-  assert.ok(component.includes("available_resources: requirement?.available_resources ?? []"));
+  assert.ok(
+    component.includes(
+      "available_resources: requirement?.available_resources ?? []"
+    )
+  );
 });
 
 test("API 边界与类型同步新增三个可选背景字段，兼容旧 snapshot 缺失", () => {
@@ -89,8 +96,9 @@ test("API 边界与类型同步新增三个可选背景字段，兼容旧 snapsh
 
 test("读取 draft 时按别名回退旧字段名，缺失取空字符串", () => {
   for (const key of ["usage_context", "budget_context", "skill_context"]) {
-    assert.ok(
-      component.includes(`${key}: ["${key}"`),
+    assert.match(
+      component,
+      new RegExp(`${key}:\\s*\\[\\s*"${key}"`),
       `背景字段别名表应以 ${key} 为规范键名`
     );
   }

@@ -50,7 +50,8 @@ export function CreateProjectDialog({
         <DialogHeader>
           <DialogTitle>创建工程项目</DialogTitle>
           <DialogDescription>
-            填写作品名称和最初想法。创建后，AI 会先问少量关键问题；任何工作计划仍需你批准才会执行。
+            填写作品名称和最初想法。创建后，AI
+            会先问少量关键问题；任何工作计划仍需你批准才会执行。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">

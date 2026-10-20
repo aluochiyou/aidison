@@ -154,10 +154,7 @@ function humanizeActionTitle(kind: string, title: string): string {
 }
 
 /** 把后端的开发黑话错误说明，替换成用户可理解的提示。 */
-function humanizeActionExplanation(
-  kind: string,
-  explanation: string
-): string {
+function humanizeActionExplanation(kind: string, explanation: string): string {
   if (kind === "inspect_failure") {
     return "AI 在查找资料时遇到问题，这次没有写入任何修改。你可以查看工作记录了解详情，或重新发起。";
   }
@@ -188,10 +185,7 @@ const COORDINATION_MODE_LABELS: Record<string, string> = {
   escalate: "可上报",
 };
 
-function humanizeList(
-  items: string[],
-  labels: Record<string, string>
-): string {
+function humanizeList(items: string[], labels: Record<string, string>): string {
   if (!items.length) return "无";
   return items.map((item) => labels[item] ?? item).join("、");
 }
@@ -360,7 +354,10 @@ function ProjectPulse({
     ["queued", "running"].includes(item.state)
   );
   const affectedModuleNames = workspace.attention.affected_module_ids
-    .map((moduleId) => workspace.modules.find((module) => module.id === moduleId)?.name)
+    .map(
+      (moduleId) =>
+        workspace.modules.find((module) => module.id === moduleId)?.name
+    )
     .filter((name): name is string => Boolean(name));
   return (
     <section
@@ -453,13 +450,20 @@ function ResearchAction({
   const [maxConcurrency, setMaxConcurrency] = useState(3);
   // Leave ceilings undefined until the user sets them: the API freezes the
   // permissive defaults into the reviewable plan.
-  const [maxTokenBudget, setMaxTokenBudget] = useState<number | undefined>(undefined);
-  const [maxDurationSeconds, setMaxDurationSeconds] = useState<number | undefined>(undefined);
-  const [researchDepth, setResearchDepth] = useState<"focused" | "standard" | "deep">("deep");
+  const [maxTokenBudget, setMaxTokenBudget] = useState<number | undefined>(
+    undefined
+  );
+  const [maxDurationSeconds, setMaxDurationSeconds] = useState<
+    number | undefined
+  >(undefined);
+  const [researchDepth, setResearchDepth] = useState<
+    "focused" | "standard" | "deep"
+  >("deep");
   const [sourceStrategy, setSourceStrategy] = useState<
     "auto" | "primary" | "independent" | "official" | "mixed"
   >("auto");
-  const [requiresIndependentVerification, setRequiresIndependentVerification] = useState(true);
+  const [requiresIndependentVerification, setRequiresIndependentVerification] =
+    useState(true);
   const [objective, setObjective] = useState("");
   const [selectedModuleIds, setSelectedModuleIds] = useState<string[]>(() =>
     snapshot.modules.map((module) => module.id)
@@ -472,7 +476,8 @@ function ResearchAction({
     .filter((plan) => plan.allowed_coordination_modes.includes("decompose"))
     .sort(
       (left, right) =>
-        left.created_at.localeCompare(right.created_at) || left.id.localeCompare(right.id)
+        left.created_at.localeCompare(right.created_at) ||
+        left.id.localeCompare(right.id)
     )
     .at(-1);
   const approvedPlan =
@@ -524,10 +529,13 @@ function ResearchAction({
           maxDurationSeconds,
           requiresIndependentVerification,
           researchDepth,
-          sourceStrategy: sourceStrategy === "auto" ? undefined : sourceStrategy,
+          sourceStrategy:
+            sourceStrategy === "auto" ? undefined : sourceStrategy,
         }
       );
-      toast.success("AI 已生成可审查的研究策略，请确认范围、任务依赖和停止条件后再开始。");
+      toast.success(
+        "AI 已生成可审查的研究策略，请确认范围、任务依赖和停止条件后再开始。"
+      );
       await onDone();
     } catch (error) {
       toast.error(displayError(error, "无法生成研究执行范围"));
@@ -551,31 +559,38 @@ function ResearchAction({
       </p>
       {failedResearchRun?.latest_error ? (
         <p className="impact-meta">
-          上一次研究停止原因：{failedResearchRun.latest_error}。你可以据此调整研究重点、模块范围、
-          深度或 Token 预算，再生成新的待审核策略；不会复用旧 Run 的私有上下文。
+          上一次研究停止原因：{failedResearchRun.latest_error}
+          。你可以据此调整研究重点、模块范围、 深度或 Token
+          预算，再生成新的待审核策略；不会复用旧 Run 的私有上下文。
         </p>
       ) : null}
       <Button
         disabled={busy || latestPlanNeedsReview}
-        onClick={() => void (approvedPlan && !failedResearchRun ? start() : proposePlan())}
+        onClick={() =>
+          void (approvedPlan && !failedResearchRun ? start() : proposePlan())
+        }
       >
         <Bot className="h-4 w-4" />
         {busy
           ? "正在准备…"
           : latestPlanNeedsReview
-            ? "请先审核最新策略"
-            : approvedPlan
-            ? failedResearchRun
-              ? "生成新的查找计划"
-              : "开始查找资料"
-            : "先查看查找计划"}
+          ? "请先审核最新策略"
+          : approvedPlan
+          ? failedResearchRun
+            ? "生成新的查找计划"
+            : "开始查找资料"
+          : "先查看查找计划"}
       </Button>
-      <div className="research-plan-settings" aria-label="研究计划预算设置">
-        <p>
+      <div
+        className="research-plan-settings"
+        aria-label="研究计划预算设置"
+      >
+        <p className="research-plan-note">
           修改以下边界会生成一份新的待审核策略，不会自动启动研究，也不会改写当前项目事实。
           已批准的旧计划仍保留在审计记录中。
         </p>
-          <label>
+        <div className="research-plan-grid">
+          <label className="research-field research-field-wide">
             研究重点（可选）
             <textarea
               value={objective}
@@ -584,36 +599,40 @@ function ResearchAction({
               onChange={(event) => setObjective(event.target.value)}
             />
           </label>
-          <fieldset>
+          <fieldset className="research-scope research-field-wide">
             <legend>本次研究范围</legend>
-            {snapshot.modules.map((module) => (
-              <label key={module.id}>
-                <input
-                  type="checkbox"
-                  checked={selectedModuleIds.includes(module.id)}
-                  onChange={(event) =>
-                    setSelectedModuleIds((current) =>
-                      event.target.checked
-                        ? [...new Set([...current, module.id])]
-                        : current.filter((item) => item !== module.id)
-                    )
-                  }
-                />
-                {module.name}
-              </label>
-            ))}
+            <div className="research-scope-options">
+              {snapshot.modules.map((module) => (
+                <label key={module.id}>
+                  <input
+                    type="checkbox"
+                    checked={selectedModuleIds.includes(module.id)}
+                    onChange={(event) =>
+                      setSelectedModuleIds((current) =>
+                        event.target.checked
+                          ? [...new Set([...current, module.id])]
+                          : current.filter((item) => item !== module.id)
+                      )
+                    }
+                  />
+                  {module.name}
+                </label>
+              ))}
+            </div>
           </fieldset>
-          <label>
+          <label className="research-field">
             最大并发
             <input
               type="number"
               min={1}
               max={16}
               value={maxConcurrency}
-              onChange={(event) => setMaxConcurrency(Number(event.target.value))}
+              onChange={(event) =>
+                setMaxConcurrency(Number(event.target.value))
+              }
             />
           </label>
-          <label>
+          <label className="research-field">
             Token 预算
             <input
               type="number"
@@ -628,7 +647,7 @@ function ResearchAction({
             />
             <small>留空时默认 200,000,000；实际用量按调用结算。</small>
           </label>
-          <label>
+          <label className="research-field">
             最长研究时长（秒）
             <input
               type="number"
@@ -641,26 +660,37 @@ function ResearchAction({
                 setMaxDurationSeconds(next === "" ? undefined : Number(next));
               }}
             />
-            <small>留空时默认 36,000 秒（10 小时）；从 Worker 首次开始执行后计时。</small>
+            <small>
+              留空时默认 36,000 秒（10 小时）；从 Worker 首次开始执行后计时。
+            </small>
           </label>
-          <label>
+          <label className="research-field research-field-wide">
             研究深度
             <select
               value={researchDepth}
-              onChange={(event) => setResearchDepth(event.target.value as typeof researchDepth)}
+              onChange={(event) =>
+                setResearchDepth(event.target.value as typeof researchDepth)
+              }
             >
-              <option value="focused">聚焦：2 个查询 / 2 份来源 / 最多 1 轮补题</option>
-              <option value="standard">标准：3 个查询 / 3 份来源 / 最多 2 轮补题</option>
+              <option value="focused">
+                聚焦：2 个查询 / 2 份来源 / 最多 1 轮补题
+              </option>
+              <option value="standard">
+                标准：3 个查询 / 3 份来源 / 最多 2 轮补题
+              </option>
               <option value="deep">
-                深度：按 Coverage 与研究视角持续扩展 / 关键结论至少 2 份不同来源文档 / 最长 10 小时
+                深度：按 Coverage 与研究视角持续扩展 / 关键结论至少 2
+                份不同来源文档 / 最长 10 小时
               </option>
             </select>
           </label>
-          <label>
+          <label className="research-field research-field-wide">
             来源策略
             <select
               value={sourceStrategy}
-              onChange={(event) => setSourceStrategy(event.target.value as typeof sourceStrategy)}
+              onChange={(event) =>
+                setSourceStrategy(event.target.value as typeof sourceStrategy)
+              }
             >
               <option value="auto">由 AI 根据任务选择（审核时展示）</option>
               <option value="official">优先官方资料</option>
@@ -670,21 +700,27 @@ function ResearchAction({
             </select>
             <small>明确选择后会被冻结进策略，AI 不能在执行时自行替换。</small>
           </label>
-          <label>
+          <label className="research-check research-field-wide">
             <input
               type="checkbox"
               checked={requiresIndependentVerification}
-              onChange={(event) => setRequiresIndependentVerification(event.target.checked)}
+              onChange={(event) =>
+                setRequiresIndependentVerification(event.target.checked)
+              }
             />
             对关键结论要求独立核验（深度档默认开启；会增加研究时间与模型成本）
           </label>
-        <Button
-          variant="outline"
-          disabled={busy}
-          onClick={() => void proposePlan()}
-        >
-          {latestResearchPlan ? "按新边界生成策略草案" : "生成策略草案"}
-        </Button>
+          <div className="research-plan-actions research-field-wide">
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => void proposePlan()}
+            >
+              {latestResearchPlan ? "按新边界生成策略草案" : "生成策略草案"}
+            </Button>
+            <small>生成后先进入执行边界审核；未批准前不会创建研究 Run。</small>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1030,7 +1066,8 @@ function ReviewExecutionPlanAction({
         snapshot.project.revision,
         decision,
         plan.scope_hash,
-        decision === "approved" && plan.allowed_coordination_modes.includes("decompose")
+        decision === "approved" &&
+          plan.allowed_coordination_modes.includes("decompose")
       );
       toast.success(
         decision === "approved"
@@ -1044,7 +1081,9 @@ function ReviewExecutionPlanAction({
       toast.error(
         displayError(
           error,
-          decision === "approved" ? "无法批准这份执行计划" : "无法拒绝这份执行计划"
+          decision === "approved"
+            ? "无法批准这份执行计划"
+            : "无法拒绝这份执行计划"
         )
       );
     } finally {
@@ -1060,23 +1099,41 @@ function ReviewExecutionPlanAction({
           <h2>{plan.objective}</h2>
         </div>
       </div>
-      <p>{plan.work_summary.length ? plan.work_summary.join("；") : "没有额外说明。"}</p>
       <p>
-        研究深度：{plan.research_depth === "focused" ? "聚焦" : plan.research_depth === "deep" ? "深度" : "标准"}
-        ；并发上限：{plan.max_concurrency}；Token 预算：{plan.max_token_budget}；最长时长：
+        {plan.work_summary.length
+          ? plan.work_summary.join("；")
+          : "没有额外说明。"}
+      </p>
+      <p>
+        研究深度：
+        {plan.research_depth === "focused"
+          ? "聚焦"
+          : plan.research_depth === "deep"
+          ? "深度"
+          : "标准"}
+        ；并发上限：{plan.max_concurrency}；Token 预算：{plan.max_token_budget}
+        ；最长时长：
         {plan.max_duration_seconds.toLocaleString()} 秒
-        {plan.research_depth === "deep" ? "；关键结论至少需要两份不同来源文档" : ""}
-        {plan.requires_independent_verification ? "；关键结论独立核验默认开启" : ""}
+        {plan.research_depth === "deep"
+          ? "；关键结论至少需要两份不同来源文档"
+          : ""}
+        {plan.requires_independent_verification
+          ? "；关键结论独立核验默认开启"
+          : ""}
       </p>
       {plan.research_strategy ? (
-        <section className="execution-plan-strategy" aria-label="AI 研究策略">
+        <section
+          className="execution-plan-strategy"
+          aria-label="AI 研究策略"
+        >
           <h3>AI 研究策略（批准后冻结）</h3>
           <p>{plan.research_strategy.summary}</p>
           {plan.research_strategy.decision_notes.length ? (
             <p>决策取舍：{plan.research_strategy.decision_notes.join("；")}</p>
           ) : null}
           <p>
-            检索偏好（不替代证据准入）：{plan.research_strategy.source_strategy}；研究任务：
+            检索偏好（不替代证据准入）：{plan.research_strategy.source_strategy}
+            ；研究任务：
             {plan.research_strategy.tasks.length} 个
           </p>
           <ol>
@@ -1084,7 +1141,10 @@ function ReviewExecutionPlanAction({
               <li key={task.task_key}>
                 <strong>{task.title}</strong>：{task.objective}
                 <small>
-                  依赖：{task.depends_on_task_keys.length ? task.depends_on_task_keys.join("、") : "无"}
+                  依赖：
+                  {task.depends_on_task_keys.length
+                    ? task.depends_on_task_keys.join("、")
+                    : "无"}
                   ；预期输出：{task.expected_outputs.join("、")}
                   ；停止条件：{task.stop_conditions.join("；")}
                 </small>
@@ -1095,7 +1155,9 @@ function ReviewExecutionPlanAction({
             ))}
           </ol>
           {plan.research_strategy.deferred_questions.length ? (
-            <p>暂缓问题：{plan.research_strategy.deferred_questions.join("；")}</p>
+            <p>
+              暂缓问题：{plan.research_strategy.deferred_questions.join("；")}
+            </p>
           ) : null}
           {plan.research_strategy.risk_notes.length ? (
             <p>风险提示：{plan.research_strategy.risk_notes.join("；")}</p>
@@ -1109,7 +1171,10 @@ function ReviewExecutionPlanAction({
         <article>
           <small>协调模式</small>
           <strong>
-            {humanizeList(plan.allowed_coordination_modes, COORDINATION_MODE_LABELS)}
+            {humanizeList(
+              plan.allowed_coordination_modes,
+              COORDINATION_MODE_LABELS
+            )}
           </strong>
         </article>
         <article>
@@ -1126,7 +1191,9 @@ function ReviewExecutionPlanAction({
         </article>
         <article>
           <small>允许工具</small>
-          <strong>{humanizeList(plan.allowed_tool_classes, TOOL_CLASS_LABELS)}</strong>
+          <strong>
+            {humanizeList(plan.allowed_tool_classes, TOOL_CLASS_LABELS)}
+          </strong>
         </article>
         <article>
           <small>允许副作用</small>
@@ -1238,7 +1305,9 @@ function ReviewRequirementsChangeAction({
         <article>
           <small>偏好</small>
           <strong>
-            {proposal.preferences.length ? proposal.preferences.join("、") : "无"}
+            {proposal.preferences.length
+              ? proposal.preferences.join("、")
+              : "无"}
           </strong>
         </article>
         <article>
@@ -1325,7 +1394,9 @@ function ReviewReshapeAction({
       toast.error(
         displayError(
           error,
-          decision === "applied" ? "无法应用这份结构草案" : "无法拒绝这份结构草案"
+          decision === "applied"
+            ? "无法应用这份结构草案"
+            : "无法拒绝这份结构草案"
         )
       );
     } finally {
@@ -1397,9 +1468,9 @@ function DiscoverInitialModulesAction({
 }) {
   const [busy, setBusy] = useState(false);
   const [planningBrief, setPlanningBrief] = useState("");
-  const [structureDepth, setStructureDepth] = useState<"focused" | "standard" | "deep">(
-    "deep"
-  );
+  const [structureDepth, setStructureDepth] = useState<
+    "focused" | "standard" | "deep"
+  >("deep");
   const discover = async () => {
     setBusy(true);
     try {
@@ -1444,14 +1515,19 @@ function DiscoverInitialModulesAction({
         结构思考深度
         <select
           value={structureDepth}
-          onChange={(event) => setStructureDepth(event.target.value as typeof structureDepth)}
+          onChange={(event) =>
+            setStructureDepth(event.target.value as typeof structureDepth)
+          }
         >
           <option value="focused">聚焦：最少必要边界</option>
           <option value="standard">标准：按接口和验收条件分层</option>
           <option value="deep">深度：额外审视耦合、失效隔离与依赖方向</option>
         </select>
       </label>
-      <Button disabled={busy} onClick={() => void discover()}>
+      <Button
+        disabled={busy}
+        onClick={() => void discover()}
+      >
         {busy ? "正在生成结构草案…" : "让 AI 生成模块结构"}
       </Button>
     </div>
@@ -1490,7 +1566,9 @@ function ReviewSpendBudgetAction({
       toast.error(
         displayError(
           error,
-          decision === "applied" ? "无法批准这份预算提案" : "无法拒绝这份预算提案"
+          decision === "applied"
+            ? "无法批准这份预算提案"
+            : "无法拒绝这份预算提案"
         )
       );
     } finally {
@@ -1542,7 +1620,8 @@ function ReviewSpendBudgetAction({
         </div>
       ) : null}
       <p className="impact-meta">
-        批准会创建新的 SpendBudgetRevision 并取代旧上限；拒绝不改写任何项目事实。
+        批准会创建新的 SpendBudgetRevision
+        并取代旧上限；拒绝不改写任何项目事实。
       </p>
       {proposal.status === "proposed" ? (
         <div className="proposal-actions">
@@ -1610,9 +1689,7 @@ function ReviewChangeImpactAction({
         </article>
         <article>
           <small>TRANSITIVE</small>
-          <strong>
-            {moduleNames(preview.transitive_affected_module_ids)}
-          </strong>
+          <strong>{moduleNames(preview.transitive_affected_module_ids)}</strong>
         </article>
         <article className="is-reused">
           <small>UNCHANGED</small>
@@ -1665,7 +1742,11 @@ function ActionNotice({
         <Bot className="h-5 w-5" />
         <div>
           <small>AI 需要你处理</small>
-          <h2>{action ? humanizeActionTitle(action.kind, action.title) : "等待项目状态同步"}</h2>
+          <h2>
+            {action
+              ? humanizeActionTitle(action.kind, action.title)
+              : "等待项目状态同步"}
+          </h2>
         </div>
       </div>
       <p>
@@ -1690,7 +1771,11 @@ function ActionNotice({
   );
 }
 
-function ClarifyHint({ onOpenRequirementsForm }: { onOpenRequirementsForm: () => void }) {
+function ClarifyHint({
+  onOpenRequirementsForm,
+}: {
+  onOpenRequirementsForm: () => void;
+}) {
   return (
     <div className="action-block">
       <div className="action-title">
@@ -1703,7 +1788,10 @@ function ClarifyHint({ onOpenRequirementsForm }: { onOpenRequirementsForm: () =>
       <p>
         你可以直接填写并确认需求；也可以先和 AI 对话，让它整理出草案后再确认。
       </p>
-      <Button variant="outline" onClick={onOpenRequirementsForm}>
+      <Button
+        variant="outline"
+        onClick={onOpenRequirementsForm}
+      >
         填写需求单
       </Button>
     </div>
@@ -1752,7 +1840,12 @@ function NextAction({
     case "clarify_requirements":
       return <ClarifyHint onOpenRequirementsForm={onOpenRequirementsForm} />;
     case "discover_initial_modules":
-      return <DiscoverInitialModulesAction snapshot={snapshot} onDone={onDone} />;
+      return (
+        <DiscoverInitialModulesAction
+          snapshot={snapshot}
+          onDone={onDone}
+        />
+      );
     case "start_research":
       return (
         <ResearchAction
@@ -1832,9 +1925,7 @@ function NextAction({
     }
     case "review_execution_plan": {
       const planId = actionSourceId(action, "execution_plan");
-      const plan = snapshot.execution_plans?.find(
-        (item) => item.id === planId
-      );
+      const plan = snapshot.execution_plans?.find((item) => item.id === planId);
       return plan ? (
         <ReviewExecutionPlanAction
           snapshot={snapshot}
@@ -2104,7 +2195,10 @@ export function ProjectConsole({
   const [consolePage, setConsolePage] = useState<"activity" | "workbench">(
     "activity"
   );
-  const [requirementsDraft, setRequirementsDraft] = useState<Record<string, unknown> | null>(null);
+  const [requirementsDraft, setRequirementsDraft] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
   // 用户显式选择“跳过 AI，手动填写”时置为 true：绕过澄清门禁直接展示需求表单。
   const [manualRequirements, setManualRequirements] = useState(false);
   const { data, error, isLoading, mutate } = useSWR(
@@ -2283,7 +2377,9 @@ export function ProjectConsole({
               <ConversationPanel
                 projectId={project.id}
                 projectRevision={project.revision}
-                hasApprovedRequirements={Boolean(project.active_requirement_revision_id)}
+                hasApprovedRequirements={Boolean(
+                  project.active_requirement_revision_id
+                )}
                 onSnapshotChanged={refresh}
                 onUseRequirementsDraft={(draft) => {
                   setRequirementsDraft(draft);
@@ -2362,68 +2458,73 @@ export function ProjectConsole({
               />
 
               <section className="solution-board">
-            <div className="panel-heading">
-              <div>
-                <small>IMMUTABLE VERSIONS</small>
-                <h2>方案版本</h2>
-              </div>
-              <span>{snapshot.solutions.length}</span>
-            </div>
-            <div className="version-line">
-              {snapshot.solutions.map((solution) => {
-                const previous = solution.previous_version_id
-                  ? (() => {
-                      const sid = new Map(
-                        snapshot.solutions.map((s) => [s.id, s])
-                      );
-                      return sid.get(solution.previous_version_id);
-                    })()
-                  : undefined;
-                const moduleById = new Map(
-                  snapshot.modules.map((m) => [m.id, m])
-                );
-                const impactByBase = new Map(
-                  snapshot.impacts.map((i) => [i.base_solution_version_id, i])
-                );
-                return (
-                  <SolutionVersionCard
-                    key={solution.id}
-                    solution={solution}
-                    previous={previous}
-                    impact={
-                      previous ? impactByBase.get(previous.id) : undefined
-                    }
-                    moduleById={moduleById}
-                    hasPatchSet={snapshot.patch_sets.some(
-                      (patch) =>
-                        patch.base_solution_version_id ===
-                        solution.previous_version_id
-                    )}
-                  />
-                );
-              })}
-              {!snapshot.solutions.length ? (
-                <p className="empty-copy">用户批准决策后才能冻结第一版方案。</p>
-              ) : null}
-            </div>
-          </section>
+                <div className="panel-heading">
+                  <div>
+                    <small>IMMUTABLE VERSIONS</small>
+                    <h2>方案版本</h2>
+                  </div>
+                  <span>{snapshot.solutions.length}</span>
+                </div>
+                <div className="version-line">
+                  {snapshot.solutions.map((solution) => {
+                    const previous = solution.previous_version_id
+                      ? (() => {
+                          const sid = new Map(
+                            snapshot.solutions.map((s) => [s.id, s])
+                          );
+                          return sid.get(solution.previous_version_id);
+                        })()
+                      : undefined;
+                    const moduleById = new Map(
+                      snapshot.modules.map((m) => [m.id, m])
+                    );
+                    const impactByBase = new Map(
+                      snapshot.impacts.map((i) => [
+                        i.base_solution_version_id,
+                        i,
+                      ])
+                    );
+                    return (
+                      <SolutionVersionCard
+                        key={solution.id}
+                        solution={solution}
+                        previous={previous}
+                        impact={
+                          previous ? impactByBase.get(previous.id) : undefined
+                        }
+                        moduleById={moduleById}
+                        hasPatchSet={snapshot.patch_sets.some(
+                          (patch) =>
+                            patch.base_solution_version_id ===
+                            solution.previous_version_id
+                        )}
+                      />
+                    );
+                  })}
+                  {!snapshot.solutions.length ? (
+                    <p className="empty-copy">
+                      用户批准决策后才能冻结第一版方案。
+                    </p>
+                  ) : null}
+                </div>
+              </section>
 
-          <ViewShell
-            snapshot={snapshot}
-            view={view}
-            moduleId={moduleId}
-            artifactId={artifactId}
-            decisionId={decisionId}
-            solutionVersionId={solutionVersionId}
-            onSetView={(v: ConsoleView) => setView(v)}
-            onSelectModule={selectModule}
-            onSelectArtifact={selectArtifact}
-            onSelectDecision={selectDecision}
-            onSelectSolutionVersion={selectSolutionVersion}
-            onClearOverlay={clearOverlay}
-            onRefresh={refresh}
-            developerMode={developerMode}
-          />
+              <ViewShell
+                snapshot={snapshot}
+                view={view}
+                moduleId={moduleId}
+                artifactId={artifactId}
+                decisionId={decisionId}
+                solutionVersionId={solutionVersionId}
+                onSetView={(v: ConsoleView) => setView(v)}
+                onSelectModule={selectModule}
+                onSelectArtifact={selectArtifact}
+                onSelectDecision={selectDecision}
+                onSelectSolutionVersion={selectSolutionVersion}
+                onClearOverlay={clearOverlay}
+                onRefresh={refresh}
+                developerMode={developerMode}
+              />
             </>
           )}
         </section>
@@ -2451,7 +2552,9 @@ export function ProjectConsole({
                       : "正在准备工作范围"}
                   </p>
                   {item.partial_units ? (
-                    <small>{item.partial_units} 个子任务仅部分覆盖，仍待补题或核验</small>
+                    <small>
+                      {item.partial_units} 个子任务仅部分覆盖，仍待补题或核验
+                    </small>
                   ) : null}
                   {item.failed_units ? (
                     <small>{item.failed_units} 个子任务需要检查</small>
@@ -2475,40 +2578,41 @@ export function ProjectConsole({
                 查看 Agent 与事件审计
               </summary>
               <div className="advanced-audit-body">
-                {(snapshot.agent_run_budget_accounts ?? []).toReversed().map((budget) => (
-                  <div
-                    className="runtime-stack"
-                    key={budget.id}
-                  >
-                    <article>
-                      <div>
-                        <strong>Run budget</strong>
-                        <StatusTag status={budget.state} />
-                      </div>
-                      <small>
-                        tokens {budget.token_consumed.toLocaleString()} used +{" "}
-                        {budget.token_reserved.toLocaleString()} reserved /{" "}
-                        {budget.token_cap.toLocaleString()}
-                        {" · "}tools {budget.tool_calls_consumed} used +{" "}
-                        {budget.tool_calls_reserved} reserved /{" "}
-                        {budget.tool_call_cap}
-                      </small>
-                    </article>
-                  </div>
-                ))}
+                {(snapshot.agent_run_budget_accounts ?? [])
+                  .toReversed()
+                  .map((budget) => (
+                    <div
+                      className="runtime-stack"
+                      key={budget.id}
+                    >
+                      <article>
+                        <div>
+                          <strong>Run budget</strong>
+                          <StatusTag status={budget.state} />
+                        </div>
+                        <small>
+                          tokens {budget.token_consumed.toLocaleString()} used +{" "}
+                          {budget.token_reserved.toLocaleString()} reserved /{" "}
+                          {budget.token_cap.toLocaleString()}
+                          {" · "}tools {budget.tool_calls_consumed} used +{" "}
+                          {budget.tool_calls_reserved} reserved /{" "}
+                          {budget.tool_call_cap}
+                        </small>
+                      </article>
+                    </div>
+                  ))}
                 <div className="runtime-stack">
                   {(snapshot.agent_runs ?? []).toReversed().map((run) => {
                     return (
                       <article key={run.id}>
                         <div>
                           <Bot className="h-4 w-4" />
-                          <strong>
-                            {run.kind} AgentRun
-                          </strong>
+                          <strong>{run.kind} AgentRun</strong>
                           <StatusTag status={run.status} />
                         </div>
                         <small>
-                          basis r{run.basis_project_revision} · {shortId(run.id)}
+                          basis r{run.basis_project_revision} ·{" "}
+                          {shortId(run.id)}
                         </small>
                       </article>
                     );

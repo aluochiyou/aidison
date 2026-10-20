@@ -20,6 +20,8 @@ test("运行中心接入唯一的暂停、继续与运行态引导 API", () => {
 
 test("没有全模块已准入证据的研究预览不能被采纳", () => {
   assert.ok(runCenterSrc.includes("unsupported_module_ids"));
-  assert.ok(runCenterSrc.includes("!decision.proposal_preview?.adoption_allowed"));
+  assert.ok(
+    runCenterSrc.includes("!decision.proposal_preview?.adoption_allowed")
+  );
   assert.ok(runCenterSrc.includes("证据不足，无法采纳"));
 });

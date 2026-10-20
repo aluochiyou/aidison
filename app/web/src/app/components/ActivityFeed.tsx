@@ -48,8 +48,7 @@ const KIND_LABELS: Record<string, string> = {
 
 function humanizeWarning(warning: string): string | null {
   const labels: Record<string, string> = {
-    runtime_module_relation_unavailable:
-      "模块关系图暂时不可用，稍后可重试。",
+    runtime_module_relation_unavailable: "模块关系图暂时不可用，稍后可重试。",
     runtime_budget_exhausted: "本轮 AI 预算已用完，可以稍后再试。",
     runtime_worker_offline: "AI 工作进程离线，暂时无法运行研究任务。",
   };
@@ -111,7 +110,10 @@ export function ActivityFeed({
   }, [snapshot]);
 
   const latestWork = useMemo(
-    () => [...(workspace?.work ?? [])].sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    () =>
+      [...(workspace?.work ?? [])].sort((a, b) =>
+        b.updated_at.localeCompare(a.updated_at)
+      ),
     [workspace]
   );
 
@@ -158,20 +160,30 @@ export function ActivityFeed({
   );
 
   const plans = useMemo(
-    () => [...(snapshot.execution_plans ?? [])].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    () =>
+      [...(snapshot.execution_plans ?? [])].sort((a, b) =>
+        b.created_at.localeCompare(a.created_at)
+      ),
     [snapshot.execution_plans]
   );
 
   const planById = useMemo(
-    () => new Map((snapshot.execution_plans ?? []).map((plan) => [plan.id, plan])),
+    () =>
+      new Map((snapshot.execution_plans ?? []).map((plan) => [plan.id, plan])),
     [snapshot.execution_plans]
   );
 
   return (
     <div className="activity-feed">
       {/* AI 状态条 */}
-      <section className="activity-status-strip" aria-label="AI 当前状态">
-        <div className="activity-status-avatar" aria-hidden="true">
+      <section
+        className="activity-status-strip"
+        aria-label="AI 当前状态"
+      >
+        <div
+          className="activity-status-avatar"
+          aria-hidden="true"
+        >
           <Bot className="h-5 w-5" />
         </div>
         <div className="activity-status-copy">
@@ -187,22 +199,25 @@ export function ActivityFeed({
         >
           {connected ? "实时更新中" : "重新连接中…"}
         </span>
-        {workspace?.warnings?.length ? (
-          (() => {
-            const message = humanizeWarning(workspace.warnings[0]);
-            return message ? (
-              <div className="activity-status-warning">
-                <CircleAlert className="h-4 w-4" />
-                <span>{message}</span>
-              </div>
-            ) : null;
-          })()
-        ) : null}
+        {workspace?.warnings?.length
+          ? (() => {
+              const message = humanizeWarning(workspace.warnings[0]);
+              return message ? (
+                <div className="activity-status-warning">
+                  <CircleAlert className="h-4 w-4" />
+                  <span>{message}</span>
+                </div>
+              ) : null;
+            })()
+          : null}
       </section>
 
       {/* 当前待办：AI 在等你确认什么 */}
       {action ? (
-        <section className="activity-current" aria-label="需要你处理">
+        <section
+          className="activity-current"
+          aria-label="需要你处理"
+        >
           <div className="activity-turn-label">
             <span className="activity-turn-dot" />
             <small>{KIND_LABELS[action.kind] ?? "需要你处理"}</small>
@@ -213,15 +228,21 @@ export function ActivityFeed({
 
       {/* 工作状态：AI 正在做什么 */}
       {latestWork.length ? (
-        <section className="activity-group" aria-label="AI 工作进度">
+        <section
+          className="activity-group"
+          aria-label="AI 工作进度"
+        >
           <div className="activity-group-head">
-            <Search className="h-4 w-4" aria-hidden="true" />
+            <Search
+              className="h-4 w-4"
+              aria-hidden="true"
+            />
             <strong>AI 正在做什么</strong>
           </div>
           <div className="activity-work-list">
             {latestWork.map((work) => {
               const plan = work.run_id
-                ? (planById.get(work.run_id) ?? planById.get(work.kind))
+                ? planById.get(work.run_id) ?? planById.get(work.kind)
                 : undefined;
               const label =
                 plan?.objective ??
@@ -241,7 +262,10 @@ export function ActivityFeed({
                   ? 0
                   : null;
               return (
-                <article className="activity-work-item" key={work.run_id}>
+                <article
+                  className="activity-work-item"
+                  key={work.run_id}
+                >
                   <div className="activity-work-main">
                     <strong>{label}</strong>
                     <span>
@@ -266,9 +290,7 @@ export function ActivityFeed({
                     </div>
                   ) : null}
                   {work.latest_error && developerMode ? (
-                    <p className="activity-work-error">
-                      {work.latest_error}
-                    </p>
+                    <p className="activity-work-error">{work.latest_error}</p>
                   ) : null}
                 </article>
               );
@@ -278,9 +300,15 @@ export function ActivityFeed({
       ) : null}
 
       {/* 需求单 */}
-      <section className="activity-group" aria-label="需求单">
+      <section
+        className="activity-group"
+        aria-label="需求单"
+      >
         <div className="activity-group-head">
-          <FileCheck2 className="h-4 w-4" aria-hidden="true" />
+          <FileCheck2
+            className="h-4 w-4"
+            aria-hidden="true"
+          />
           <strong>需求单</strong>
         </div>
         {requirement ? (
@@ -332,19 +360,26 @@ export function ActivityFeed({
 
       {/* 执行计划 */}
       {plans.length ? (
-        <section className="activity-group" aria-label="AI 计划">
+        <section
+          className="activity-group"
+          aria-label="AI 计划"
+        >
           <div className="activity-group-head">
-            <GitBranch className="h-4 w-4" aria-hidden="true" />
+            <GitBranch
+              className="h-4 w-4"
+              aria-hidden="true"
+            />
             <strong>AI 的工作边界</strong>
           </div>
           <div className="activity-plan-list">
             {plans.map((plan) => (
-              <article className="activity-plan-item" key={plan.id}>
+              <article
+                className="activity-plan-item"
+                key={plan.id}
+              >
                 <div>
                   <strong>{plan.objective}</strong>
-                  <span>
-                    {plan.work_summary.join(" · ")}
-                  </span>
+                  <span>{plan.work_summary.join(" · ")}</span>
                 </div>
                 <small
                   className={
@@ -369,17 +404,30 @@ export function ActivityFeed({
 
       {/* 研究决策时间线 */}
       {recentDecisions.length ? (
-        <section className="activity-group" aria-label="研究决策">
+        <section
+          className="activity-group"
+          aria-label="研究决策"
+        >
           <div className="activity-group-head">
-            <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+            <ShieldCheck
+              className="h-4 w-4"
+              aria-hidden="true"
+            />
             <strong>AI 的研究结论</strong>
           </div>
           <div className="activity-decision-list">
             {recentDecisions.map((decision) => (
-              <article className="activity-decision-item" key={decision.id}>
+              <article
+                className="activity-decision-item"
+                key={decision.id}
+              >
                 <header>
                   <strong>{decision.question}</strong>
-                  <span className={decision.status === "approved" ? "tone-good" : "tone-live"}>
+                  <span
+                    className={
+                      decision.status === "approved" ? "tone-good" : "tone-live"
+                    }
+                  >
                     {decision.status === "approved" ? "已决定" : "待你选择"}
                   </span>
                 </header>
@@ -406,14 +454,23 @@ export function ActivityFeed({
 
       {/* 方案冻结 */}
       {recentSolutions.length ? (
-        <section className="activity-group" aria-label="已冻结方案">
+        <section
+          className="activity-group"
+          aria-label="已冻结方案"
+        >
           <div className="activity-group-head">
-            <PackageSearch className="h-4 w-4" aria-hidden="true" />
+            <PackageSearch
+              className="h-4 w-4"
+              aria-hidden="true"
+            />
             <strong>已冻结的方案</strong>
           </div>
           <div className="activity-solution-list">
             {recentSolutions.map((solution) => (
-              <article className="activity-solution-item" key={solution.id}>
+              <article
+                className="activity-solution-item"
+                key={solution.id}
+              >
                 <strong>V{solution.version}</strong>
                 <span>{formatTime(solution.created_at)}</span>
                 <small>
@@ -428,14 +485,23 @@ export function ActivityFeed({
 
       {/* 影响分析 */}
       {recentImpacts.length ? (
-        <section className="activity-group" aria-label="影响分析">
+        <section
+          className="activity-group"
+          aria-label="影响分析"
+        >
           <div className="activity-group-head">
-            <Wrench className="h-4 w-4" aria-hidden="true" />
+            <Wrench
+              className="h-4 w-4"
+              aria-hidden="true"
+            />
             <strong>影响分析</strong>
           </div>
           <div className="activity-impact-list">
             {recentImpacts.map((impact) => (
-              <article className="activity-impact-item" key={impact.id}>
+              <article
+                className="activity-impact-item"
+                key={impact.id}
+              >
                 <span
                   className={
                     impact.status === "approved" ? "tone-good" : "tone-live"
@@ -443,9 +509,7 @@ export function ActivityFeed({
                 >
                   {impact.status === "approved" ? "已批准" : "待确认"}
                 </span>
-                <strong>
-                  影响 {impact.affected_module_ids.length} 个模块
-                </strong>
+                <strong>影响 {impact.affected_module_ids.length} 个模块</strong>
               </article>
             ))}
           </div>
@@ -454,14 +518,23 @@ export function ActivityFeed({
 
       {/* 现场观察 */}
       {recentObservations.length ? (
-        <section className="activity-group" aria-label="现场观察">
+        <section
+          className="activity-group"
+          aria-label="现场观察"
+        >
           <div className="activity-group-head">
-            <SquareStack className="h-4 w-4" aria-hidden="true" />
+            <SquareStack
+              className="h-4 w-4"
+              aria-hidden="true"
+            />
             <strong>你的现场观察</strong>
           </div>
           <div className="activity-impact-list">
             {recentObservations.map((observation) => (
-              <article className="activity-impact-item" key={observation.id}>
+              <article
+                className="activity-impact-item"
+                key={observation.id}
+              >
                 <span className="tone-live">
                   {formatTime(observation.created_at)}
                 </span>
@@ -478,7 +551,10 @@ export function ActivityFeed({
         className="activity-history-link"
         onClick={onOpenAudit}
       >
-        <History className="h-4 w-4" aria-hidden="true" />
+        <History
+          className="h-4 w-4"
+          aria-hidden="true"
+        />
         查看完整工作记录
       </button>
     </div>
