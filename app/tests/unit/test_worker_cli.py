@@ -169,6 +169,19 @@ def test_research_source_collector_is_noop_without_explicit_source_authority() -
     asyncio.run(exercise())
 
 
+def test_blank_optional_source_credentials_are_treated_as_unconfigured() -> None:
+    settings = WorkerSettings(
+        _env_file=None,
+        tavily_api_key="   ",
+        firecrawl_api_key="",
+        github_api_token="\t",
+    )
+
+    assert settings.tavily_api_key is None
+    assert settings.firecrawl_api_key is None
+    assert settings.github_api_token is None
+
+
 def test_research_source_collector_requires_complete_github_authority_config() -> None:
     async def exercise() -> None:
         async with httpx.AsyncClient() as client:

@@ -11,7 +11,7 @@ from pathlib import Path
 from uuid import UUID
 
 import httpx
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 from sqlalchemy import text
 
 from aidison.application.agent_run_application import (
@@ -204,6 +204,28 @@ class WorkerSettings(AidisonSettings):
         ge=10,
         le=600,
     )
+
+    @field_validator(
+        "tavily_api_key",
+        "firecrawl_api_key",
+        "github_api_token",
+        mode="before",
+    )
+    @classmethod
+    def blank_optional_secrets_are_unconfigured(cls, value: object) -> object:
+        """Treat template ``KEY=`` values as absent optional integrations.
+
+        Docker Compose commonly forwards empty variables from ``.env``. A
+        zero-length ``SecretStr`` is otherwise non-``None`` and would make the
+        worker construct a provider adapter that is guaranteed to fail during
+        startup. Whitespace-only credentials carry no authority either.
+        """
+
+        if isinstance(value, SecretStr):
+            return value if value.get_secret_value().strip() else None
+        if isinstance(value, str):
+            return value if value.strip() else None
+        return value
 
 
 class _LocalQuotaPermit(QuotaPermit):
