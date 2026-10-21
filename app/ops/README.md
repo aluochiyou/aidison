@@ -66,6 +66,32 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\initialize-production.
 
 This switch is explicit so an Access-protected deployment cannot silently lose its identity gate.
 
+## Private Tailscale deployment (no card and no public endpoint)
+
+For a one-person test, Tailscale is the recommended alternative when Cloudflare Tunnel or Access is
+unavailable. It exposes the Caddy gateway only to devices signed in to your Tailscale tailnet;
+`aidison.xyz` is not used and no router port forwarding is required.
+
+1. Install Tailscale for Windows and sign in on this computer and each device that should access
+   Aidison.
+2. Initialize and deploy without any Cloudflare credential:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\initialize-production.ps1 `
+  -PublishMode Tailscale -Deploy
+```
+
+3. In an Administrator PowerShell terminal, publish only the loopback gateway to your tailnet:
+
+```powershell
+tailscale serve --bg http://127.0.0.1:8080
+tailscale serve status
+```
+
+Tailscale prints the private HTTPS address. Caddy Basic Auth remains a second gate, so a Tailscale
+member must also know the locally generated administrator password. To remove private access later,
+run `tailscale serve reset`.
+
 The initializer asks for the administrator password and Tunnel Token without echoing them,
 generates a URL-safe PostgreSQL password, hashes the administrator password through Caddy stdin,
 and imports only the allowlisted Provider keys already present in `.env`. Standard `LANGFUSE_*`

@@ -5,6 +5,8 @@ param(
     [string]$AdminUser = "aidison",
     [ValidateSet("CloudflareAccess", "OriginBasicAuth")]
     [string]$AccessMode = "CloudflareAccess",
+    [ValidateSet("Tailscale", "CloudflareTunnel")]
+    [string]$PublishMode = "CloudflareTunnel",
     [switch]$Deploy,
     [switch]$SkipBuild
 )
@@ -164,15 +166,21 @@ if ($adminHash -notmatch '^\$2[aby]\$14\$.{53}$') {
     throw "Caddy returned an invalid bcrypt hash"
 }
 
-$tunnelToken = Read-SecretText "Cloudflare Tunnel Token（不回显）"
-if ([string]::IsNullOrWhiteSpace($tunnelToken)) {
-    throw "Cloudflare Tunnel Token is required"
-}
-if ($AccessMode -eq "CloudflareAccess") {
-    Confirm-CloudflareAccessGuard
+$tunnelToken = $null
+if ($PublishMode -eq "CloudflareTunnel") {
+    $tunnelToken = Read-SecretText "Cloudflare Tunnel Token（不回显）"
+    if ([string]::IsNullOrWhiteSpace($tunnelToken)) {
+        throw "Cloudflare Tunnel Token is required"
+    }
+    if ($AccessMode -eq "CloudflareAccess") {
+        Confirm-CloudflareAccessGuard
+    }
+    else {
+        Write-Warning "OriginBasicAuth mode is for a single trusted operator only. Caddy authentication remains required; do not expose API, PostgreSQL, or web ports."
+    }
 }
 else {
-    Write-Warning "OriginBasicAuth mode is for a single trusted operator only. Caddy authentication remains required; do not expose API, PostgreSQL, or web ports."
+    Write-Warning "Tailscale mode is private to the tailnet. It does not publish aidison.xyz and does not require Cloudflare credentials."
 }
 
 $sourceValues = Read-EnvValues $sourcePath
@@ -197,7 +205,9 @@ $values = @{
     POSTGRES_PASSWORD = New-UrlSafeSecret
     AIDISON_ADMIN_USER = $AdminUser
     AIDISON_ADMIN_PASSWORD_HASH = "'$adminHash'"
-    CLOUDFLARE_TUNNEL_TOKEN = $tunnelToken
+}
+if ($PublishMode -eq "CloudflareTunnel") {
+    $values["CLOUDFLARE_TUNNEL_TOKEN"] = $tunnelToken
 }
 foreach ($key in $providerKeys) {
     if ($sourceValues.ContainsKey($key)) {
@@ -273,7 +283,7 @@ Write-Host "Secret values were not printed. The file is excluded by Git."
 if ($Deploy) {
     Push-Location $appRoot
     try {
-        & (Join-Path $PSScriptRoot "deploy-production.ps1") -EnvFile $targetPath -SkipBuild:$SkipBuild
+        & (Join-Path $PSScriptRoot "deploy-production.ps1") -EnvFile $targetPath -PublishMode $PublishMode -SkipBuild:$SkipBuild
         if ($LASTEXITCODE -ne 0) {
             throw "Production deployment failed"
         }

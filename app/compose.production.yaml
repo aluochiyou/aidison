@@ -203,8 +203,9 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:2026.10.2
+    profiles: ["cloudflare"]
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
     command:
       [
         "tunnel",

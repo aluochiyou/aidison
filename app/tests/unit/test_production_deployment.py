@@ -40,12 +40,11 @@ def test_public_connector_reaches_only_authenticated_gateway() -> None:
     assert isinstance(services, dict)
     cloudflared = services["cloudflared"]
     assert isinstance(cloudflared, dict)
+    assert cloudflared["profiles"] == ["cloudflare"]
     assert cloudflared["depends_on"] == {"gateway": {"condition": "service_healthy"}}
     assert cloudflared["networks"] == ["edge"]
     assert "--token" not in cloudflared["command"]
-    assert cloudflared["environment"] == {
-        "TUNNEL_TOKEN": "${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN}"
-    }
+    assert cloudflared["environment"] == {"TUNNEL_TOKEN": "${CLOUDFLARE_TUNNEL_TOKEN:-}"}
 
     caddyfile = (APP_ROOT / "ops" / "Caddyfile.production").read_text(encoding="utf-8")
     assert "basic_auth" in caddyfile
@@ -73,3 +72,13 @@ def test_production_initializer_requires_an_explicit_access_mode_choice() -> Non
     assert '[string]$AccessMode = "CloudflareAccess"' in initializer
     assert 'if ($AccessMode -eq "CloudflareAccess")' in initializer
     assert "OriginBasicAuth mode is for a single trusted operator only" in initializer
+
+
+def test_production_scripts_support_private_tailscale_without_a_tunnel_token() -> None:
+    initializer = (APP_ROOT / "ops" / "initialize-production.ps1").read_text(encoding="utf-8")
+    deployer = (APP_ROOT / "ops" / "deploy-production.ps1").read_text(encoding="utf-8")
+
+    assert '[ValidateSet("Tailscale", "CloudflareTunnel")]' in initializer
+    assert 'if ($PublishMode -eq "CloudflareTunnel")' in initializer
+    assert '[ValidateSet("Tailscale", "CloudflareTunnel")]' in deployer
+    assert '$requiredKeys += "CLOUDFLARE_TUNNEL_TOKEN"' in deployer

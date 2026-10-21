@@ -1,6 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$EnvFile = ".env.production",
+    [ValidateSet("Tailscale", "CloudflareTunnel")]
+    [string]$PublishMode = "CloudflareTunnel",
     [switch]$SkipBuild
 )
 
@@ -15,9 +17,11 @@ $requiredKeys = @(
     "POSTGRES_PASSWORD",
     "AIDISON_ADMIN_USER",
     "AIDISON_ADMIN_PASSWORD_HASH",
-    "CLOUDFLARE_TUNNEL_TOKEN",
     "DEEPSEEK_API_KEY"
 )
+if ($PublishMode -eq "CloudflareTunnel") {
+    $requiredKeys += "CLOUDFLARE_TUNNEL_TOKEN"
+}
 $envText = Get-Content -Raw -LiteralPath $EnvFile
 foreach ($key in $requiredKeys) {
     $pattern = "(?m)^$([regex]::Escape($key))=(?<value>[^\r\n]+)$"
@@ -42,22 +46,27 @@ if ($passwordHash -notmatch '^\$2[aby]\$\d{2}\$.{53}$') {
     throw "AIDISON_ADMIN_PASSWORD_HASH must be a Caddy-compatible bcrypt hash"
 }
 
-Write-Host "Validating production Compose configuration"
-& docker compose --env-file $EnvFile -f $composeFile config --quiet
+$composeArguments = @("--env-file", $EnvFile, "-f", $composeFile)
+if ($PublishMode -eq "CloudflareTunnel") {
+    $composeArguments += @("--profile", "cloudflare")
+}
+
+Write-Host "Validating production Compose configuration for $PublishMode"
+& docker compose @composeArguments config --quiet
 if ($LASTEXITCODE -ne 0) {
     throw "docker compose config validation failed"
 }
 
 if (-not $SkipBuild) {
     Write-Host "Building pinned Aidison images"
-    & docker compose --env-file $EnvFile -f $composeFile build --pull
+    & docker compose @composeArguments build --pull
     if ($LASTEXITCODE -ne 0) {
         throw "production image build failed"
     }
 }
 
-Write-Host "Starting production stack"
-& docker compose --env-file $EnvFile -f $composeFile up -d --remove-orphans
+Write-Host "Starting $PublishMode production stack"
+& docker compose @composeArguments up -d --remove-orphans
 if ($LASTEXITCODE -ne 0) {
     throw "production stack startup failed"
 }
@@ -73,7 +82,7 @@ do {
         $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$edgePort/edge-health" -TimeoutSec 3
         if ($response.StatusCode -eq 200) {
             Write-Host "Aidison production edge is healthy on loopback port $edgePort"
-            & docker compose --env-file $EnvFile -f $composeFile ps
+            & docker compose @composeArguments ps
             exit 0
         }
     }
@@ -82,5 +91,5 @@ do {
     }
 } while ((Get-Date) -lt $deadline)
 
-& docker compose --env-file $EnvFile -f $composeFile ps
+& docker compose @composeArguments ps
 throw "production edge did not become healthy before the deadline"
