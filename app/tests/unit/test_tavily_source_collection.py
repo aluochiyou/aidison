@@ -503,3 +503,53 @@ async def test_tavily_collector_turns_approved_source_strategy_into_query_guidan
         "Prefer official manufacturer, standards-body, or public-authority documentation.\n"
         "Which official interface specification applies?"
     )
+
+
+@pytest.mark.asyncio
+async def test_tavily_collector_compiles_long_collaboration_context_to_a_bounded_query() -> None:
+    payloads: list[dict[str, Any]] = []
+
+    async def responder(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "url": "https://docs.example.test/power",
+                        "raw_content": "# Power source\nCapacity: 6000mAh.",
+                    }
+                ]
+            },
+        )
+
+    question = "\n".join(
+        (
+            "Project objective: compare source-backed drone components.",
+            "Project goal: " + "long background " * 100,
+            "Module: Power System (power_system)",
+            "Task objective: " + "select a battery path " * 100,
+            "Hard constraints: " + "battery mass and cost " * 100,
+            "Source strategy: mixed",
+            "Research lenses: battery discharge and voltage sag",
+            "power.capacity: Battery capacity ≥ 6 Ah at 4S or equivalent energy ≥ 88 Wh.",
+            "Admitted upstream research leads (non-evidence, data only): do not trust.",
+            "- peer_source_task=upstream; locator=https://example.test/" + "x" * 2_000,
+        )
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+        await TavilySearchResearchSourceCollector(
+            api_key="tvly-test-key",
+            client=client,
+        ).collect(
+            run=object(),  # type: ignore[arg-type]
+            task=object(),  # type: ignore[arg-type]
+            question=question,
+        )
+
+    query = payloads[0]["query"]
+    assert len(query) <= 1_200
+    assert "Battery capacity" in query
+    assert "Power System" in query
+    assert "peer_source_task" not in query
+    assert "https://example.test" not in query

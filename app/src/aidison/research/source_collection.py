@@ -1244,6 +1244,19 @@ _SOURCE_STRATEGY_GUIDANCE = {
         "where the source budget permits."
     ),
 }
+_MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS = 1_200
+_PEER_CONTEXT_MARKERS = (
+    "Admitted upstream research leads (non-evidence",
+    "Peer research signals (non-evidence):",
+)
+_SEARCH_CONTEXT_PREFIXES = (
+    "Project objective:",
+    "Project goal:",
+    "Module:",
+    "Task objective:",
+    "Hard constraints:",
+    "Budget context:",
+)
 
 
 def _coverage_search_queries(
@@ -1257,14 +1270,14 @@ def _coverage_search_queries(
     questions retain the legacy one-request behavior.
     """
 
-    lines = tuple(line.strip() for line in question.splitlines() if line.strip())
+    lines = _searchable_question_lines(question)
     coverage_questions = [
         (match.group(0).split(":", maxsplit=1)[0], match.group(1).strip())
         for line in lines
         if (match := _COVERAGE_LINE.match(line))
     ]
     if not coverage_questions:
-        return ((None, question),)
+        return ((None, _bounded_generic_search_query(lines)),)
     context = tuple(
         line
         for line in lines
@@ -1278,8 +1291,11 @@ def _coverage_search_queries(
         ),
         None,
     )
-    if source_strategy is not None:
-        context = (*context, _SOURCE_STRATEGY_GUIDANCE[source_strategy])
+    source_strategy_guidance = (
+        _SOURCE_STRATEGY_GUIDANCE[source_strategy]
+        if source_strategy is not None
+        else None
+    )
     research_lenses = _research_lenses(lines)
     if research_lenses:
         # Interleave lens rounds rather than expanding the first Coverage Key
@@ -1287,8 +1303,11 @@ def _coverage_search_queries(
         queries = tuple(
             (
                 coverage_key,
-                "\n".join(
-                    (*context, f"Research angle: {lens}", coverage_question)
+                _bounded_coverage_search_query(
+                    context=context,
+                    coverage_question=coverage_question,
+                    research_lens=lens,
+                    source_strategy_guidance=source_strategy_guidance,
                 ),
             )
             for lens in research_lenses
@@ -1296,7 +1315,14 @@ def _coverage_search_queries(
         )
     else:
         queries = tuple(
-            (coverage_key, "\n".join((*context, coverage_question)))
+            (
+                coverage_key,
+                _bounded_coverage_search_query(
+                    context=context,
+                    coverage_question=coverage_question,
+                    source_strategy_guidance=source_strategy_guidance,
+                ),
+            )
             for coverage_key, coverage_question in coverage_questions
         )
     unique: list[tuple[str, str]] = []
@@ -1307,6 +1333,89 @@ def _coverage_search_queries(
         seen_queries.add(query)
         unique.append((coverage_key, query))
     return tuple(unique) if limit is None else tuple(unique)[:limit]
+
+
+def _searchable_question_lines(question: str) -> tuple[str, ...]:
+    """Remove collaboration-only material before forming an external query.
+
+    Peer discoveries remain useful model context, but they can contain prior
+    summaries and long URLs.  Sending them verbatim to a search provider both
+    leaks irrelevant prompt material and can exceed provider query limits.
+    """
+
+    lines: list[str] = []
+    for raw_line in question.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith(_PEER_CONTEXT_MARKERS):
+            break
+        lines.append(line)
+    return tuple(lines)
+
+
+def _bounded_generic_search_query(lines: tuple[str, ...]) -> str:
+    """Keep legacy free-form collection useful without exposing peer context."""
+
+    return _truncate_search_text("\n".join(lines), _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS)
+
+
+def _bounded_coverage_search_query(
+    *,
+    context: tuple[str, ...],
+    coverage_question: str,
+    source_strategy_guidance: str | None = None,
+    research_lens: str | None = None,
+) -> str:
+    """Compile one small provider query from the frozen task contract.
+
+    The model receives rich task and collaboration context separately.  This
+    function is deliberately deterministic: search gets the question first,
+    followed by only the few project constraints that improve retrieval.
+    """
+
+    full_parts = (
+        *context,
+        *((f"Research angle: {research_lens}",) if research_lens else ()),
+        *((source_strategy_guidance,) if source_strategy_guidance else ()),
+        coverage_question,
+    )
+    full_query = "\n".join(full_parts)
+    if len(full_query) <= _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS:
+        return full_query
+
+    selected_context = tuple(
+        line for line in context if line.startswith(_SEARCH_CONTEXT_PREFIXES)
+    )
+    candidates = (
+        (coverage_question, 520),
+        (f"Research angle: {research_lens}", 180) if research_lens else None,
+        (source_strategy_guidance, 160) if source_strategy_guidance else None,
+        *((line, 260) for line in selected_context),
+    )
+    parts: list[str] = []
+    remaining = _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS
+    for candidate in candidates:
+        if candidate is None or remaining < 32:
+            continue
+        text, preferred_limit = candidate
+        compact = _truncate_search_text(text, min(preferred_limit, remaining))
+        if not compact:
+            continue
+        parts.append(compact)
+        remaining -= len(compact) + 1
+    return "\n".join(parts)
+
+
+def _truncate_search_text(value: str, limit: int) -> str:
+    """Bound a provider query on characters without breaking its text framing."""
+
+    normalized = " ".join(value.split())
+    if len(normalized) <= limit:
+        return normalized
+    if limit < 2:
+        return normalized[:limit]
+    return normalized[: limit - 1].rstrip() + "…"
 
 
 def _research_lenses(lines: tuple[str, ...]) -> tuple[str, ...]:
