@@ -1244,7 +1244,10 @@ _SOURCE_STRATEGY_GUIDANCE = {
         "where the source budget permits."
     ),
 }
-_MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS = 1_200
+# Search providers rank short, domain-specific queries more reliably than a
+# pasted execution contract.  The model still receives the full frozen
+# contract later; this is only the trusted discovery query.
+_MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS = 900
 _PEER_CONTEXT_MARKERS = (
     "Admitted upstream research leads (non-evidence",
     "Peer research signals (non-evidence):",
@@ -1374,24 +1377,18 @@ def _bounded_coverage_search_query(
     followed by only the few project constraints that improve retrieval.
     """
 
-    full_parts = (
-        *context,
-        *((f"Research angle: {research_lens}",) if research_lens else ()),
-        *((source_strategy_guidance,) if source_strategy_guidance else ()),
-        coverage_question,
-    )
-    full_query = "\n".join(full_parts)
-    if len(full_query) <= _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS:
-        return full_query
-
-    selected_context = tuple(
-        line for line in context if line.startswith(_SEARCH_CONTEXT_PREFIXES)
-    )
+    # The former implementation sent every task-contract line whenever the
+    # whole request happened to fit inside a character cap.  For a drone
+    # power task that mixed a generic project objective with several unrelated
+    # constraints, and real search returned a transformer encyclopedia page.
+    # Compile the same way for every task: the coverage gap first, followed by
+    # the small amount of module context that helps retrieval.
+    selected_context = _search_context_for_coverage_query(context)
     candidates = (
-        (coverage_question, 520),
-        (f"Research angle: {research_lens}", 180) if research_lens else None,
-        (source_strategy_guidance, 160) if source_strategy_guidance else None,
-        *((line, 260) for line in selected_context),
+        (coverage_question, 420),
+        (f"Research angle: {research_lens}", 140) if research_lens else None,
+        (source_strategy_guidance, 100) if source_strategy_guidance else None,
+        *((line, limit) for line, limit in selected_context),
     )
     parts: list[str] = []
     remaining = _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS
@@ -1405,6 +1402,29 @@ def _bounded_coverage_search_query(
         parts.append(compact)
         remaining -= len(compact) + 1
     return "\n".join(parts)
+
+
+def _search_context_for_coverage_query(
+    context: tuple[str, ...],
+) -> tuple[tuple[str, int], ...]:
+    """Select retrieval-relevant contract fragments in deterministic order.
+
+    ``Project objective`` often describes the generic research workflow rather
+    than the engineering subject.  It is deliberately excluded in favour of
+    the task objective, module and measurable project constraints.
+    """
+
+    preferred_prefixes = (
+        ("Module:", 120),
+        ("Task objective:", 260),
+        ("Project goal:", 180),
+        ("Hard constraints:", 160),
+        ("Budget context:", 100),
+    )
+    selected: list[tuple[str, int]] = []
+    for prefix, limit in preferred_prefixes:
+        selected.extend((line, limit) for line in context if line.startswith(prefix))
+    return tuple(selected)
 
 
 def _truncate_search_text(value: str, limit: int) -> str:

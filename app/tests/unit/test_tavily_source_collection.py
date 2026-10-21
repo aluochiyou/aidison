@@ -193,7 +193,7 @@ async def test_tavily_collector_splits_coverage_questions_and_caps_deduplicated_
         )
 
     assert len(queries) == 2
-    assert all("Project objective: build a small drone" in query for query in queries)
+    assert all("Module: propulsion (propulsion)" in query for query in queries)
     assert [source.source.canonical_locator for source in sources] == [
         "https://docs.example.test/motor-a",
         "https://docs.example.test/shared",
@@ -498,11 +498,58 @@ async def test_tavily_collector_turns_approved_source_strategy_into_query_guidan
         )
 
     assert payloads[0]["query"] == (
-        "Project objective: verify a controller\n"
-        "Source strategy: official\n"
-        "Prefer official manufacturer, standards-body, or public-authority documentation.\n"
-        "Which official interface specification applies?"
+        "Which official interface specification applies?\n"
+        "Prefer official manufacturer, standards-body, or public-authority documentation."
     )
+
+
+@pytest.mark.asyncio
+async def test_tavily_collector_keeps_an_engineering_coverage_query_focused() -> None:
+    """A generic workflow objective must not swamp a component-spec search."""
+
+    payloads: list[dict[str, Any]] = []
+
+    async def responder(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "url": "https://docs.example.test/battery",
+                        "raw_content": "# Battery specification\nCapacity: 5000mAh",
+                    }
+                ]
+            },
+        )
+
+    question = "\n".join(
+        (
+            "Project objective: compare candidates and produce source-backed decisions.",
+            "Project goal: design a 5000 yuan quadrotor with 25-minute endurance.",
+            "Module: power system (power_system)",
+            "Task objective: select a battery and BEC with verified capacity, current rating, "
+            "weight and cost.",
+            "Hard constraints: payload at least 500g; reserve 20 percent energy.",
+            "power_system.battery_capacity: Which official 4S or 6S battery specifications "
+            "verify capacity and continuous discharge rating?",
+        )
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+        await TavilySearchResearchSourceCollector(
+            api_key="tvly-test-key", client=client
+        ).collect(
+            run=object(),  # type: ignore[arg-type]
+            task=object(),  # type: ignore[arg-type]
+            question=question,
+        )
+
+    query = payloads[0]["query"]
+    assert "Which official 4S or 6S battery specifications" in query
+    assert "Module: power system" in query
+    assert "Task objective: select a battery" in query
+    assert "Project objective: compare candidates" not in query
+    assert len(query) <= 900
 
 
 @pytest.mark.asyncio
