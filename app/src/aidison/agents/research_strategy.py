@@ -108,16 +108,31 @@ def research_strategy_output_json_schema() -> dict[str, object]:
     authority for UUID parsing, field bounds, task-key rules, and DAG checks.
     """
 
-    string_list = {"type": "array", "items": {"type": "string"}}
+    def string_list(*, max_items: int, min_items: int = 0) -> dict[str, object]:
+        return {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": min_items,
+            "maxItems": max_items,
+        }
+
     task_schema: dict[str, object] = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "task_key": {"type": "string"},
-            "title": {"type": "string"},
-            "objective": {"type": "string"},
-            "module_ids": {"type": "array", "items": {"type": "string"}},
-            "depends_on_task_keys": string_list,
+            "task_key": {
+                "type": "string",
+                "pattern": r"^[a-z][a-z0-9_.-]{0,119}$",
+            },
+            "title": {"type": "string", "minLength": 1, "maxLength": 300},
+            "objective": {"type": "string", "minLength": 1, "maxLength": 2_000},
+            "module_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 8,
+            },
+            "depends_on_task_keys": string_list(max_items=16),
             "priority": {"type": "string", "enum": ["must", "should"]},
             "expected_outputs": {
                 "type": "array",
@@ -125,9 +140,11 @@ def research_strategy_output_json_schema() -> dict[str, object]:
                     "type": "string",
                     "enum": ["evidence", "candidate", "compatibility", "constraint"],
                 },
+                "minItems": 1,
+                "maxItems": 4,
             },
-            "stop_conditions": string_list,
-            "research_lenses": string_list,
+            "stop_conditions": string_list(max_items=4, min_items=1),
+            "research_lenses": string_list(max_items=4),
         },
         "required": [
             "task_key",
@@ -149,12 +166,22 @@ def research_strategy_output_json_schema() -> dict[str, object]:
                 "type": "string",
                 "enum": ["research-strategy-v1"],
             },
-            "summary": {"type": "string"},
-            "decision_notes": string_list,
-            "scope_module_ids": {"type": "array", "items": {"type": "string"}},
-            "tasks": {"type": "array", "items": task_schema},
-            "deferred_questions": string_list,
-            "risk_notes": string_list,
+            "summary": {"type": "string", "minLength": 1, "maxLength": 4_000},
+            "decision_notes": string_list(max_items=12),
+            "scope_module_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "minItems": 1,
+                "maxItems": 8,
+            },
+            "tasks": {
+                "type": "array",
+                "items": task_schema,
+                "minItems": 1,
+                "maxItems": 64,
+            },
+            "deferred_questions": string_list(max_items=12),
+            "risk_notes": string_list(max_items=12),
             "source_strategy": {
                 "type": "string",
                 "enum": ["primary", "independent", "official", "mixed"],
@@ -249,31 +276,46 @@ class ResponsesJsonSchemaResearchStrategyPlanner:
         self._max_output_tokens = max_output_tokens
 
     async def ainvoke(self, planning_context: str) -> ResearchStrategyProposal:
-        response = await self._client.responses.create(
-            model=self._model,
-            instructions=RESEARCH_STRATEGY_SYSTEM_PROMPT,
-            input=planning_context,
-            reasoning={"effort": "high"},
-            max_output_tokens=self._max_output_tokens,
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": "research_strategy_proposal",
-                    "schema": research_strategy_output_json_schema(),
-                }
-            },
-            store=False,
-            timeout=self._timeout_seconds,
-        )
-        if getattr(response, "status", "completed") != "completed":
-            raise ResearchStrategyOutputValidationError(("schema:$:response_incomplete",))
-        content = getattr(response, "output_text", None)
-        if not isinstance(content, str) or not content.strip():
-            raise ResearchStrategyOutputValidationError(("schema:$:empty_response",))
-        try:
-            return ResearchStrategyProposal.model_validate_json(content)
-        except ValueError as exc:
-            raise ResearchStrategyOutputValidationError(_schema_diagnostics(exc)) from exc
+        request_context = planning_context
+        last_diagnostics: tuple[str, ...] = ("schema:$:invalid_response",)
+        for attempt in range(2):
+            response = await self._client.responses.create(
+                model=self._model,
+                instructions=(
+                    RESEARCH_STRATEGY_SYSTEM_PROMPT
+                    if attempt == 0
+                    else RESEARCH_STRATEGY_RETRY_PROMPT
+                ),
+                input=request_context,
+                reasoning={"effort": "high"},
+                max_output_tokens=self._max_output_tokens,
+                text={
+                    "format": {
+                        "type": "json_schema",
+                        "name": "research_strategy_proposal",
+                        "schema": research_strategy_output_json_schema(),
+                    }
+                },
+                store=False,
+                timeout=self._timeout_seconds,
+            )
+            if getattr(response, "status", "completed") != "completed":
+                last_diagnostics = ("schema:$:response_incomplete",)
+            else:
+                content = getattr(response, "output_text", None)
+                if not isinstance(content, str) or not content.strip():
+                    last_diagnostics = ("schema:$:empty_response",)
+                else:
+                    try:
+                        return ResearchStrategyProposal.model_validate_json(content)
+                    except ValueError as exc:
+                        last_diagnostics = _schema_diagnostics(exc)
+            if attempt == 0:
+                request_context = _with_diagnostics_feedback(
+                    planning_context=planning_context,
+                    diagnostics=last_diagnostics,
+                )
+        raise ResearchStrategyOutputValidationError(last_diagnostics)
 
 
 def _with_schema_feedback(*, planning_context: str, error: ValueError) -> str:
@@ -287,6 +329,38 @@ def _with_schema_feedback(*, planning_context: str, error: ValueError) -> str:
         return planning_context
     return json.dumps(
         {**context, "strategy_schema_feedback": _schema_feedback(error)},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+
+
+def _with_diagnostics_feedback(
+    *, planning_context: str, diagnostics: tuple[str, ...]
+) -> str:
+    """Attach already-sanitized response diagnostics for one repair attempt."""
+
+    try:
+        context = json.loads(planning_context)
+    except json.JSONDecodeError:
+        return planning_context
+    if not isinstance(context, dict):
+        return planning_context
+    feedback: list[dict[str, str]] = []
+    for diagnostic in diagnostics[:16]:
+        _, _, remainder = diagnostic.partition("schema:")
+        path, separator, code = remainder.rpartition(":")
+        feedback.append(
+            {
+                "path": path if separator and path else "$",
+                "code": code if separator and code else "invalid_response",
+            }
+        )
+    return json.dumps(
+        {
+            **context,
+            "strategy_schema_feedback": feedback
+            or [{"path": "$", "code": "invalid_response"}],
+        },
         ensure_ascii=False,
         sort_keys=True,
     )

@@ -128,6 +128,11 @@ async def test_responses_strategy_planner_requests_closed_json_schema() -> None:
     assert request["text"]["format"]["type"] == "json_schema"
     schema = request["text"]["format"]["schema"]
     assert schema["additionalProperties"] is False
+    assert schema["properties"]["deferred_questions"]["maxItems"] == 12
+    assert schema["properties"]["tasks"]["maxItems"] == 64
+    assert schema["properties"]["tasks"]["items"]["properties"]["task_key"][
+        "pattern"
+    ] == r"^[a-z][a-z0-9_.-]{0,119}$"
     assert schema["properties"]["tasks"]["items"]["properties"]["priority"][
         "enum"
     ] == ["must", "should"]
@@ -149,3 +154,54 @@ async def test_responses_strategy_planner_keeps_invalid_output_diagnostics_safe(
 
     assert exc_info.value.diagnostics == ("schema:$:json_invalid",)
     assert "secret-like" not in str(exc_info.value)
+    assert client.responses.create.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_responses_strategy_planner_repairs_locally_invalid_schema_output() -> None:
+    module_id = uuid4()
+    invalid = {
+        "schema_version": "research-strategy-v1",
+        "summary": "Research approved power constraints.",
+        "decision_notes": [],
+        "scope_module_ids": [str(module_id)],
+        "tasks": [
+            {
+                "task_key": "power.constraints",
+                "title": "Power constraints",
+                "objective": "Find verifiable power constraints.",
+                "module_ids": [str(module_id)],
+                "depends_on_task_keys": [],
+                "priority": "must",
+                "expected_outputs": ["evidence", "constraint"],
+                "stop_conditions": ["Report evidence or a bounded gap."],
+                "research_lenses": ["specifications"],
+            }
+        ],
+        "deferred_questions": [f"question-{index}" for index in range(13)],
+        "risk_notes": [],
+        "source_strategy": "primary",
+    }
+    repaired = {**invalid, "deferred_questions": invalid["deferred_questions"][:12]}
+    client = MagicMock()
+    client.responses.create = AsyncMock(
+        side_effect=(
+            SimpleNamespace(status="completed", output_text=json.dumps(invalid)),
+            SimpleNamespace(status="completed", output_text=json.dumps(repaired)),
+        )
+    )
+
+    strategy = await ResponsesJsonSchemaResearchStrategyPlanner(
+        client=client,
+        model="deepseek-v4-pro",
+        timeout_seconds=600,
+    ).ainvoke('{"objective":"Research the module."}')
+
+    assert len(strategy.deferred_questions) == 12
+    assert client.responses.create.await_count == 2
+    repair_request = client.responses.create.await_args_list[1].kwargs
+    assert repair_request["instructions"] == RESEARCH_STRATEGY_RETRY_PROMPT
+    repair_context = json.loads(repair_request["input"])
+    assert repair_context["strategy_schema_feedback"] == [
+        {"path": "$.deferred_questions", "code": "too_long"}
+    ]
