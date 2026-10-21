@@ -283,10 +283,10 @@ def test_research_source_collector_combines_authorized_tavily_and_github_readers
     asyncio.run(exercise())
 
 
-def test_firecrawl_requires_tavily_discovery_and_extends_source_authority() -> None:
+def test_firecrawl_can_be_selected_as_the_bounded_discovery_provider() -> None:
     async def exercise() -> None:
         async with httpx.AsyncClient() as client:
-            with pytest.raises(ValueError, match="requires TAVILY_API_KEY"):
+            with pytest.raises(ValueError, match="requires TAVILY_API_KEY unless"):
                 _research_source_collector(
                     settings=WorkerSettings(
                         _env_file=None,
@@ -307,6 +307,16 @@ def test_firecrawl_requires_tavily_discovery_and_extends_source_authority() -> N
                 "web.read.firecrawl",
                 "web.search.tavily",
             )
+            firecrawl_collector = _research_source_collector(
+                settings=WorkerSettings(
+                    _env_file=None,
+                    firecrawl_api_key="fc-test-key",
+                    web_search_provider="firecrawl",
+                ),
+                client=client,
+            )
+            assert isinstance(firecrawl_collector, CompositeResearchSourceCollector)
+            assert firecrawl_collector.tool_ids == ("web.search.firecrawl",)
 
     asyncio.run(exercise())
 

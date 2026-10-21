@@ -44,6 +44,7 @@ from aidison.tools.execution import (
 )
 from aidison.tools.source_catalog import (
     FIRECRAWL_READ_TOOL_ID,
+    FIRECRAWL_SEARCH_TOOL_ID,
     GITHUB_CONTENTS_TOOL_ID,
     PROJECT_DOCUMENT_READ_TOOL_ID,
     PROJECT_FILE_READ_TOOL_ID,
@@ -1226,6 +1227,227 @@ class TavilySearchResearchSourceCollector:
         return {"results": body["results"]}
 
 
+class FirecrawlSearchResearchSourceCollector:
+    """Collect bounded public evidence through Firecrawl Search v2.
+
+    This explicitly replaces Tavily's discovery role when configured. Firecrawl
+    returns rendered markdown with each result, so a task has one metered,
+    authorized search operation per coverage question instead of a model-led
+    search-then-scrape fan-out.
+    """
+
+    tool_ids = (FIRECRAWL_SEARCH_TOOL_ID,)
+    _endpoint = "https://api.firecrawl.dev/v2/search"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        client: httpx.AsyncClient,
+        max_results: int | None = 3,
+        max_queries: int | None = 3,
+        max_document_characters: int = 32_000,
+    ) -> None:
+        if not api_key.strip():
+            raise ValueError("Firecrawl API key must not be empty")
+        if max_results is not None and max_results < 1:
+            raise ValueError("Firecrawl max_results must be positive when configured")
+        if max_queries is not None and max_queries < 1:
+            raise ValueError("Firecrawl max_queries must be positive when configured")
+        if not 1 <= max_document_characters <= 96_000:
+            raise ValueError("Firecrawl source document limit must be between 1 and 96000")
+        self._api_key = api_key
+        self._client = client
+        self._max_results = max_results
+        self._max_queries = max_queries
+        self._max_document_characters = max_document_characters
+
+    async def collect(
+        self,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
+    ) -> tuple[CollectedResearchSource, ...]:
+        del run
+        collection_policy = getattr(task, "collection_policy", None)
+        max_queries = _narrowest_configured_limit(
+            self._max_queries,
+            collection_policy.max_queries if collection_policy is not None else None,
+        )
+        max_results = _narrowest_configured_limit(
+            self._max_results,
+            collection_policy.max_documents_total if collection_policy is not None else None,
+        )
+        max_results_per_query = _narrowest_configured_limit(
+            self._max_results,
+            (
+                collection_policy.max_documents_per_query
+                if collection_policy is not None
+                else None
+            ),
+        )
+        observed_at = datetime.now(UTC)
+        candidates_by_query: list[tuple[CollectedResearchSource, ...]] = []
+        recoverable_failures: list[FirecrawlSourceCollectionError] = []
+        collection_failures: list[ResearchSourceCollectionFailure] = []
+        for coverage_key, query in _coverage_search_queries(question, limit=max_queries):
+            try:
+                body = await self._search(
+                    query,
+                    max_results=max_results_per_query,
+                    tool_runtime=tool_runtime,
+                )
+            except FirecrawlSourceCollectionError as error:
+                if not _is_recoverable_query_failure(error.reason_code):
+                    raise
+                recoverable_failures.append(error)
+                if coverage_key is not None:
+                    collection_failures.append(
+                        ResearchSourceCollectionFailure(
+                            coverage_key=coverage_key,
+                            reason_code=error.reason_code,
+                        )
+                    )
+                candidates_by_query.append(())
+                continue
+
+            candidates: list[CollectedResearchSource] = []
+            seen_locators: set[str] = set()
+            for result in body["results"]:
+                if not isinstance(result, dict):
+                    continue
+                locator = result.get("url")
+                markdown = result.get("markdown")
+                if not isinstance(locator, str) or not isinstance(markdown, str):
+                    continue
+                # Firecrawl Search is an external discovery service, not a
+                # trust boundary. Reapply the same public-address rule used
+                # by the direct reader before any returned document becomes
+                # model-visible evidence.
+                normalized_locator = _public_https_locator(locator)
+                document = markdown.strip()[: self._max_document_characters]
+                if (
+                    normalized_locator is None
+                    or normalized_locator in seen_locators
+                    or not document
+                ):
+                    continue
+                seen_locators.add(normalized_locator)
+                candidates.append(
+                    CollectedResearchSource(
+                        key=f"firecrawl-search-{sha256(normalized_locator.encode()).hexdigest()[:20]}",
+                        source=SourceIdentity(
+                            kind=SourceKind.WEB,
+                            provider="firecrawl-search-v2",
+                            canonical_locator=normalized_locator,
+                        ),
+                        normalized_document=document,
+                        media_type="text/markdown",
+                        representation="normalized-firecrawl-search-markdown-v2",
+                        parser_revision="firecrawl-search-v2",
+                        observed_at=observed_at,
+                        coverage_source_kinds=("evidence",),
+                    )
+                )
+            candidates_by_query.append(tuple(candidates))
+
+        sources = _fairly_bounded_sources(candidates_by_query, max_results=max_results)
+        if not sources and recoverable_failures:
+            raise recoverable_failures[0]
+        failures = tuple(
+            sorted(
+                {
+                    (item.coverage_key, item.reason_code): item
+                    for item in collection_failures
+                }.values(),
+                key=lambda item: (item.coverage_key, item.reason_code),
+            )
+        )
+        return tuple(
+            source.model_copy(update={"collection_failures": failures}) for source in sources
+        )
+
+    async def _search(
+        self,
+        query: str,
+        *,
+        max_results: int | None,
+        tool_runtime: ResearchSourceToolRuntime | None,
+    ) -> dict[str, list[object]]:
+        if tool_runtime is None:
+            value, _ = await self._search_direct(query, max_results=max_results)
+            return value
+
+        async def invoke(_invocation: AuthorizedToolInvocation) -> ToolAdapterResponse:
+            try:
+                value, provider_request_id = await self._search_direct(
+                    query, max_results=max_results
+                )
+            except FirecrawlSourceCollectionError as error:
+                if error.reason_code == "firecrawl_network_failure":
+                    raise
+                raise ToolAdapterFailure(error.reason_code) from error
+            return ToolAdapterResponse(value=value, provider_request_id=provider_request_id)
+
+        try:
+            executed = await tool_runtime.execute(
+                tool_id=FIRECRAWL_SEARCH_TOOL_ID,
+                arguments={"query": query, "max_results": max_results or 5},
+                purpose_code="discover_rendered_web_evidence",
+                provider="firecrawl",
+                target="search-v2",
+                invoke=invoke,
+            )
+        except ToolExecutionFailure as error:
+            raise FirecrawlSourceCollectionError(error.reason_code) from error
+        except ToolExecutionReplayUnavailable as error:
+            raise FirecrawlSourceCollectionError("firecrawl_replay_unavailable") from error
+        value = executed.value
+        if not isinstance(value, dict) or not isinstance(value.get("results"), list):
+            raise FirecrawlSourceCollectionError("firecrawl_response_schema_invalid")
+        return {"results": value["results"]}
+
+    async def _search_direct(
+        self, query: str, *, max_results: int | None
+    ) -> tuple[dict[str, list[object]], str | None]:
+        try:
+            response = await self._client.post(
+                self._endpoint,
+                headers={"Authorization": f"Bearer {self._api_key}"},
+                json={
+                    "query": query,
+                    "limit": max_results or 5,
+                    "sources": ["web"],
+                    "safe": True,
+                    "ignoreInvalidURLs": True,
+                    "scrapeOptions": {
+                        "formats": ["markdown"],
+                        "onlyMainContent": True,
+                        "removeBase64Images": True,
+                    },
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as error:
+            raise FirecrawlSourceCollectionError(
+                _firecrawl_http_failure_code(error.response.status_code)
+            ) from error
+        except httpx.RequestError as error:
+            raise FirecrawlSourceCollectionError("firecrawl_network_failure") from error
+        try:
+            body = response.json()
+        except ValueError as error:
+            raise FirecrawlSourceCollectionError("firecrawl_response_invalid") from error
+        if not isinstance(body, dict) or body.get("success") is not True:
+            raise FirecrawlSourceCollectionError("firecrawl_response_schema_invalid")
+        data = body.get("data")
+        if not isinstance(data, dict) or not isinstance(data.get("web"), list):
+            raise FirecrawlSourceCollectionError("firecrawl_response_schema_invalid")
+        return {"results": data["web"]}, response.headers.get("x-request-id")
+
+
 _COVERAGE_LINE = re.compile(r"^[a-z][a-z0-9_.-]{0,159}:\s*(.+)$")
 _SOURCE_STRATEGY_LINE = re.compile(
     r"^Source strategy:\s*(primary|independent|official|mixed)\s*$",
@@ -1655,6 +1877,7 @@ def source_tool_ids(collector: object) -> tuple[str, ...]:
 __all__ = [
     "CollectedResearchSource",
     "CompositeResearchSourceCollector",
+    "FirecrawlSearchResearchSourceCollector",
     "FirecrawlSourceCollectionError",
     "FirecrawlWebReader",
     "GitHubRepositorySourceCollector",

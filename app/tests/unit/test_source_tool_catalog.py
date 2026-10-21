@@ -18,6 +18,7 @@ from aidison.tools.dispatcher import (
 )
 from aidison.tools.source_catalog import (
     FIRECRAWL_READ_TOOL_ID,
+    FIRECRAWL_SEARCH_TOOL_ID,
     GITHUB_CONTENTS_TOOL_ID,
     TAVILY_SEARCH_TOOL_ID,
     build_source_tool_registry,
@@ -66,6 +67,11 @@ def _authority(*, tool_id: str, tool_class: str) -> DispatchAuthority:
 @pytest.mark.parametrize(
     ("tool_id", "tool_class", "arguments"),
     (
+        (
+            FIRECRAWL_SEARCH_TOOL_ID,
+            "web_search",
+            {"query": "6S battery discharge curve", "max_results": 3},
+        ),
         (
             TAVILY_SEARCH_TOOL_ID,
             "web_search",

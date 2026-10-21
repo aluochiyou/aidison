@@ -7,10 +7,55 @@ import httpx
 import pytest
 
 from aidison.research.source_collection import (
+    FirecrawlSearchResearchSourceCollector,
     FirecrawlSourceCollectionError,
     FirecrawlWebReader,
     TavilySearchResearchSourceCollector,
 )
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_search_collects_bounded_rendered_markdown() -> None:
+    captured: dict[str, object] = {}
+
+    async def responder(request: httpx.Request) -> httpx.Response:
+        captured["url"] = str(request.url)
+        captured["authorization"] = request.headers["authorization"]
+        captured["body"] = request.content.decode()
+        return httpx.Response(
+            200,
+            headers={"X-Request-ID": "fc-search-1"},
+            json={
+                "success": True,
+                "data": {
+                    "web": [
+                        {
+                            "url": "https://example.test/esc#specification",
+                            "markdown": "# ESC specification\n\nContinuous current: 60 A",
+                        },
+                        {"url": "https://127.0.0.1/private", "markdown": "must be ignored"},
+                    ]
+                },
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+        sources = await FirecrawlSearchResearchSourceCollector(
+            api_key="fc-test-key", client=client, max_queries=1, max_results=2
+        ).collect(
+            run=object(),  # type: ignore[arg-type]
+            task=SimpleNamespace(collection_policy=None),
+            question="ESC continuous current specification",
+        )
+
+    assert captured["url"] == "https://api.firecrawl.dev/v2/search"
+    assert captured["authorization"] == "Bearer fc-test-key"
+    assert '"sources":["web"]' in str(captured["body"])
+    assert '"onlyMainContent":true' in str(captured["body"])
+    assert len(sources) == 1
+    assert sources[0].source.provider == "firecrawl-search-v2"
+    assert sources[0].source.canonical_locator == "https://example.test/esc"
+    assert sources[0].normalized_document.endswith("Continuous current: 60 A")
 
 
 @pytest.mark.asyncio

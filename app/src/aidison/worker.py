@@ -8,6 +8,7 @@ import socket
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 import httpx
@@ -55,6 +56,7 @@ from aidison.research.researcher import (
 )
 from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
+    FirecrawlSearchResearchSourceCollector,
     FirecrawlWebReader,
     GitHubRepositorySourceCollector,
     LocalFileResearchSourceCollector,
@@ -139,6 +141,20 @@ class WorkerSettings(AidisonSettings):
         validation_alias="FIRECRAWL_TIMEOUT_SECONDS",
         gt=0,
         le=120,
+    )
+    firecrawl_max_results: int | None = Field(
+        default=None,
+        validation_alias="FIRECRAWL_MAX_RESULTS",
+        ge=1,
+    )
+    firecrawl_max_queries: int | None = Field(
+        default=None,
+        validation_alias="FIRECRAWL_MAX_QUERIES",
+        ge=1,
+    )
+    web_search_provider: Literal["tavily", "firecrawl"] = Field(
+        default="tavily",
+        validation_alias="AIDISON_WEB_SEARCH_PROVIDER",
     )
     local_source_root: Path | None = Field(
         default=None,
@@ -525,9 +541,18 @@ def _research_source_collector(
                 client=client,
             )
         )
-    if settings.firecrawl_api_key is not None and settings.tavily_api_key is None:
-        raise ValueError("FIRECRAWL_API_KEY requires TAVILY_API_KEY for bounded URL discovery")
-    if settings.tavily_api_key is not None:
+    if settings.web_search_provider == "tavily":
+        if settings.firecrawl_api_key is not None and settings.tavily_api_key is None:
+            raise ValueError(
+                "FIRECRAWL_API_KEY requires TAVILY_API_KEY unless "
+                "AIDISON_WEB_SEARCH_PROVIDER=firecrawl"
+            )
+        if settings.tavily_api_key is None:
+            return (
+                CompositeResearchSourceCollector(collectors)
+                if collectors
+                else NoopResearchSourceCollector()
+            )
         fallback_reader = (
             FirecrawlWebReader(
                 api_key=settings.firecrawl_api_key.get_secret_value(),
@@ -543,6 +568,17 @@ def _research_source_collector(
                 max_results=settings.tavily_max_results,
                 max_queries=settings.tavily_max_queries,
                 fallback_reader=fallback_reader,
+            )
+        )
+    elif settings.firecrawl_api_key is None:
+        raise ValueError("AIDISON_WEB_SEARCH_PROVIDER=firecrawl requires FIRECRAWL_API_KEY")
+    else:
+        collectors.append(
+            FirecrawlSearchResearchSourceCollector(
+                api_key=settings.firecrawl_api_key.get_secret_value(),
+                client=client,
+                max_results=settings.firecrawl_max_results,
+                max_queries=settings.firecrawl_max_queries,
             )
         )
     if not collectors:

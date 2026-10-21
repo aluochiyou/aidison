@@ -20,6 +20,7 @@ from aidison.tools.dispatcher import (
 )
 
 TAVILY_SEARCH_TOOL_ID = "web.search.tavily"
+FIRECRAWL_SEARCH_TOOL_ID = "web.search.firecrawl"
 FIRECRAWL_READ_TOOL_ID = "web.read.firecrawl"
 GITHUB_CONTENTS_TOOL_ID = "repository.read.github_contents"
 PROJECT_DOCUMENT_READ_TOOL_ID = "project_document.read"
@@ -34,6 +35,11 @@ class TavilySearchArguments(_StrictArguments):
     query: str = Field(min_length=1, max_length=8_000)
     max_results: int = Field(ge=1, le=20)
     search_depth: Literal["basic", "advanced"]
+
+
+class FirecrawlSearchArguments(_StrictArguments):
+    query: str = Field(min_length=1, max_length=500)
+    max_results: int = Field(ge=1, le=20)
 
 
 class FirecrawlReadArguments(_StrictArguments):
@@ -93,6 +99,22 @@ class ProjectFileReadArguments(_StrictArguments):
 
 
 SOURCE_TOOL_DEFINITIONS: tuple[tuple[ToolSpecRevision, type[BaseModel]], ...] = (
+    (
+        ToolSpecRevision(
+            tool_id=FIRECRAWL_SEARCH_TOOL_ID,
+            revision=1,
+            purpose=(
+                "Discover bounded public web evidence and normalized markdown "
+                "for one approved research question."
+            ),
+            tool_class="web_search",
+            effect_class=ToolEffectClass.READ,
+            risk_tier=ToolRiskTier.T1,
+            input_schema_ref="schema://tool/web-search-firecrawl/v1",
+            output_schema_ref="schema://tool/research-sources/v1",
+        ),
+        FirecrawlSearchArguments,
+    ),
     (
         ToolSpecRevision(
             tool_id=TAVILY_SEARCH_TOOL_ID,
@@ -169,7 +191,9 @@ def build_source_tool_registry() -> ToolRegistry:
 
 
 __all__ = [
+    "FIRECRAWL_SEARCH_TOOL_ID",
     "FIRECRAWL_READ_TOOL_ID",
+    "FirecrawlSearchArguments",
     "FirecrawlReadArguments",
     "GITHUB_CONTENTS_TOOL_ID",
     "GitHubContentsArguments",
