@@ -172,7 +172,11 @@ a[role="button"]:not(.no-pixel-style):active,
 }
 
 .view-nav-item:hover {
-  background: color-mix(in srgb, var(--pixel-grass) 16%, transparent) !important;
+  background: color-mix(
+    in srgb,
+    var(--pixel-grass) 16%,
+    transparent
+  ) !important;
   color: var(--pixel-ink) !important;
 }
 
