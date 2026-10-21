@@ -38,18 +38,11 @@ export function useProjects() {
 
   const refresh = useCallback(async () => {
     const stored = getStoredProjects();
-    try {
-      const persisted = await getClient().listProjects();
-      setProjects(
-        persisted.map((project) => ({
-          id: project.id,
-          name: project.name,
-          lastAccessed: project.updated_at,
-        }))
-      );
-    } catch {
-      setProjects(stored);
-    }
+    // The project picker is deliberately a local "recent projects" list.
+    // Listing every database project here made test fixtures and unrelated
+    // historical projects appear in the normal user entry point. A project
+    // that has not been opened in this browser can still be opened by UUID.
+    setProjects(stored);
   }, []);
 
   const createProject = useCallback(

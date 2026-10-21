@@ -21,6 +21,9 @@ interface ProjectSelectorProps {
   busy?: boolean;
 }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 export function ProjectSelector({
   open,
   onOpenChange,
@@ -45,8 +48,12 @@ export function ProjectSelector({
         project.id === query ||
         project.name.toLocaleLowerCase("zh-CN").includes(normalized)
     );
+    if (UUID_PATTERN.test(query)) {
+      await openProject(query);
+      return;
+    }
     if (!match) {
-      setQueryError("没有找到该项目，请输入项目名称或 UUID");
+      setQueryError("最近项目中没有该名称；也可以输入完整项目 UUID 精确打开");
       return;
     }
     await openProject(match.id);
