@@ -696,25 +696,35 @@ button {
 
 /* Aidison project console: drafting bench + causal rail. */
 .aidison-body {
-  --ink: #101b2a;
-  --ink-soft: #35465a;
-  --paper: #edf2f3;
-  --sheet: #f8faf9;
-  --line: #c6d0d3;
-  --copper: #b85f35;
-  --cyan: #247e94;
-  --safe: #35765c;
-  --danger: #a64242;
+  /* This is the single page-level skin.  Component rules below consume these
+     semantic tokens, so the workbench stays coherent instead of mixing the
+     old blue-grey console with the later Minecraft controls. */
+  --ink: var(--pixel-ink);
+  --ink-soft: #5b4635;
+  --paper: #d7ebf0;
+  --sheet: #fff9ea;
+  --line: #9c7a57;
+  --copper: #91532e;
+  --cyan: #2e7284;
+  --safe: #3f7040;
+  --danger: #9d3c32;
   min-height: 100%;
-  font-family: Aptos, "Segoe UI", sans-serif;
+  font-family: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
   color: var(--ink);
-  background: var(--paper);
+  background-color: var(--paper);
+  background-image: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.28) 1px,
+      transparent 1px
+    ),
+    linear-gradient(rgba(255, 255, 255, 0.28) 1px, transparent 1px);
+  background-size: 18px 18px;
 }
 
 .aidison-body h1,
 .aidison-body h2,
 .aidison-body h3 {
-  font-family: Bahnschrift, "Arial Narrow", sans-serif;
+  font-family: "Arial Black", Impact, sans-serif;
   color: var(--ink);
 }
 
@@ -734,7 +744,7 @@ button {
   align-items: center;
   overflow: hidden;
   padding: clamp(2rem, 7vw, 7rem);
-  background: #e8eef0;
+  background: transparent;
 }
 
 .launch-restoring {
