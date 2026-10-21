@@ -542,25 +542,42 @@ def _provider_messages(value: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _provider_usage_tokens(message: BaseMessage) -> int | None:
-    candidates: list[object] = []
+    usage_records: list[dict[str, object]] = []
     usage_metadata = getattr(message, "usage_metadata", None)
     if isinstance(usage_metadata, dict):
-        candidates.extend(
-            usage_metadata.get(key)
-            for key in ("total_tokens", "total_token_count", "total")
-        )
+        usage_records.append(usage_metadata)
     response_metadata = getattr(message, "response_metadata", None)
     if isinstance(response_metadata, dict):
         for key in ("token_usage", "usage"):
             value = response_metadata.get(key)
             if isinstance(value, dict):
-                candidates.extend(
-                    value.get(name) for name in ("total_tokens", "total_token_count", "total")
-                )
-    for candidate in candidates:
-        if isinstance(candidate, int) and candidate >= 0:
-            return candidate
+                usage_records.append(value)
+    for usage in usage_records:
+        total = _nonnegative_integer(
+            usage.get("total_tokens")
+            or usage.get("total_token_count")
+            or usage.get("total")
+        )
+        if total is not None:
+            return total
+        for input_key, output_key in (
+            ("input_tokens", "output_tokens"),
+            ("prompt_tokens", "completion_tokens"),
+            ("prompt_tokens", "output_tokens"),
+            ("input_token_count", "output_token_count"),
+        ):
+            input_tokens = _nonnegative_integer(usage.get(input_key))
+            output_tokens = _nonnegative_integer(usage.get(output_key))
+            if input_tokens is not None and output_tokens is not None:
+                # This is provider-reported input plus output, not a local
+                # estimate.  Some OpenAI-compatible gateways omit the total
+                # field but retain both billable components.
+                return input_tokens + output_tokens
     return None
+
+
+def _nonnegative_integer(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
 def _provider_request_id(message: BaseMessage) -> str | None:

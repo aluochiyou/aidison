@@ -28,6 +28,7 @@ from aidison.research.researcher import (
     GatewayJsonModeSingleTaskResearcher,
     JsonModeResearchProviderAdapter,
     JsonModeSingleTaskResearcher,
+    _provider_usage_tokens,
     _research_messages,
 )
 from aidison.research.source_collection import CollectedResearchSource
@@ -107,6 +108,33 @@ def test_research_payload_keeps_meaningfully_distinct_options() -> None:
     )
 
     assert payload.recommended_option == "Flight controller A"
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    (
+        (
+            SimpleNamespace(
+                usage_metadata={"input_tokens": 18, "output_tokens": 7},
+                response_metadata={},
+            ),
+            25,
+        ),
+        (
+            SimpleNamespace(
+                response_metadata={"usage": {"prompt_tokens": 18, "completion_tokens": 7}},
+                usage_metadata={},
+            ),
+            25,
+        ),
+        (SimpleNamespace(usage_metadata={"input_tokens": 18}, response_metadata={}), None),
+    ),
+)
+def test_provider_usage_accepts_complete_provider_reported_components(
+    message: object,
+    expected: int | None,
+) -> None:
+    assert _provider_usage_tokens(message) == expected  # type: ignore[arg-type]
 
 
 def test_research_payload_rejects_duplicate_evidence_assertion() -> None:
