@@ -42,6 +42,8 @@ Thumbs.db
 /packages/
 /research/
 /tmp/
+/app/output/
+/\.c2c.json
 /AGENTS.md
 /CLAUDE.md
 /CONTEXT.md
