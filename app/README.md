@@ -1,10 +1,12 @@
 # Aidison Runtime
 
-此目录是当前可运行工程的唯一入口：后端、前端、数据库迁移、测试、部署配置和本地 artifact 都在这里。
+这是 Aidison 的唯一可运行工程：FastAPI 后端、Next.js 工作台、PostgreSQL 迁移、测试与生产部署配置均位于此目录。
+
+完整项目说明、快速启动与部署边界请阅读仓库根目录的 [`README.md`](../README.md)。
 
 ```bash
-cd app
+cp .env.example .env
 docker compose up --build -d
 ```
 
-项目计划、架构说明、开发过程与验收证据位于仓库根目录的 `../docs/`；历史实现、参考项目和已停用工具位于 `../archive/`。
+开发工作台默认位于 <http://localhost:3000>，API 健康检查为 <http://localhost:8000/health>。

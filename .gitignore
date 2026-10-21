@@ -15,9 +15,36 @@ dist/
 coverage/
 playwright-report/
 test-results/
-artifacts/data/
+app/artifacts/data/
+app/artifacts/live-probes/
 postgres-data/
+.playwright-cli/
+.ua/
+graphify-out/
+app/src/aidison/graphify-out/
+home.png
 *.log
 .DS_Store
 Thumbs.db
+
+# Local-only planning, research and agent workspaces. These are intentionally
+# kept outside the publishable source repository.
+/.agents/
+/.claude/
+/.mai/
+/.playwright-cli/
+/.ua/
+/archive/
+/doc/
+/docs/
+/handoff/
+/output/
+/packages/
+/research/
+/tmp/
+/AGENTS.md
+/CLAUDE.md
+/CONTEXT.md
+/UPSTREAM_MAP.md
+/.envrc
 
