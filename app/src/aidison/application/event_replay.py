@@ -1,0 +1,1809 @@
+"""Shadow verification and guarded repair for event-backed relational projections.
+
+Relational rows remain the online read models.  This module rebuilds their
+event-backed subsets without treating snapshots as a second source of truth,
+and exposes explicit maintenance-only repair services for selected aggregates.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from aidison.domain.events import (
+    EventIntegrityError,
+    ExecutionPlanReplaySnapshot,
+    ExecutionPlanReplayState,
+    StoredDomainEvent,
+    canonical_payload_hash,
+    execution_plan_replay_state_hash,
+    replay_execution_plan,
+    replay_execution_plan_from_snapshot,
+)
+from aidison.domain.models import ExecutionPlanProposal
+from aidison.infrastructure.agent_decisions import AgentRunDecisionStore
+from aidison.infrastructure.agent_results import AgentResultStore
+from aidison.infrastructure.agent_run_effects import AgentRunEffectLedger
+from aidison.infrastructure.agent_runs import AgentRunControl
+from aidison.infrastructure.orm import (
+    AgentRunDecisionRow,
+    AgentRunEffectRow,
+    AgentRunResultAdmissionRow,
+    AgentRunResultRow,
+    AgentRunRow,
+    ExecutionPlanProposalRow,
+)
+from aidison.infrastructure.replay_snapshots import EventReplaySnapshotRepository
+from aidison.infrastructure.store import PostgresDomainStore
+from aidison.research.decision_contracts import AgentRunDecision
+from aidison.research.langgraph_contracts import AdmissionRecord, ResultEnvelope
+from aidison.runtime.agent_result_events import (
+    AgentResultReplaySnapshot,
+    AgentResultReplayState,
+    agent_result_replay_state_hash,
+    replay_agent_result,
+    replay_agent_result_from_snapshot,
+)
+from aidison.runtime.agent_run_decision_events import (
+    AgentRunDecisionReplaySnapshot,
+    AgentRunDecisionReplayState,
+    agent_run_decision_replay_state_hash,
+    replay_agent_run_decision,
+    replay_agent_run_decision_from_snapshot,
+)
+from aidison.runtime.agent_run_effect_events import (
+    AgentRunEffectReplaySnapshot,
+    AgentRunEffectReplayState,
+    agent_run_effect_replay_state_hash,
+    replay_agent_run_effect,
+    replay_agent_run_effect_from_snapshot,
+)
+from aidison.runtime.agent_run_effects import AgentRunEffect, AgentRunEffectState
+from aidison.runtime.agent_run_events import (
+    AgentRunReplaySnapshot,
+    AgentRunReplayState,
+    agent_run_replay_state_hash,
+    replay_agent_run,
+    replay_agent_run_from_snapshot,
+)
+from aidison.runtime.agent_runs import AgentRun, AgentRunStatus
+
+
+class ProjectionMismatchError(EventIntegrityError):
+    """Event replay and the canonical relation table describe different state."""
+
+
+class ProjectionRepairConflictError(ProjectionMismatchError):
+    """A repair preview became stale, or the relation row cannot be repaired safely."""
+
+
+@dataclass(frozen=True)
+class ExecutionPlanProjectionRepairPreview:
+    """Read-only comparison a human or maintenance command must approve explicitly."""
+
+    project_id: UUID
+    execution_plan_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class ExecutionPlanProjectionRepairResult:
+    """The preview plus an explicit indication of whether a relation row changed."""
+
+    preview: ExecutionPlanProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentRunProjectionRepairPreview:
+    """Read-only comparison for an inactive AgentRun control projection."""
+
+    project_id: UUID
+    agent_run_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentRunProjectionRepairResult:
+    """The reviewed inactive-run repair result; event history remains untouched."""
+
+    preview: AgentRunProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentResultProjectionRepairPreview:
+    """Read-only comparison for a ResultEnvelope and its separate verdict row."""
+
+    project_id: UUID
+    agent_run_result_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentResultProjectionRepairResult:
+    """The reviewed repair result for a result/admission relation pair."""
+
+    preview: AgentResultProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentRunDecisionProjectionRepairPreview:
+    """Read-only comparison for one non-canonical user decision inbox row."""
+
+    project_id: UUID
+    agent_run_decision_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentRunDecisionProjectionRepairResult:
+    """The reviewed repair result for one already-present proposal decision."""
+
+    preview: AgentRunDecisionProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class AgentRunEffectProjectionRepairPreview:
+    """Read-only comparison for one external-effect ledger projection."""
+
+    project_id: UUID
+    agent_run_effect_id: UUID
+    event_cursor: int
+    event_count: int
+    current_relation_hash: str | None
+    replayed_relation_hash: str
+    repair_required: bool
+
+
+@dataclass(frozen=True)
+class AgentRunEffectProjectionRepairResult:
+    """The reviewed repair result for one terminal effect ledger row."""
+
+    preview: AgentRunEffectProjectionRepairPreview
+    applied: bool
+
+
+@dataclass(frozen=True)
+class ExecutionPlanProjectionVerification:
+    """Evidence that full and accelerated replay agree with the read model."""
+
+    snapshot: ExecutionPlanReplaySnapshot | None
+    full_replay_hash: str
+    snapshot_tail_hash: str | None
+    relational_hash: str
+    event_count: int
+    tail_event_count: int
+
+    @property
+    def snapshot_matches_full_replay(self) -> bool:
+        return self.snapshot_tail_hash in {None, self.full_replay_hash}
+
+
+class ExecutionPlanShadowProjectionService:
+    """Verify execution-plan replay before persisting any acceleration point."""
+
+    def __init__(
+        self,
+        domain_store: PostgresDomainStore,
+        snapshot_repository: EventReplaySnapshotRepository,
+    ) -> None:
+        self._domain_store = domain_store
+        self._snapshots = snapshot_repository
+
+    async def create_verified_snapshot(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+    ) -> ExecutionPlanReplaySnapshot:
+        """Persist a snapshot only after from-zero replay matches the read model."""
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            execution_plan_id=execution_plan_id,
+        )
+        snapshot = ExecutionPlanReplaySnapshot.from_state(
+            state,
+            project_seq=events[-1].project_seq,
+        )
+        return await self._snapshots.persist_execution_plan(snapshot)
+
+    async def verify(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+    ) -> ExecutionPlanProjectionVerification:
+        """Compare relation state, full replay and the latest snapshot-tail path."""
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            execution_plan_id=execution_plan_id,
+        )
+        full_hash = execution_plan_replay_state_hash(state)
+        relational_hash = _execution_plan_proposal_hash(state.proposal)
+        snapshot = await self._snapshots.get_latest_execution_plan(
+            project_id=project_id,
+            aggregate_id=execution_plan_id,
+        )
+        if snapshot is None:
+            return ExecutionPlanProjectionVerification(
+                snapshot=None,
+                full_replay_hash=full_hash,
+                snapshot_tail_hash=None,
+                relational_hash=relational_hash,
+                event_count=len(events),
+                tail_event_count=0,
+            )
+
+        tail = [event for event in events if event.project_seq > snapshot.project_seq]
+        accelerated_state = replay_execution_plan_from_snapshot(snapshot, tail)
+        accelerated_hash = execution_plan_replay_state_hash(accelerated_state)
+        if accelerated_hash != full_hash:
+            raise ProjectionMismatchError(
+                "execution-plan snapshot-tail replay differs from full replay"
+            )
+        return ExecutionPlanProjectionVerification(
+            snapshot=snapshot,
+            full_replay_hash=full_hash,
+            snapshot_tail_hash=accelerated_hash,
+            relational_hash=relational_hash,
+            event_count=len(events),
+            tail_event_count=len(tail),
+        )
+
+    async def _from_zero_and_relation_match(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+    ) -> tuple[ExecutionPlanReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="execution_plan",
+                aggregate_id=execution_plan_id,
+            )
+        )
+        state = replay_execution_plan(events)
+        stored = await self._domain_store.get_execution_plan_proposal(execution_plan_id)
+        if stored is None:
+            raise ProjectionMismatchError("execution-plan relation is missing")
+        if stored != state.proposal:
+            raise ProjectionMismatchError(
+                "execution-plan relation differs from deterministic event replay"
+            )
+        return state, events
+
+
+def _execution_plan_proposal_hash(proposal: ExecutionPlanProposal) -> str:
+    """Use relation-shaped state so it is comparable with replayed proposal state."""
+    return canonical_payload_hash(proposal.model_dump(mode="json"))
+
+
+class ExecutionPlanProjectionRepairService:
+    """Explicitly repair one ExecutionPlan read-model row from its event stream.
+
+    This is intentionally a maintenance boundary, not a normal request path.
+    It never mutates ``domain_events`` or creates a new business event.  The
+    relation remains the normal online read model; this service only restores
+    it after an operator has examined a preview and supplied its exact current
+    relation hash back as an optimistic precondition.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+    ) -> ExecutionPlanProjectionRepairPreview:
+        """Rebuild the target projection without acquiring a write lock or mutating data."""
+
+        events = await self._events(project_id=project_id, execution_plan_id=execution_plan_id)
+        state = replay_execution_plan(events)
+        row = await self._session.get(ExecutionPlanProposalRow, execution_plan_id)
+        current_hash = _execution_plan_relation_row_hash(row) if row is not None else None
+        target_hash = _execution_plan_relation_hash(state.proposal)
+        return ExecutionPlanProjectionRepairPreview(
+            project_id=project_id,
+            execution_plan_id=execution_plan_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> ExecutionPlanProjectionRepairResult:
+        """Apply a reviewed repair under lock, or return its locked dry-run result.
+
+        Missing rows are not auto-created.  Their absence can indicate a failed
+        original command rather than a damaged projection, so they require a
+        separately audited restoration path.
+        """
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:execution-plan:{execution_plan_id}"},
+        )
+        row = await self._session.scalar(
+            select(ExecutionPlanProposalRow)
+            .where(
+                ExecutionPlanProposalRow.id == execution_plan_id,
+                ExecutionPlanProposalRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "execution-plan relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _execution_plan_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "execution-plan relation changed after repair preview; request a new preview"
+            )
+
+        events = await self._events(project_id=project_id, execution_plan_id=execution_plan_id)
+        state = replay_execution_plan(events)
+        target = state.proposal
+        target_hash = _execution_plan_relation_hash(target)
+        preview = ExecutionPlanProjectionRepairPreview(
+            project_id=project_id,
+            execution_plan_id=execution_plan_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return ExecutionPlanProjectionRepairResult(preview=preview, applied=False)
+
+        row.status = target.status.value
+        row.basis_hash = target.basis_hash
+        row.scope_hash = target.scope_hash or ""
+        row.payload = target.model_dump(mode="json")
+        await self._session.flush()
+        return ExecutionPlanProjectionRepairResult(preview=preview, applied=True)
+
+    async def _events(
+        self,
+        *,
+        project_id: UUID,
+        execution_plan_id: UUID,
+    ) -> list[StoredDomainEvent]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="execution_plan",
+                aggregate_id=execution_plan_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("execution-plan event stream is missing")
+        return events
+
+
+def _execution_plan_relation_row_hash(row: ExecutionPlanProposalRow) -> str:
+    """Hash every physical projection column so typed-column corruption is repairable too."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "project_id": str(row.project_id),
+            "status": row.status,
+            "basis_hash": row.basis_hash,
+            "scope_hash": row.scope_hash,
+            "payload": row.payload,
+        }
+    )
+
+
+def _execution_plan_relation_hash(proposal: ExecutionPlanProposal) -> str:
+    """Hash the exact physical-row shape expected from replayed plan state."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(proposal.id),
+            "project_id": str(proposal.project_id),
+            "status": proposal.status.value,
+            "basis_hash": proposal.basis_hash,
+            "scope_hash": proposal.scope_hash or "",
+            "payload": proposal.model_dump(mode="json"),
+        }
+    )
+
+
+class AgentRunProjectionRepairService:
+    """Repair an inactive AgentRun read model only from its lifecycle stream.
+
+    A running row carries an active worker lease that is deliberately outside
+    the lifecycle ``AgentRun`` contract.  Therefore a repair never infers or
+    replaces a live lease: it refuses both a currently-running row and a
+    lifecycle stream that rebuilds to ``running``.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+    ) -> AgentRunProjectionRepairPreview:
+        """Compare one lifecycle-derived relation without locking or mutating it."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+        )
+        row = await self._session.get(AgentRunRow, agent_run_id)
+        current_hash = _agent_run_relation_row_hash(row) if row is not None else None
+        target_hash = _agent_run_relation_hash(
+            run=state.agent_run,
+            lifecycle_event_version=state.aggregate_version,
+        )
+        return AgentRunProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentRunProjectionRepairResult:
+        """Apply one reviewed inactive-run repair under a row and advisory lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run:{agent_run_id}"},
+        )
+        row = await self._session.scalar(
+            select(AgentRunRow)
+            .where(
+                AgentRunRow.id == agent_run_id,
+                AgentRunRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _agent_run_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+        )
+        target = state.agent_run
+        if row.status == AgentRunStatus.RUNNING.value or target.status is AgentRunStatus.RUNNING:
+            raise ProjectionRepairConflictError(
+                "active AgentRun relations require an explicit worker recovery flow"
+            )
+        target_hash = _agent_run_relation_hash(
+            run=target,
+            lifecycle_event_version=state.aggregate_version,
+        )
+        preview = AgentRunProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentRunProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_inactive_agent_run_relation(
+            row,
+            run=target,
+            lifecycle_event_version=state.aggregate_version,
+        )
+        await self._session.flush()
+        return AgentRunProjectionRepairResult(preview=preview, applied=True)
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+    ) -> tuple[AgentRunReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run",
+                aggregate_id=agent_run_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun event stream is missing")
+        return replay_agent_run(events), events
+
+
+def _agent_run_relation_row_hash(row: AgentRunRow) -> str:
+    """Hash all physical AgentRun relation fields, including its lease columns."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "project_id": str(row.project_id),
+            "kind": row.kind,
+            "idempotency_key": row.idempotency_key,
+            "basis_hash": row.basis_hash,
+            "basis_project_revision": row.basis_project_revision,
+            "runtime_binding": row.runtime_binding,
+            "thread_id": row.thread_id,
+            "run_contract_ref": row.run_contract_ref,
+            "coverage_contract_ref": row.coverage_contract_ref,
+            "status": row.status,
+            "current_generation": row.current_generation,
+            "lifecycle_event_version": row.lifecycle_event_version,
+            "lease_owner": row.lease_owner,
+            "lease_token": str(row.lease_token) if row.lease_token is not None else None,
+            "lease_expires_at": _relation_timestamp(row.lease_expires_at),
+            "admitted_checkpoint": row.admitted_checkpoint,
+            "cancel_requested": row.cancel_requested,
+            "created_at": _relation_timestamp(row.created_at),
+            "started_at": _relation_timestamp(row.started_at),
+            "updated_at": _relation_timestamp(row.updated_at),
+            "completed_at": _relation_timestamp(row.completed_at),
+        }
+    )
+
+
+def _agent_run_relation_hash(
+    *,
+    run: AgentRun,
+    lifecycle_event_version: int,
+) -> str:
+    """Hash the physical inactive-row shape expected from lifecycle replay."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(run.id),
+            "project_id": str(run.project_id),
+            "kind": run.kind.value,
+            "idempotency_key": run.idempotency_key,
+            "basis_hash": run.basis_hash,
+            "basis_project_revision": run.basis_project_revision,
+            "runtime_binding": run.runtime_binding.model_dump(mode="json"),
+            "thread_id": run.thread_id,
+            "run_contract_ref": run.run_contract_ref,
+            "coverage_contract_ref": run.coverage_contract_ref,
+            "status": run.status.value,
+            "current_generation": run.current_generation,
+            "lifecycle_event_version": lifecycle_event_version,
+            "lease_owner": None,
+            "lease_token": None,
+            "lease_expires_at": None,
+            "admitted_checkpoint": (
+                run.admitted_checkpoint.model_dump(mode="json")
+                if run.admitted_checkpoint is not None
+                else None
+            ),
+            "cancel_requested": run.cancel_requested,
+            "created_at": _relation_timestamp(run.created_at),
+            "started_at": _relation_timestamp(run.started_at),
+            "updated_at": _relation_timestamp(run.updated_at),
+            "completed_at": _relation_timestamp(run.completed_at),
+        }
+    )
+
+
+def _restore_inactive_agent_run_relation(
+    row: AgentRunRow,
+    *,
+    run: AgentRun,
+    lifecycle_event_version: int,
+) -> None:
+    """Restore only an inactive row from its complete lifecycle projection."""
+
+    row.kind = run.kind.value
+    row.idempotency_key = run.idempotency_key
+    row.basis_hash = run.basis_hash
+    row.basis_project_revision = run.basis_project_revision
+    row.runtime_binding = run.runtime_binding.model_dump(mode="json")
+    row.thread_id = run.thread_id
+    row.run_contract_ref = run.run_contract_ref
+    row.coverage_contract_ref = run.coverage_contract_ref
+    row.status = run.status.value
+    row.current_generation = run.current_generation
+    row.lifecycle_event_version = lifecycle_event_version
+    row.lease_owner = None
+    row.lease_token = None
+    row.lease_expires_at = None
+    row.admitted_checkpoint = (
+        run.admitted_checkpoint.model_dump(mode="json")
+        if run.admitted_checkpoint is not None
+        else None
+    )
+    row.cancel_requested = run.cancel_requested
+    row.created_at = run.created_at
+    row.started_at = run.started_at
+    row.updated_at = run.updated_at
+    row.completed_at = run.completed_at
+
+
+def _relation_timestamp(value: datetime | None) -> str | None:
+    """Give database and event-side timestamps one stable relation-hash format."""
+
+    return value.isoformat() if value is not None else None
+
+
+class AgentResultProjectionRepairService:
+    """Repair an existing ResultEnvelope/admission pair without changing its shape.
+
+    Recording a result and admitting it are separate domain facts.  A missing
+    result row, a missing required admission row, or an unexpected admission
+    row is deliberately not auto-created or deleted: this maintenance command
+    only restores values for a relation shape already present in PostgreSQL.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_result_id: UUID,
+    ) -> AgentResultProjectionRepairPreview:
+        """Compare one result/admission projection without modifying PostgreSQL."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+        )
+        result_row = await self._session.get(AgentRunResultRow, agent_run_result_id)
+        admission_row = await self._admission_row(agent_run_result_id)
+        current_hash = (
+            _agent_result_relation_row_hash(result_row, admission_row)
+            if result_row is not None
+            else None
+        )
+        target_hash = _agent_result_relation_hash(
+            result=state.result_envelope,
+            admission=state.admission_record,
+            event_version=state.aggregate_version,
+        )
+        return AgentResultProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_result_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentResultProjectionRepairResult:
+        """Restore values only after a reviewed preview still matches under lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run-result:{agent_run_result_id}"},
+        )
+        result_row = await self._session.scalar(
+            select(AgentRunResultRow)
+            .where(AgentRunResultRow.id == agent_run_result_id)
+            .with_for_update()
+        )
+        if result_row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun result relation is missing; automatic row creation is forbidden"
+            )
+        admission_row = await self._session.scalar(
+            select(AgentRunResultAdmissionRow)
+            .where(AgentRunResultAdmissionRow.result_id == agent_run_result_id)
+            .with_for_update()
+        )
+        current_hash = _agent_result_relation_row_hash(result_row, admission_row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun result relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+        )
+        target_result = state.result_envelope
+        target_admission = state.admission_record
+        if (target_admission is None) != (admission_row is None):
+            raise ProjectionRepairConflictError(
+                "AgentRun result/admission relation shape differs from its event stream; "
+                "automatic row creation or deletion is forbidden"
+            )
+        if admission_row is not None and target_admission is not None:
+            if admission_row.id != target_admission.id:
+                raise ProjectionRepairConflictError(
+                    "AgentRun admission identity differs from its event stream; "
+                    "manual repair is required"
+                )
+        target_hash = _agent_result_relation_hash(
+            result=target_result,
+            admission=target_admission,
+            event_version=state.aggregate_version,
+        )
+        preview = AgentResultProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_result_id=agent_run_result_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentResultProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_agent_result_relation(
+            result_row,
+            result=target_result,
+            event_version=state.aggregate_version,
+        )
+        if admission_row is not None and target_admission is not None:
+            _restore_agent_result_admission_relation(admission_row, admission=target_admission)
+        await self._session.flush()
+        return AgentResultProjectionRepairResult(preview=preview, applied=True)
+
+    async def _admission_row(
+        self,
+        result_id: UUID,
+    ) -> AgentRunResultAdmissionRow | None:
+        row: AgentRunResultAdmissionRow | None = await self._session.scalar(
+            select(AgentRunResultAdmissionRow).where(
+                AgentRunResultAdmissionRow.result_id == result_id
+            )
+        )
+        return row
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_result_id: UUID,
+    ) -> tuple[AgentResultReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_result",
+                aggregate_id=agent_run_result_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun result event stream is missing")
+        return replay_agent_result(events), events
+
+
+def _agent_result_relation_row_hash(
+    result: AgentRunResultRow,
+    admission: AgentRunResultAdmissionRow | None,
+) -> str:
+    """Hash event-backed fields, excluding server-generated relation timestamps."""
+
+    return canonical_payload_hash(
+        {
+            "result": {
+                "id": str(result.id),
+                "agent_run_id": str(result.agent_run_id),
+                "task_id": str(result.task_id),
+                "basis_hash": result.basis_hash,
+                "manifest_hash": result.manifest_hash,
+                "event_version": result.event_version,
+                "payload": result.payload,
+            },
+            "admission": (
+                {
+                    "id": str(admission.id),
+                    "agent_run_id": str(admission.agent_run_id),
+                    "result_id": str(admission.result_id),
+                    "disposition": admission.disposition,
+                    "payload": admission.payload,
+                }
+                if admission is not None
+                else None
+            ),
+        }
+    )
+
+
+def _agent_result_relation_hash(
+    *,
+    result: ResultEnvelope,
+    admission: AdmissionRecord | None,
+    event_version: int,
+) -> str:
+    """Hash the expected pair while preserving result and admission as separate facts."""
+
+    return canonical_payload_hash(
+        {
+            "result": {
+                "id": str(result.id),
+                "agent_run_id": str(result.run_id),
+                "task_id": str(result.task_id),
+                "basis_hash": result.basis_hash,
+                "manifest_hash": result.manifest_hash,
+                "event_version": event_version,
+                "payload": result.model_dump(mode="json"),
+            },
+            "admission": (
+                {
+                    "id": str(admission.id),
+                    "agent_run_id": str(admission.run_id),
+                    "result_id": str(admission.result_id),
+                    "disposition": admission.disposition.value,
+                    "payload": admission.model_dump(mode="json"),
+                }
+                if admission is not None
+                else None
+            ),
+        }
+    )
+
+
+def _restore_agent_result_relation(
+    row: AgentRunResultRow,
+    *,
+    result: ResultEnvelope,
+    event_version: int,
+) -> None:
+    """Restore immutable producer result fields without changing its row identity."""
+
+    row.agent_run_id = result.run_id
+    row.task_id = result.task_id
+    row.basis_hash = result.basis_hash
+    row.manifest_hash = result.manifest_hash
+    row.event_version = event_version
+    row.payload = result.model_dump(mode="json")
+
+
+def _restore_agent_result_admission_relation(
+    row: AgentRunResultAdmissionRow,
+    *,
+    admission: AdmissionRecord,
+) -> None:
+    """Restore an already-present verdict; it never promotes a raw result by itself."""
+
+    row.agent_run_id = admission.run_id
+    row.result_id = admission.result_id
+    row.disposition = admission.disposition.value
+    row.payload = admission.model_dump(mode="json")
+
+
+class AgentRunDecisionProjectionRepairService:
+    """Restore an existing user-review inbox row from its immutable verdict events.
+
+    This service never creates a missing decision. A missing row may mean that
+    the original human-review command did not commit atomically, so turning a
+    historical event into a newly visible inbox item requires a separate,
+    audited operator workflow.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_decision_id: UUID,
+    ) -> AgentRunDecisionProjectionRepairPreview:
+        """Compare the decision relation with pure event replay without mutation."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+        )
+        row = await self._session.get(AgentRunDecisionRow, agent_run_decision_id)
+        current_hash = _agent_run_decision_relation_row_hash(row) if row is not None else None
+        target_hash = _agent_run_decision_relation_hash(
+            decision=state.agent_run_decision,
+            event_version=state.aggregate_version,
+        )
+        return AgentRunDecisionProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_decision_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentRunDecisionProjectionRepairResult:
+        """Apply a reviewed decision repair under a row and advisory lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run-decision:{agent_run_decision_id}"},
+        )
+        row = await self._session.scalar(
+            select(AgentRunDecisionRow)
+            .where(
+                AgentRunDecisionRow.id == agent_run_decision_id,
+                AgentRunDecisionRow.project_id == project_id,
+            )
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun decision relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _agent_run_decision_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun decision relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+        )
+        decision = state.agent_run_decision
+        target_hash = _agent_run_decision_relation_hash(
+            decision=decision,
+            event_version=state.aggregate_version,
+        )
+        preview = AgentRunDecisionProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_decision_id=agent_run_decision_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentRunDecisionProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_agent_run_decision_relation(
+            row,
+            decision=decision,
+            event_version=state.aggregate_version,
+        )
+        await self._session.flush()
+        return AgentRunDecisionProjectionRepairResult(preview=preview, applied=True)
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_decision_id: UUID,
+    ) -> tuple[AgentRunDecisionReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_decision",
+                aggregate_id=agent_run_decision_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun decision event stream is missing")
+        return replay_agent_run_decision(events), events
+
+
+def _agent_run_decision_relation_row_hash(row: AgentRunDecisionRow) -> str:
+    """Hash every physical decision field controlled by lifecycle event replay."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "agent_run_id": str(row.agent_run_id),
+            "project_id": str(row.project_id),
+            "basis_hash": row.basis_hash,
+            "proposal_manifest_ref": row.proposal_manifest_ref,
+            "proposal_manifest_hash": row.proposal_manifest_hash,
+            "status": row.status,
+            "answer": row.answer,
+            "event_version": row.event_version,
+            "created_at": _relation_timestamp(row.created_at),
+            "resolved_at": _relation_timestamp(row.resolved_at),
+        }
+    )
+
+
+def _agent_run_decision_relation_hash(
+    *,
+    decision: AgentRunDecision,
+    event_version: int,
+) -> str:
+    """Hash the relation shape deterministically rebuilt from one decision stream."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(decision.id),
+            "agent_run_id": str(decision.agent_run_id),
+            "project_id": str(decision.project_id),
+            "basis_hash": decision.basis_hash,
+            "proposal_manifest_ref": decision.proposal_manifest_ref,
+            "proposal_manifest_hash": decision.proposal_manifest_hash,
+            "status": decision.status.value,
+            "answer": decision.answer,
+            "event_version": event_version,
+            "created_at": _relation_timestamp(decision.created_at),
+            "resolved_at": _relation_timestamp(decision.resolved_at),
+        }
+    )
+
+
+def _restore_agent_run_decision_relation(
+    row: AgentRunDecisionRow,
+    *,
+    decision: AgentRunDecision,
+    event_version: int,
+) -> None:
+    """Restore one existing inbox row without producing another human verdict event."""
+
+    row.agent_run_id = decision.agent_run_id
+    row.project_id = decision.project_id
+    row.basis_hash = decision.basis_hash
+    row.proposal_manifest_ref = decision.proposal_manifest_ref
+    row.proposal_manifest_hash = decision.proposal_manifest_hash
+    row.status = decision.status.value
+    row.answer = decision.answer
+    row.event_version = event_version
+    row.created_at = decision.created_at
+    row.resolved_at = decision.resolved_at
+
+
+class AgentRunEffectProjectionRepairService:
+    """Restore only terminal effect-ledger projections from immutable events.
+
+    ``prepared``, ``dispatched`` and ``ambiguous`` effects can still affect
+    external reconciliation or retry decisions. Their relation rows remain
+    read-only to this maintenance tool. Only an event stream whose latest
+    state is already terminal (``succeeded`` or ``failed``) is eligible.
+    """
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+        self._domain_store = PostgresDomainStore(session)
+
+    async def preview(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_effect_id: UUID,
+    ) -> AgentRunEffectProjectionRepairPreview:
+        """Compare one ledger row without mutating it or contacting a provider."""
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+        )
+        row = await self._session.get(AgentRunEffectRow, agent_run_effect_id)
+        current_hash = _agent_run_effect_relation_row_hash(row) if row is not None else None
+        target_hash = _agent_run_effect_relation_hash(
+            effect=state.agent_run_effect,
+            event_version=state.aggregate_version,
+        )
+        return AgentRunEffectProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+
+    async def apply(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_effect_id: UUID,
+        expected_current_relation_hash: str,
+        dry_run: bool = True,
+    ) -> AgentRunEffectProjectionRepairResult:
+        """Apply only a reviewed, terminal state restoration under lock."""
+
+        await self._session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"projection-repair:agent-run-effect:{agent_run_effect_id}"},
+        )
+        row = await self._session.scalar(
+            select(AgentRunEffectRow)
+            .where(AgentRunEffectRow.id == agent_run_effect_id)
+            .with_for_update()
+        )
+        if row is None:
+            raise ProjectionRepairConflictError(
+                "AgentRun effect relation is missing; automatic row creation is forbidden"
+            )
+        current_hash = _agent_run_effect_relation_row_hash(row)
+        if current_hash != expected_current_relation_hash:
+            raise ProjectionRepairConflictError(
+                "AgentRun effect relation changed after repair preview; request a new preview"
+            )
+
+        state, events = await self._state_and_events(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+        )
+        effect = state.agent_run_effect
+        if effect.state not in {AgentRunEffectState.SUCCEEDED, AgentRunEffectState.FAILED}:
+            raise ProjectionRepairConflictError(
+                "nonterminal AgentRun effects require the normal reconciliation flow"
+            )
+        target_hash = _agent_run_effect_relation_hash(
+            effect=effect,
+            event_version=state.aggregate_version,
+        )
+        preview = AgentRunEffectProjectionRepairPreview(
+            project_id=project_id,
+            agent_run_effect_id=agent_run_effect_id,
+            event_cursor=events[-1].project_seq,
+            event_count=len(events),
+            current_relation_hash=current_hash,
+            replayed_relation_hash=target_hash,
+            repair_required=current_hash != target_hash,
+        )
+        if dry_run or not preview.repair_required:
+            return AgentRunEffectProjectionRepairResult(preview=preview, applied=False)
+
+        _restore_agent_run_effect_relation(
+            row,
+            effect=effect,
+            event_version=state.aggregate_version,
+        )
+        await self._session.flush()
+        return AgentRunEffectProjectionRepairResult(preview=preview, applied=True)
+
+    async def _state_and_events(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_effect_id: UUID,
+    ) -> tuple[AgentRunEffectReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_effect",
+                aggregate_id=agent_run_effect_id,
+            )
+        )
+        if not events:
+            raise ProjectionRepairConflictError("AgentRun effect event stream is missing")
+        return replay_agent_run_effect(events), events
+
+
+def _agent_run_effect_relation_row_hash(row: AgentRunEffectRow) -> str:
+    """Hash every physical ledger field controlled by immutable effect events."""
+
+    return canonical_payload_hash(
+        {
+            "id": str(row.id),
+            "agent_run_id": str(row.agent_run_id),
+            "task_id": str(row.task_id),
+            "basis_hash": row.basis_hash,
+            "approval_ref": row.approval_ref,
+            "effect_kind": row.effect_kind,
+            "provider": row.provider,
+            "external_idempotency_key": row.external_idempotency_key,
+            "idempotency_key": row.idempotency_key,
+            "request_hash": row.request_hash,
+            "request_artifact_ref": row.request_artifact_ref,
+            "claim_generation": row.claim_generation,
+            "lease_token": str(row.lease_token),
+            "state": row.state,
+            "event_version": row.event_version,
+            "provider_effect_id": row.provider_effect_id,
+            "response_artifact_ref": row.response_artifact_ref,
+            "failure_ref": row.failure_ref,
+            "normalized_error": row.normalized_error,
+            "reconciliation_artifact_ref": row.reconciliation_artifact_ref,
+            "created_at": _relation_timestamp(row.created_at),
+            "dispatched_at": _relation_timestamp(row.dispatched_at),
+            "resolved_at": _relation_timestamp(row.resolved_at),
+            "reconciled_at": _relation_timestamp(row.reconciled_at),
+        }
+    )
+
+
+def _agent_run_effect_relation_hash(
+    *,
+    effect: AgentRunEffect,
+    event_version: int,
+) -> str:
+    """Hash the exact terminal ledger shape rebuilt from the event stream."""
+
+    intent = effect.intent
+    return canonical_payload_hash(
+        {
+            "id": str(effect.id),
+            "agent_run_id": str(intent.run_id),
+            "task_id": str(intent.task_id),
+            "basis_hash": intent.basis_hash,
+            "approval_ref": intent.approval_ref,
+            "effect_kind": intent.effect_kind,
+            "provider": intent.provider,
+            "external_idempotency_key": intent.external_idempotency_key,
+            "idempotency_key": intent.idempotency_key,
+            "request_hash": intent.request_hash,
+            "request_artifact_ref": intent.request_artifact_ref,
+            "claim_generation": effect.claim_generation,
+            "lease_token": str(effect.lease_token),
+            "state": effect.state.value,
+            "event_version": event_version,
+            "provider_effect_id": effect.provider_effect_id,
+            "response_artifact_ref": effect.response_artifact_ref,
+            "failure_ref": effect.failure_ref,
+            "normalized_error": effect.normalized_error,
+            "reconciliation_artifact_ref": effect.reconciliation_artifact_ref,
+            "created_at": _relation_timestamp(effect.created_at),
+            "dispatched_at": _relation_timestamp(effect.dispatched_at),
+            "resolved_at": _relation_timestamp(effect.resolved_at),
+            "reconciled_at": _relation_timestamp(effect.reconciled_at),
+        }
+    )
+
+
+def _restore_agent_run_effect_relation(
+    row: AgentRunEffectRow,
+    *,
+    effect: AgentRunEffect,
+    event_version: int,
+) -> None:
+    """Restore terminal ledger data only; it never calls or retries a provider."""
+
+    intent = effect.intent
+    row.agent_run_id = intent.run_id
+    row.task_id = intent.task_id
+    row.basis_hash = intent.basis_hash
+    row.approval_ref = intent.approval_ref
+    row.effect_kind = intent.effect_kind
+    row.provider = intent.provider
+    row.external_idempotency_key = intent.external_idempotency_key
+    row.idempotency_key = intent.idempotency_key
+    row.request_hash = intent.request_hash
+    row.request_artifact_ref = intent.request_artifact_ref
+    row.claim_generation = effect.claim_generation
+    row.lease_token = effect.lease_token
+    row.state = effect.state.value
+    row.event_version = event_version
+    row.provider_effect_id = effect.provider_effect_id
+    row.response_artifact_ref = effect.response_artifact_ref
+    row.failure_ref = effect.failure_ref
+    row.normalized_error = effect.normalized_error
+    row.reconciliation_artifact_ref = effect.reconciliation_artifact_ref
+    row.created_at = effect.created_at
+    row.dispatched_at = effect.dispatched_at
+    row.resolved_at = effect.resolved_at
+    row.reconciled_at = effect.reconciled_at
+
+
+@dataclass(frozen=True)
+class AgentRunProjectionVerification:
+    """Evidence that AgentRun control state matches full and accelerated replay."""
+
+    snapshot: AgentRunReplaySnapshot | None
+    full_replay_hash: str
+    snapshot_tail_hash: str | None
+    relational_hash: str
+    event_count: int
+    tail_event_count: int
+
+    @property
+    def snapshot_matches_full_replay(self) -> bool:
+        return self.snapshot_tail_hash in {None, self.full_replay_hash}
+
+
+class AgentRunShadowProjectionService:
+    """Verify AgentRun lifecycle replay without turning snapshots into runtime state.
+
+    The service intentionally compares the replayed control state with the
+    current AgentRun relation before it persists an acceleration point. It does
+    not read or write LangGraph checkpoint tables.
+    """
+
+    def __init__(
+        self,
+        domain_store: PostgresDomainStore,
+        snapshot_repository: EventReplaySnapshotRepository,
+        agent_run_control: AgentRunControl,
+    ) -> None:
+        self._domain_store = domain_store
+        self._snapshots = snapshot_repository
+        self._agent_runs = agent_run_control
+
+    async def create_verified_snapshot(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+    ) -> AgentRunReplaySnapshot:
+        """Persist only a lifecycle state independently rebuilt from its event stream."""
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+        )
+        snapshot = AgentRunReplaySnapshot.from_state(
+            state,
+            project_seq=events[-1].project_seq,
+            created_at=events[-1].recorded_at,
+        )
+        return await self._snapshots.persist_agent_run(snapshot)
+
+    async def verify(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+    ) -> AgentRunProjectionVerification:
+        """Compare relation state, full replay and any available snapshot-tail path."""
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            agent_run_id=agent_run_id,
+        )
+        full_hash = agent_run_replay_state_hash(state)
+        relational_hash = _agent_run_hash(state.agent_run)
+        snapshot = await self._snapshots.get_latest_agent_run(
+            project_id=project_id,
+            aggregate_id=agent_run_id,
+        )
+        if snapshot is None:
+            return AgentRunProjectionVerification(
+                snapshot=None,
+                full_replay_hash=full_hash,
+                snapshot_tail_hash=None,
+                relational_hash=relational_hash,
+                event_count=len(events),
+                tail_event_count=0,
+            )
+
+        tail = [event for event in events if event.project_seq > snapshot.project_seq]
+        accelerated_state = replay_agent_run_from_snapshot(snapshot, tail)
+        accelerated_hash = agent_run_replay_state_hash(accelerated_state)
+        if accelerated_hash != full_hash:
+            raise ProjectionMismatchError("AgentRun snapshot-tail replay differs from full replay")
+        return AgentRunProjectionVerification(
+            snapshot=snapshot,
+            full_replay_hash=full_hash,
+            snapshot_tail_hash=accelerated_hash,
+            relational_hash=relational_hash,
+            event_count=len(events),
+            tail_event_count=len(tail),
+        )
+
+    async def _from_zero_and_relation_match(
+        self,
+        *,
+        project_id: UUID,
+        agent_run_id: UUID,
+    ) -> tuple[AgentRunReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run",
+                aggregate_id=agent_run_id,
+            )
+        )
+        state = replay_agent_run(events)
+        stored = await self._agent_runs.get(agent_run_id)
+        if stored is None:
+            raise ProjectionMismatchError("AgentRun relation is missing")
+        if stored != state.agent_run:
+            raise ProjectionMismatchError(
+                "AgentRun relation differs from deterministic event replay"
+            )
+        return state, events
+
+
+def _agent_run_hash(run: AgentRun) -> str:
+    return canonical_payload_hash(run.model_dump(mode="json"))
+
+
+@dataclass(frozen=True)
+class AgentResultProjectionVerification:
+    """Evidence that a producer result and its verdict can be replayed safely."""
+
+    snapshot: AgentResultReplaySnapshot | None
+    full_replay_hash: str
+    snapshot_tail_hash: str | None
+    relational_hash: str
+    event_count: int
+    tail_event_count: int
+
+    @property
+    def snapshot_matches_full_replay(self) -> bool:
+        return self.snapshot_tail_hash in {None, self.full_replay_hash}
+
+
+class AgentResultShadowProjectionService:
+    """Shadow-verify ResultEnvelope/admission state before retaining a snapshot.
+
+    A result row alone is not a dependency-unlock signal. The comparison keeps
+    its separate AdmissionRecord explicit, so no caller can accidentally treat
+    a recorded or quarantined result as accepted during accelerated replay.
+    """
+
+    def __init__(
+        self,
+        domain_store: PostgresDomainStore,
+        snapshot_repository: EventReplaySnapshotRepository,
+        result_store: AgentResultStore,
+    ) -> None:
+        self._domain_store = domain_store
+        self._snapshots = snapshot_repository
+        self._results = result_store
+
+    async def create_verified_snapshot(
+        self,
+        *,
+        project_id: UUID,
+        result_id: UUID,
+    ) -> AgentResultReplaySnapshot:
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            result_id=result_id,
+        )
+        snapshot = AgentResultReplaySnapshot.from_state(
+            state,
+            project_seq=events[-1].project_seq,
+            created_at=events[-1].recorded_at,
+        )
+        return await self._snapshots.persist_agent_result(snapshot)
+
+    async def verify(
+        self,
+        *,
+        project_id: UUID,
+        result_id: UUID,
+    ) -> AgentResultProjectionVerification:
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            result_id=result_id,
+        )
+        full_hash = agent_result_replay_state_hash(state)
+        relational_hash = _agent_result_state_hash(state)
+        snapshot = await self._snapshots.get_latest_agent_result(
+            project_id=project_id,
+            aggregate_id=result_id,
+        )
+        if snapshot is None:
+            return AgentResultProjectionVerification(
+                snapshot=None,
+                full_replay_hash=full_hash,
+                snapshot_tail_hash=None,
+                relational_hash=relational_hash,
+                event_count=len(events),
+                tail_event_count=0,
+            )
+        tail = [event for event in events if event.project_seq > snapshot.project_seq]
+        accelerated_state = replay_agent_result_from_snapshot(snapshot, tail)
+        accelerated_hash = agent_result_replay_state_hash(accelerated_state)
+        if accelerated_hash != full_hash:
+            raise ProjectionMismatchError(
+                "AgentRun result snapshot-tail replay differs from full replay"
+            )
+        return AgentResultProjectionVerification(
+            snapshot=snapshot,
+            full_replay_hash=full_hash,
+            snapshot_tail_hash=accelerated_hash,
+            relational_hash=relational_hash,
+            event_count=len(events),
+            tail_event_count=len(tail),
+        )
+
+    async def _from_zero_and_relation_match(
+        self,
+        *,
+        project_id: UUID,
+        result_id: UUID,
+    ) -> tuple[AgentResultReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_result",
+                aggregate_id=result_id,
+            )
+        )
+        state = replay_agent_result(events)
+        stored_result = await self._results.get_result(result_id=result_id)
+        stored_admission = await self._results.get_admission(result_id=result_id)
+        if stored_result != state.result_envelope or stored_admission != state.admission_record:
+            raise ProjectionMismatchError(
+                "AgentRun result relation differs from deterministic event replay"
+            )
+        return state, events
+
+
+def _agent_result_state_hash(state: AgentResultReplayState) -> str:
+    return canonical_payload_hash(
+        {
+            "result": state.result_envelope.model_dump(mode="json"),
+            "admission": (
+                state.admission_record.model_dump(mode="json")
+                if state.admission_record is not None
+                else None
+            ),
+        }
+    )
+
+
+@dataclass(frozen=True)
+class AgentRunDecisionProjectionVerification:
+    """Evidence that one Proposal review and its user verdict replay correctly."""
+
+    snapshot: AgentRunDecisionReplaySnapshot | None
+    full_replay_hash: str
+    snapshot_tail_hash: str | None
+    relational_hash: str
+    event_count: int
+    tail_event_count: int
+
+    @property
+    def snapshot_matches_full_replay(self) -> bool:
+        return self.snapshot_tail_hash in {None, self.full_replay_hash}
+
+
+class AgentRunDecisionShadowProjectionService:
+    """Shadow-verify one pending/resolved Proposal review before snapshotting it."""
+
+    def __init__(
+        self,
+        domain_store: PostgresDomainStore,
+        snapshot_repository: EventReplaySnapshotRepository,
+        decision_store: AgentRunDecisionStore,
+    ) -> None:
+        self._domain_store = domain_store
+        self._snapshots = snapshot_repository
+        self._decisions = decision_store
+
+    async def create_verified_snapshot(
+        self,
+        *,
+        project_id: UUID,
+        decision_id: UUID,
+    ) -> AgentRunDecisionReplaySnapshot:
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            decision_id=decision_id,
+        )
+        snapshot = AgentRunDecisionReplaySnapshot.from_state(
+            state,
+            project_seq=events[-1].project_seq,
+            created_at=events[-1].recorded_at,
+        )
+        return await self._snapshots.persist_agent_run_decision(snapshot)
+
+    async def verify(
+        self,
+        *,
+        project_id: UUID,
+        decision_id: UUID,
+    ) -> AgentRunDecisionProjectionVerification:
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            decision_id=decision_id,
+        )
+        full_hash = agent_run_decision_replay_state_hash(state)
+        relational_hash = canonical_payload_hash(
+            state.agent_run_decision.model_dump(mode="json")
+        )
+        snapshot = await self._snapshots.get_latest_agent_run_decision(
+            project_id=project_id,
+            aggregate_id=decision_id,
+        )
+        if snapshot is None:
+            return AgentRunDecisionProjectionVerification(
+                snapshot=None,
+                full_replay_hash=full_hash,
+                snapshot_tail_hash=None,
+                relational_hash=relational_hash,
+                event_count=len(events),
+                tail_event_count=0,
+            )
+        tail = [event for event in events if event.project_seq > snapshot.project_seq]
+        accelerated_state = replay_agent_run_decision_from_snapshot(snapshot, tail)
+        accelerated_hash = agent_run_decision_replay_state_hash(accelerated_state)
+        if accelerated_hash != full_hash:
+            raise ProjectionMismatchError(
+                "AgentRun decision snapshot-tail replay differs from full replay"
+            )
+        return AgentRunDecisionProjectionVerification(
+            snapshot=snapshot,
+            full_replay_hash=full_hash,
+            snapshot_tail_hash=accelerated_hash,
+            relational_hash=relational_hash,
+            event_count=len(events),
+            tail_event_count=len(tail),
+        )
+
+    async def _from_zero_and_relation_match(
+        self,
+        *,
+        project_id: UUID,
+        decision_id: UUID,
+    ) -> tuple[AgentRunDecisionReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_decision",
+                aggregate_id=decision_id,
+            )
+        )
+        state = replay_agent_run_decision(events)
+        stored = await self._decisions.get(decision_id)
+        if stored != state.agent_run_decision:
+            raise ProjectionMismatchError(
+                "AgentRun decision relation differs from deterministic event replay"
+            )
+        return state, events
+
+
+@dataclass(frozen=True)
+class AgentRunEffectProjectionVerification:
+    """Evidence that an external-effect ledger remains safe under accelerated replay."""
+
+    snapshot: AgentRunEffectReplaySnapshot | None
+    full_replay_hash: str
+    snapshot_tail_hash: str | None
+    relational_hash: str
+    event_count: int
+    tail_event_count: int
+
+    @property
+    def snapshot_matches_full_replay(self) -> bool:
+        return self.snapshot_tail_hash in {None, self.full_replay_hash}
+
+
+class AgentRunEffectShadowProjectionService:
+    """Shadow-verify effects without changing their dispatch or reconciliation path."""
+
+    def __init__(
+        self,
+        domain_store: PostgresDomainStore,
+        snapshot_repository: EventReplaySnapshotRepository,
+        effect_ledger: AgentRunEffectLedger,
+    ) -> None:
+        self._domain_store = domain_store
+        self._snapshots = snapshot_repository
+        self._effects = effect_ledger
+
+    async def create_verified_snapshot(
+        self,
+        *,
+        project_id: UUID,
+        effect_id: UUID,
+    ) -> AgentRunEffectReplaySnapshot:
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            effect_id=effect_id,
+        )
+        snapshot = AgentRunEffectReplaySnapshot.from_state(
+            state,
+            project_seq=events[-1].project_seq,
+            created_at=events[-1].recorded_at,
+        )
+        return await self._snapshots.persist_agent_run_effect(snapshot)
+
+    async def verify(
+        self,
+        *,
+        project_id: UUID,
+        effect_id: UUID,
+    ) -> AgentRunEffectProjectionVerification:
+        state, events = await self._from_zero_and_relation_match(
+            project_id=project_id,
+            effect_id=effect_id,
+        )
+        full_hash = agent_run_effect_replay_state_hash(state)
+        relational_hash = canonical_payload_hash(state.agent_run_effect.model_dump(mode="json"))
+        snapshot = await self._snapshots.get_latest_agent_run_effect(
+            project_id=project_id,
+            aggregate_id=effect_id,
+        )
+        if snapshot is None:
+            return AgentRunEffectProjectionVerification(
+                snapshot=None,
+                full_replay_hash=full_hash,
+                snapshot_tail_hash=None,
+                relational_hash=relational_hash,
+                event_count=len(events),
+                tail_event_count=0,
+            )
+        tail = [event for event in events if event.project_seq > snapshot.project_seq]
+        accelerated_state = replay_agent_run_effect_from_snapshot(snapshot, tail)
+        accelerated_hash = agent_run_effect_replay_state_hash(accelerated_state)
+        if accelerated_hash != full_hash:
+            raise ProjectionMismatchError(
+                "AgentRun effect snapshot-tail replay differs from full replay"
+            )
+        return AgentRunEffectProjectionVerification(
+            snapshot=snapshot,
+            full_replay_hash=full_hash,
+            snapshot_tail_hash=accelerated_hash,
+            relational_hash=relational_hash,
+            event_count=len(events),
+            tail_event_count=len(tail),
+        )
+
+    async def _from_zero_and_relation_match(
+        self,
+        *,
+        project_id: UUID,
+        effect_id: UUID,
+    ) -> tuple[AgentRunEffectReplayState, list[StoredDomainEvent]]:
+        events = list(
+            await self._domain_store.list_aggregate_events(
+                project_id,
+                aggregate_type="agent_run_effect",
+                aggregate_id=effect_id,
+            )
+        )
+        state = replay_agent_run_effect(events)
+        stored = await self._effects.get(effect_id)
+        if stored != state.agent_run_effect:
+            raise ProjectionMismatchError(
+                "AgentRun effect relation differs from deterministic event replay"
+            )
+        return state, events

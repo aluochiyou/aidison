@@ -1,0 +1,234 @@
+#!/usr/local/bin/python
+"""Network-free, fixed-entrypoint UAV engineering calculations."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import sys
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from pathlib import Path
+from typing import Any
+
+_SCHEMA_VERSION = "engineering-calculation-output/v1"
+_QUANTUM = Decimal("0.0001")
+
+
+class InputError(ValueError):
+    pass
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--arguments-json", required=True)
+    try:
+        args = parser.parse_args()
+        if len(args.arguments_json.encode()) > 32_768:
+            raise InputError("arguments_too_large")
+        arguments = json.loads(args.arguments_json)
+        if not isinstance(arguments, dict) or set(arguments) != {"request"}:
+            raise InputError("invalid_arguments_shape")
+        request = arguments["request"]
+        if not isinstance(request, dict):
+            raise InputError("invalid_request_shape")
+        calculation = request.get("calculation")
+        if calculation == "flight_endurance":
+            result, assumptions = _flight_endurance(request)
+        elif calculation == "thrust_to_weight":
+            result, assumptions = _thrust_to_weight(request)
+        elif calculation == "power_budget":
+            result, assumptions = _power_budget(request)
+        else:
+            raise InputError("unknown_calculation")
+        canonical = json.dumps(
+            arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        output = {
+            "schema_version": _SCHEMA_VERSION,
+            "input_hash": hashlib.sha256(canonical.encode()).hexdigest(),
+            "result": result,
+            "assumptions": assumptions,
+        }
+        _write_output(output)
+    except (InputError, InvalidOperation, json.JSONDecodeError) as exc:
+        print(f"engineering_calculation_rejected:{exc}", file=sys.stderr)
+        return 2
+    except OSError as exc:
+        print(f"engineering_calculation_output_failed:{type(exc).__name__}", file=sys.stderr)
+        return 3
+    return 0
+
+
+def _flight_endurance(request: dict[str, Any]) -> tuple[dict[str, object], list[str]]:
+    _require_keys(
+        request,
+        {
+            "calculation",
+            "battery_voltage_v",
+            "battery_capacity_ah",
+            "usable_fraction",
+            "reserve_fraction",
+            "average_power_w",
+        },
+    )
+    voltage = _decimal(request, "battery_voltage_v", minimum=0, maximum=100)
+    capacity = _decimal(request, "battery_capacity_ah", minimum=0, maximum=200)
+    usable = _decimal(request, "usable_fraction", minimum=0, maximum=1)
+    reserve = _decimal(
+        request,
+        "reserve_fraction",
+        minimum=0,
+        maximum=Decimal("0.5"),
+        minimum_inclusive=True,
+    )
+    average_power = _decimal(request, "average_power_w", minimum=0, maximum=100_000)
+    nominal_energy = voltage * capacity
+    usable_energy = nominal_energy * usable * (Decimal(1) - reserve)
+    endurance = usable_energy / average_power * Decimal(60)
+    return (
+        {
+            "calculation": "flight_endurance",
+            "nominal_energy_wh": _number(nominal_energy),
+            "usable_energy_wh": _number(usable_energy),
+            "endurance_minutes": _number(endurance),
+        },
+        [
+            "average_power_w is treated as constant over the mission",
+            "usable_fraction and reserve_fraction are applied multiplicatively",
+        ],
+    )
+
+
+def _thrust_to_weight(request: dict[str, Any]) -> tuple[dict[str, object], list[str]]:
+    _require_keys(
+        request,
+        {"calculation", "motor_count", "thrust_per_motor_g", "all_up_weight_g"},
+    )
+    motor_count = request.get("motor_count")
+    if isinstance(motor_count, bool) or not isinstance(motor_count, int):
+        raise InputError("motor_count_not_integer")
+    if not 1 <= motor_count <= 32:
+        raise InputError("motor_count_out_of_range")
+    thrust_per_motor = _decimal(
+        request, "thrust_per_motor_g", minimum=0, maximum=100_000
+    )
+    weight = _decimal(request, "all_up_weight_g", minimum=0, maximum=1_000_000)
+    total_thrust = thrust_per_motor * motor_count
+    ratio = total_thrust / weight
+    hover = Decimal(100) / ratio
+    return (
+        {
+            "calculation": "thrust_to_weight",
+            "total_static_thrust_g": _number(total_thrust),
+            "thrust_to_weight_ratio": _number(ratio),
+            "estimated_hover_throttle_percent": _number(hover),
+            "meets_2_to_1_recommendation": ratio >= Decimal(2),
+        },
+        [
+            "all motors are assumed to produce the stated static thrust",
+            "hover throttle is an idealized static estimate without control or aerodynamic losses",
+        ],
+    )
+
+
+def _power_budget(request: dict[str, Any]) -> tuple[dict[str, object], list[str]]:
+    _require_keys(request, {"calculation", "battery_voltage_v", "components"})
+    voltage = _decimal(request, "battery_voltage_v", minimum=0, maximum=100)
+    components = request.get("components")
+    if not isinstance(components, list) or not 1 <= len(components) <= 64:
+        raise InputError("components_out_of_range")
+    peak_current = Decimal(0)
+    average_current = Decimal(0)
+    names: set[str] = set()
+    for index, component in enumerate(components):
+        if not isinstance(component, dict):
+            raise InputError(f"component_{index}_invalid")
+        _require_keys(component, {"name", "max_current_a", "duty_cycle"})
+        name = component.get("name")
+        if not isinstance(name, str) or not name.strip() or len(name) > 120:
+            raise InputError(f"component_{index}_name_invalid")
+        normalized_name = name.strip().casefold()
+        if normalized_name in names:
+            raise InputError("component_names_not_unique")
+        names.add(normalized_name)
+        current = _decimal(
+            component,
+            "max_current_a",
+            minimum=0,
+            maximum=10_000,
+            minimum_inclusive=True,
+        )
+        duty = _decimal(
+            component,
+            "duty_cycle",
+            minimum=0,
+            maximum=1,
+            minimum_inclusive=True,
+        )
+        peak_current += current
+        average_current += current * duty
+    return (
+        {
+            "calculation": "power_budget",
+            "component_count": len(components),
+            "peak_current_a": _number(peak_current),
+            "average_current_a": _number(average_current),
+            "peak_power_w": _number(voltage * peak_current),
+            "average_power_w": _number(voltage * average_current),
+        },
+        [
+            "peak current assumes all components reach maximum current simultaneously",
+            "average current uses the supplied independent duty-cycle estimates",
+        ],
+    )
+
+
+def _require_keys(value: dict[str, Any], expected: set[str]) -> None:
+    if set(value) != expected:
+        raise InputError("unexpected_or_missing_fields")
+
+
+def _decimal(
+    value: dict[str, Any],
+    key: str,
+    *,
+    minimum: Decimal | int,
+    maximum: Decimal | int,
+    minimum_inclusive: bool = False,
+) -> Decimal:
+    raw = value.get(key)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float, str)):
+        raise InputError(f"{key}_not_numeric")
+    number = Decimal(str(raw))
+    lower = Decimal(minimum)
+    upper = Decimal(maximum)
+    if not number.is_finite():
+        raise InputError(f"{key}_not_finite")
+    if (number < lower if minimum_inclusive else number <= lower) or number > upper:
+        raise InputError(f"{key}_out_of_range")
+    return number
+
+
+def _number(value: Decimal) -> str:
+    rounded = value.quantize(_QUANTUM, rounding=ROUND_HALF_UP)
+    return format(rounded, "f")
+
+
+def _write_output(value: dict[str, object]) -> None:
+    output_dir = Path("/output")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temporary = output_dir / f".result-{os.getpid()}.tmp"
+    temporary.write_text(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, output_dir / "result.json")
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
