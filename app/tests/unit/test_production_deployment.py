@@ -51,3 +51,16 @@ def test_public_connector_reaches_only_authenticated_gateway() -> None:
     assert "basic_auth" in caddyfile
     assert "reverse_proxy web:3000" in caddyfile
     assert "X-Frame-Options \"DENY\"" in caddyfile
+
+
+def test_caddy_keeps_the_only_business_route_behind_origin_authentication() -> None:
+    caddyfile = (APP_ROOT / "ops" / "Caddyfile.production").read_text(encoding="utf-8")
+
+    # The loopback health probe is intentionally the only unauthenticated path.
+    assert "@edge_health path /edge-health" in caddyfile
+    assert "handle @edge_health" in caddyfile
+    assert caddyfile.count("\thandle ") == 2
+    assert caddyfile.count("reverse_proxy ") == 1
+
+    business_handler = caddyfile.split("\thandle {", maxsplit=1)[1]
+    assert business_handler.index("basic_auth") < business_handler.index("reverse_proxy web:3000")

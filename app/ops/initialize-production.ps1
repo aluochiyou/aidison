@@ -58,6 +58,13 @@ function Read-SecretText {
     return ConvertFrom-SecureValue $secureValue
 }
 
+function Confirm-CloudflareAccessGuard {
+    $confirmation = Read-Host "确认已为该 hostname 配置 Cloudflare Access：仅允许你的精确邮箱地址（输入 ACCESS_READY 继续）"
+    if ($confirmation -cne "ACCESS_READY") {
+        throw "Production initialization requires a single-owner Cloudflare Access Allow policy before the Tunnel token is accepted"
+    }
+}
+
 function Read-EnvValues {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -159,6 +166,7 @@ $tunnelToken = Read-SecretText "Cloudflare Tunnel Token（不回显）"
 if ([string]::IsNullOrWhiteSpace($tunnelToken)) {
     throw "Cloudflare Tunnel Token is required"
 }
+Confirm-CloudflareAccessGuard
 
 $sourceValues = Read-EnvValues $sourcePath
 $providerKeys = @(
@@ -174,7 +182,8 @@ $providerKeys = @(
     "TAOBAO_APP_KEY",
     "TAOBAO_APP_SECRET",
     "AIDISON_RUNTIME_LANGFUSE_PUBLIC_KEY",
-    "AIDISON_RUNTIME_LANGFUSE_SECRET_KEY"
+    "AIDISON_RUNTIME_LANGFUSE_SECRET_KEY",
+    "AIDISON_RUNTIME_LANGFUSE_BASE_URL"
 )
 
 $values = @{
@@ -187,6 +196,26 @@ foreach ($key in $providerKeys) {
     if ($sourceValues.ContainsKey($key)) {
         $values[$key] = $sourceValues[$key]
     }
+}
+
+# Accept standard Langfuse names locally, but write only Aidison runtime names
+# to the production file.
+$langfuseAliases = @{
+    "LANGFUSE_PUBLIC_KEY" = "AIDISON_RUNTIME_LANGFUSE_PUBLIC_KEY"
+    "LANGFUSE_SECRET_KEY" = "AIDISON_RUNTIME_LANGFUSE_SECRET_KEY"
+    "LANGFUSE_BASE_URL" = "AIDISON_RUNTIME_LANGFUSE_BASE_URL"
+}
+foreach ($sourceKey in $langfuseAliases.Keys) {
+    $targetKey = $langfuseAliases[$sourceKey]
+    if (-not $values.ContainsKey($targetKey) -and $sourceValues.ContainsKey($sourceKey)) {
+        $values[$targetKey] = $sourceValues[$sourceKey]
+    }
+}
+if (
+    $values.ContainsKey("AIDISON_RUNTIME_LANGFUSE_PUBLIC_KEY") -and
+    $values.ContainsKey("AIDISON_RUNTIME_LANGFUSE_SECRET_KEY")
+) {
+    $values["AIDISON_RUNTIME_LANGFUSE_ENABLED"] = "1"
 }
 
 # Older local installations used GITHUB_API_KEY.  The runtime now requires a

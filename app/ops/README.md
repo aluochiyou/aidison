@@ -38,12 +38,14 @@ the active `aidison` runtime database or Artifact volume.
 `compose.production.yaml` is deliberately separate from the local developer stack. PostgreSQL and
 the FastAPI service have no host port; only Caddy binds to `127.0.0.1`. `cloudflared` creates the
 outbound-only public connection, so the router needs no port forwarding and the home IP is not
-published. Caddy Basic Auth is an origin-side fail-closed guard; Cloudflare Access should be enabled
-as a second identity gate.
+published. Caddy Basic Auth is an origin-side fail-closed guard. For the current single-owner test
+deployment, Cloudflare Access is a required first identity gate rather than an optional recommendation.
 
 1. In Cloudflare, create a remotely managed Tunnel and copy its connector token. Set the public
-   hostname service to `http://gateway:8080` and configure an Access application for the same
-   hostname before inviting users.
+   hostname service to `http://gateway:8080`. Before running the initializer, create a **Self-hosted**
+   Cloudflare Access application for exactly that hostname and add one **Allow** policy containing only
+   your exact email address. Do not use `Everyone`, an unrestricted email domain, or `One-time PIN` as
+   the policy's only Include rule. The initializer requires you to confirm this gate explicitly.
 2. Start Docker Desktop, then initialize the local secret file from `app/` in Windows PowerShell:
 
 ```powershell
@@ -52,8 +54,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\initialize-production.
 
 The initializer asks for the administrator password and Tunnel Token without echoing them,
 generates a URL-safe PostgreSQL password, hashes the administrator password through Caddy stdin,
-and imports only the allowlisted Provider keys already present in `.env`. It creates the
-Git-ignored `.env.production` atomically and refuses to overwrite an existing file.
+and imports only the allowlisted Provider keys already present in `.env`. Standard `LANGFUSE_*`
+variables are mapped to Aidison's runtime configuration; when both Langfuse keys are present, tracing
+is enabled. It creates the Git-ignored `.env.production` atomically and refuses to overwrite an
+existing file.
 
 3. Deploy from the same directory:
 
@@ -70,8 +74,8 @@ secret values.
 
 For manual initialization, copy `.env.production.example` to `.env.production` and fill every
 required value. In Cloudflare, create a remotely managed Tunnel and route the public hostname to
-`http://gateway:8080`. Configure an Access application for the same hostname before inviting
-users.
+`http://gateway:8080`. Configure the single-owner Access application for the same hostname before
+initializing the local production file.
 
 Before each production release, create the consistent PostgreSQL + Artifact pair with:
 
