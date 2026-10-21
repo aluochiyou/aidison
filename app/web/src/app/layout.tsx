@@ -2,6 +2,7 @@ import { NuqsAdapter } from "nuqs/adapters/next/app";
 import { Toaster } from "sonner";
 import "./globals.css";
 import "./views.css";
+import "./minecraft.css";
 
 export default function RootLayout({
   children,
