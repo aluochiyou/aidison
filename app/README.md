@@ -9,4 +9,4 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-开发工作台默认位于 <http://localhost:3000>，API 健康检查为 <http://localhost:8000/health>。
+开发工作台默认位于 <http://localhost:3000>，API 健康检查为 <http://localhost:8000/health>。公网访问应使用生产部署中的 Cloudflare Tunnel，而不是直接暴露开发端口。
