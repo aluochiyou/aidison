@@ -188,6 +188,20 @@ foreach ($key in $providerKeys) {
         $values[$key] = $sourceValues[$key]
     }
 }
+
+# Older local installations used GITHUB_API_KEY.  The runtime now requires a
+# token together with an explicit source allowlist, so only migrate the legacy
+# token when the operator has already supplied that allowlist under its new
+# name.  This avoids producing a production file that the worker will reject.
+if (
+    -not $values.ContainsKey("AIDISON_GITHUB_API_TOKEN") -and
+    $values.ContainsKey("AIDISON_GITHUB_SOURCE_TARGETS") -and
+    $sourceValues.ContainsKey("GITHUB_API_KEY")
+) {
+    $values["AIDISON_GITHUB_API_TOKEN"] = $sourceValues["GITHUB_API_KEY"]
+    Write-Host "Using the existing local GitHub token for the configured source allowlist."
+}
+
 if (-not $values.ContainsKey("DEEPSEEK_API_KEY")) {
     $deepseekKey = Read-SecretText "DEEPSEEK_API_KEY（当前 .env 未配置时必填，不回显）"
     if ([string]::IsNullOrWhiteSpace($deepseekKey)) {
