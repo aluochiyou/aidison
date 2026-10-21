@@ -204,7 +204,10 @@ $providerKeys = @(
 $values = @{
     POSTGRES_PASSWORD = New-UrlSafeSecret
     AIDISON_ADMIN_USER = $AdminUser
-    AIDISON_ADMIN_PASSWORD_HASH = "'$adminHash'"
+    # Keep the bcrypt value single-quoted in the dotenv file so its `$`
+    # characters are not interpreted by Docker Compose. Concatenation avoids
+    # nested quote interpolation differences between Windows PowerShell and pwsh.
+    AIDISON_ADMIN_PASSWORD_HASH = ("'" + $adminHash + "'")
 }
 if ($PublishMode -eq "CloudflareTunnel") {
     $values["CLOUDFLARE_TUNNEL_TOKEN"] = $tunnelToken
