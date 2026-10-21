@@ -41,6 +41,11 @@ outbound-only public connection, so the router needs no port forwarding and the 
 published. Caddy Basic Auth is an origin-side fail-closed guard. For the current single-owner test
 deployment, Cloudflare Access is a required first identity gate rather than an optional recommendation.
 
+For a temporary one-person test deployment without Cloudflare Zero Trust, use the explicit
+`OriginBasicAuth` mode below. It retains the Tunnel and Caddy's bcrypt-protected Basic Auth, but it
+does not provide identity-based access logs, MFA, or per-user revocation. Never use this mode for
+multiple users or sensitive shared access.
+
 1. In Cloudflare, create a remotely managed Tunnel and copy its connector token. Set the public
    hostname service to `http://gateway:8080`. Before running the initializer, create a **Self-hosted**
    Cloudflare Access application for exactly that hostname and add one **Allow** policy containing only
@@ -51,6 +56,15 @@ deployment, Cloudflare Access is a required first identity gate rather than an o
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\initialize-production.ps1
 ```
+
+If you are intentionally running a single-owner test without Cloudflare Access, use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\initialize-production.ps1 `
+  -AccessMode OriginBasicAuth -Deploy
+```
+
+This switch is explicit so an Access-protected deployment cannot silently lose its identity gate.
 
 The initializer asks for the administrator password and Tunnel Token without echoing them,
 generates a URL-safe PostgreSQL password, hashes the administrator password through Caddy stdin,

@@ -3,6 +3,8 @@ param(
     [string]$EnvFile = ".env.production",
     [string]$SourceEnvFile = ".env",
     [string]$AdminUser = "aidison",
+    [ValidateSet("CloudflareAccess", "OriginBasicAuth")]
+    [string]$AccessMode = "CloudflareAccess",
     [switch]$Deploy,
     [switch]$SkipBuild
 )
@@ -166,7 +168,12 @@ $tunnelToken = Read-SecretText "Cloudflare Tunnel Token（不回显）"
 if ([string]::IsNullOrWhiteSpace($tunnelToken)) {
     throw "Cloudflare Tunnel Token is required"
 }
-Confirm-CloudflareAccessGuard
+if ($AccessMode -eq "CloudflareAccess") {
+    Confirm-CloudflareAccessGuard
+}
+else {
+    Write-Warning "OriginBasicAuth mode is for a single trusted operator only. Caddy authentication remains required; do not expose API, PostgreSQL, or web ports."
+}
 
 $sourceValues = Read-EnvValues $sourcePath
 $providerKeys = @(

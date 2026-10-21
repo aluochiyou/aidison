@@ -64,3 +64,12 @@ def test_caddy_keeps_the_only_business_route_behind_origin_authentication() -> N
 
     business_handler = caddyfile.split("\thandle {", maxsplit=1)[1]
     assert business_handler.index("basic_auth") < business_handler.index("reverse_proxy web:3000")
+
+
+def test_production_initializer_requires_an_explicit_access_mode_choice() -> None:
+    initializer = (APP_ROOT / "ops" / "initialize-production.ps1").read_text(encoding="utf-8")
+
+    assert '[ValidateSet("CloudflareAccess", "OriginBasicAuth")]' in initializer
+    assert '[string]$AccessMode = "CloudflareAccess"' in initializer
+    assert 'if ($AccessMode -eq "CloudflareAccess")' in initializer
+    assert "OriginBasicAuth mode is for a single trusted operator only" in initializer
