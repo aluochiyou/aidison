@@ -35,6 +35,7 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
         "AIDISON_MODEL_CIRCUIT_WINDOW_SECONDS",
         "AIDISON_MODEL_CIRCUIT_OPEN_SECONDS",
         "AIDISON_MODEL_CONTRACT_PROBE_TIMEOUT_SECONDS",
+        "AIDISON_RESEARCH_MODEL_TIMEOUT_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -49,6 +50,7 @@ def test_worker_settings_use_safe_local_defaults(monkeypatch: pytest.MonkeyPatch
     assert settings.model_circuit_window_seconds == 60
     assert settings.model_circuit_open_seconds == 30
     assert settings.model_contract_probe_timeout_seconds == 30
+    assert settings.research_model_timeout_seconds == 300
     assert settings.worker_id
 
 

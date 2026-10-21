@@ -199,7 +199,11 @@ class WorkerSettings(AidisonSettings):
         le=100_000,
     )
     research_model_timeout_seconds: int = Field(
-        default=120,
+        # Keep the research execution deadline aligned with the configured
+        # provider client.  A shorter hidden deadline turns an otherwise
+        # healthy long-running response into an ambiguous post-dispatch
+        # effect, which cannot safely be admitted as research evidence.
+        default=300,
         validation_alias="AIDISON_RESEARCH_MODEL_TIMEOUT_SECONDS",
         ge=10,
         le=600,

@@ -35,7 +35,7 @@ runtime:
   # Live model probe is opt-in via `worker --check --probe-provider-contract`.
   model_contract_probe_timeout_seconds: 30
   research_model_reserved_tokens: 4000
-  research_model_timeout_seconds: 120
+  research_model_timeout_seconds: 300
   lease_seconds: 60
   poll_seconds: 0.5
   durable_recheck_seconds: 30
