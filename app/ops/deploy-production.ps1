@@ -7,7 +7,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$composeFile = "compose.production.yaml"
+$appRoot = Split-Path -Parent $PSScriptRoot
+$composeFile = Join-Path $appRoot "compose.production.yaml"
+if (-not [IO.Path]::IsPathRooted($EnvFile)) {
+    $EnvFile = Join-Path $appRoot $EnvFile
+}
 
 if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
     throw "Missing $EnvFile. Copy .env.production.example and fill every required value."

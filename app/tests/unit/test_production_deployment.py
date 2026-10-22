@@ -82,3 +82,11 @@ def test_production_scripts_support_private_tailscale_without_a_tunnel_token() -
     assert 'if ($PublishMode -eq "CloudflareTunnel")' in initializer
     assert '[ValidateSet("Tailscale", "CloudflareTunnel")]' in deployer
     assert '$requiredKeys += "CLOUDFLARE_TUNNEL_TOKEN"' in deployer
+
+
+def test_deployer_resolves_relative_files_from_the_app_directory() -> None:
+    deployer = (APP_ROOT / "ops" / "deploy-production.ps1").read_text(encoding="utf-8")
+
+    assert '$appRoot = Split-Path -Parent $PSScriptRoot' in deployer
+    assert '$composeFile = Join-Path $appRoot "compose.production.yaml"' in deployer
+    assert '$EnvFile = Join-Path $appRoot $EnvFile' in deployer
