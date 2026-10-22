@@ -111,7 +111,8 @@ function New-UrlSafeSecret {
 
 function Set-EnvTemplateValues {
     param(
-        [Parameter(Mandatory = $true)][string[]]$TemplateLines,
+        # Production dotenv templates intentionally contain blank separator lines.
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string[]]$TemplateLines,
         [Parameter(Mandatory = $true)][hashtable]$Values
     )
 
