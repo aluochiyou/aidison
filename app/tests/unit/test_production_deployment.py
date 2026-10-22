@@ -90,3 +90,11 @@ def test_deployer_resolves_relative_files_from_the_app_directory() -> None:
     assert '$appRoot = Split-Path -Parent $PSScriptRoot' in deployer
     assert '$composeFile = Join-Path $appRoot "compose.production.yaml"' in deployer
     assert '$EnvFile = Join-Path $appRoot $EnvFile' in deployer
+
+
+def test_existing_private_deployment_can_add_cloudflare_tunnel_without_reinitializing() -> None:
+    enabler = (APP_ROOT / "ops" / "enable-cloudflare-tunnel.ps1").read_text(encoding="utf-8-sig")
+
+    assert 'Cloudflare Tunnel Token（不回显）' in enabler
+    assert 'CLOUDFLARE_TUNNEL_TOKEN=$tunnelToken' in enabler
+    assert '-PublishMode CloudflareTunnel' in enabler
