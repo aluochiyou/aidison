@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$EnvFile = ".env.production",
     [ValidateSet("Tailscale", "CloudflareTunnel")]

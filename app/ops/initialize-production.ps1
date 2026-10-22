@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$EnvFile = ".env.production",
     [string]$SourceEnvFile = ".env",
@@ -201,13 +201,12 @@ $providerKeys = @(
     "AIDISON_RUNTIME_LANGFUSE_BASE_URL"
 )
 
+$dotenvQuote = [string][char]39
 $values = @{
     POSTGRES_PASSWORD = New-UrlSafeSecret
     AIDISON_ADMIN_USER = $AdminUser
-    # Keep the bcrypt value single-quoted in the dotenv file so its `$`
-    # characters are not interpreted by Docker Compose. Concatenation avoids
-    # nested quote interpolation differences between Windows PowerShell and pwsh.
-    AIDISON_ADMIN_PASSWORD_HASH = ("'" + $adminHash + "'")
+    # Preserve bcrypt dollar signs in the dotenv file without relying on nested quotes.
+    AIDISON_ADMIN_PASSWORD_HASH = ($dotenvQuote + $adminHash + $dotenvQuote)
 }
 if ($PublishMode -eq "CloudflareTunnel") {
     $values["CLOUDFLARE_TUNNEL_TOKEN"] = $tunnelToken
