@@ -24,7 +24,8 @@ if ($PublishMode -eq "CloudflareTunnel") {
 }
 $envText = Get-Content -Raw -LiteralPath $EnvFile
 foreach ($key in $requiredKeys) {
-    $pattern = "(?m)^$([regex]::Escape($key))=(?<value>[^\r\n]+)$"
+    # Do not require a trailing newline: the final dotenv entry is valid at EOF.
+    $pattern = "(?m)^$([regex]::Escape($key))=(?<value>[^\r\n]+)"
     if ($envText -notmatch $pattern) {
         throw "Required production setting is missing or still a placeholder: $key"
     }
@@ -34,13 +35,13 @@ foreach ($key in $requiredKeys) {
     }
 }
 
-$postgresMatch = [regex]::Match($envText, "(?m)^POSTGRES_PASSWORD=(?<value>[^\r\n]+)$")
+$postgresMatch = [regex]::Match($envText, "(?m)^POSTGRES_PASSWORD=(?<value>[^\r\n]+)")
 $postgresPassword = $postgresMatch.Groups["value"].Value.Trim().Trim("'", '"')
 if ($postgresPassword.Length -lt 32 -or $postgresPassword -notmatch '^[A-Za-z0-9_-]+$') {
     throw "POSTGRES_PASSWORD must contain at least 32 URL-safe random characters"
 }
 
-$hashMatch = [regex]::Match($envText, "(?m)^AIDISON_ADMIN_PASSWORD_HASH=(?<value>[^\r\n]+)$")
+$hashMatch = [regex]::Match($envText, "(?m)^AIDISON_ADMIN_PASSWORD_HASH=(?<value>[^\r\n]+)")
 $passwordHash = $hashMatch.Groups["value"].Value.Trim().Trim("'", '"')
 if ($passwordHash -notmatch '^\$2[aby]\$\d{2}\$.{53}$') {
     throw "AIDISON_ADMIN_PASSWORD_HASH must be a Caddy-compatible bcrypt hash"
