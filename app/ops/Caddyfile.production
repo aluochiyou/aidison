@@ -10,10 +10,6 @@
 	}
 
 	handle {
-		basic_auth {
-			{$AIDISON_ADMIN_USER} {$AIDISON_ADMIN_PASSWORD_HASH}
-		}
-
 		header {
 			-Server
 			Strict-Transport-Security "max-age=31536000; includeSubDomains"

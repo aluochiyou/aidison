@@ -34,7 +34,7 @@ def test_production_compose_exposes_only_loopback_gateway() -> None:
     assert networks["app-internal"] == {"internal": True}
 
 
-def test_public_connector_reaches_only_authenticated_gateway() -> None:
+def test_public_connector_reaches_the_gateway() -> None:
     compose = _production_compose()
     services = compose["services"]
     assert isinstance(services, dict)
@@ -47,12 +47,11 @@ def test_public_connector_reaches_only_authenticated_gateway() -> None:
     assert cloudflared["environment"] == {"TUNNEL_TOKEN": "${CLOUDFLARE_TUNNEL_TOKEN:-}"}
 
     caddyfile = (APP_ROOT / "ops" / "Caddyfile.production").read_text(encoding="utf-8")
-    assert "basic_auth" in caddyfile
     assert "reverse_proxy web:3000" in caddyfile
     assert "X-Frame-Options \"DENY\"" in caddyfile
 
 
-def test_caddy_keeps_the_only_business_route_behind_origin_authentication() -> None:
+def test_caddy_keeps_the_only_health_route_outside_the_business_handler() -> None:
     caddyfile = (APP_ROOT / "ops" / "Caddyfile.production").read_text(encoding="utf-8")
 
     # The loopback health probe is intentionally the only unauthenticated path.
@@ -62,7 +61,8 @@ def test_caddy_keeps_the_only_business_route_behind_origin_authentication() -> N
     assert caddyfile.count("reverse_proxy ") == 1
 
     business_handler = caddyfile.split("\thandle {", maxsplit=1)[1]
-    assert business_handler.index("basic_auth") < business_handler.index("reverse_proxy web:3000")
+    assert "basic_auth" not in business_handler
+    assert "reverse_proxy web:3000" in business_handler
 
 
 def test_production_initializer_requires_an_explicit_access_mode_choice() -> None:
@@ -106,8 +106,9 @@ def test_admin_password_reset_recreates_only_the_gateway() -> None:
     assert "新管理员密码（至少 16 个字符，不回显）" in resetter
     assert "AIDISON_ADMIN_PASSWORD_HASH='$hash'" in resetter
     assert "--no-deps --force-recreate gateway" in resetter
-    assert '$hashProcess.StandardInput.WriteLine($password)' in resetter
-    assert "Caddy's CLI reads one line" in resetter
+    assert '[IO.File]::WriteAllText($hashInputPath, "$password`n", [Text.UTF8Encoding]::new($false))' in resetter
+    assert '/run/secrets/aidison-admin-password:ro' in resetter
+    assert "Remove-Item -LiteralPath $hashInputPath -Force" in resetter
     assert "Get-Command curl.exe" in resetter
     assert 'url = "http://127.0.0.1:8080/"' in resetter
     assert 'noproxy = "*"' in resetter
