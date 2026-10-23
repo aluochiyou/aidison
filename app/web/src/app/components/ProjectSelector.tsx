@@ -36,8 +36,12 @@ export function ProjectSelector({
 
   const openProject = async (id: string) => {
     setQueryError(null);
-    const snapshot = await loadProject(id);
-    onSelect(snapshot.project);
+    try {
+      const snapshot = await loadProject(id);
+      onSelect(snapshot.project);
+    } catch {
+      setQueryError("无法读取该项目；请确认项目 ID 正确，或稍后重试。");
+    }
   };
 
   const openProjectQuery = async () => {
@@ -90,7 +94,13 @@ export function ProjectSelector({
             <p className="empty-copy">这里还没有最近打开的项目。</p>
           )}
         </div>
-        <div className="project-id-row">
+        <form
+          className="project-id-row"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void openProjectQuery();
+          }}
+        >
           <Input
             value={projectQuery}
             onChange={(event) => {
@@ -101,11 +111,11 @@ export function ProjectSelector({
           />
           <Button
             disabled={!projectQuery.trim() || loading || busy}
-            onClick={() => void openProjectQuery()}
+            type="submit"
           >
             读取
           </Button>
-        </div>
+        </form>
         {queryError || error ? (
           <p className="form-error">{queryError || error}</p>
         ) : null}

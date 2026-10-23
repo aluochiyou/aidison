@@ -17,7 +17,16 @@ function getStoredProjects(): StoredProject[] {
   const raw = localStorage.getItem(PROJECTS_KEY);
   if (!raw) return [];
   try {
-    return JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (project): project is StoredProject =>
+        Boolean(project) &&
+        typeof project === "object" &&
+        typeof (project as StoredProject).id === "string" &&
+        typeof (project as StoredProject).name === "string" &&
+        typeof (project as StoredProject).lastAccessed === "string"
+    );
   } catch {
     return [];
   }
