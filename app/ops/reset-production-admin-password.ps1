@@ -36,12 +36,28 @@ try {
         throw "The two administrator passwords do not match"
     }
 
-    $hashOutput = $password | & docker run --rm -i caddy:2.11.7-alpine `
-        caddy hash-password --algorithm bcrypt --bcrypt-cost 14
-    if ($LASTEXITCODE -ne 0) {
+    $hashProcessInfo = [Diagnostics.ProcessStartInfo]::new()
+    $hashProcessInfo.FileName = "docker"
+    $hashProcessInfo.Arguments = "run --rm -i caddy:2.11.7-alpine caddy hash-password --algorithm bcrypt --bcrypt-cost 14"
+    $hashProcessInfo.UseShellExecute = $false
+    $hashProcessInfo.RedirectStandardInput = $true
+    $hashProcessInfo.RedirectStandardOutput = $true
+    $hashProcessInfo.RedirectStandardError = $true
+
+    $hashProcess = [Diagnostics.Process]::new()
+    $hashProcess.StartInfo = $hashProcessInfo
+    [void]$hashProcess.Start()
+    # Do not use a PowerShell pipeline here: native pipelines append a line ending,
+    # which would turn the newline into part of the password hash input.
+    $hashProcess.StandardInput.Write($password)
+    $hashProcess.StandardInput.Close()
+    $hashOutput = $hashProcess.StandardOutput.ReadToEnd()
+    $hashError = $hashProcess.StandardError.ReadToEnd()
+    $hashProcess.WaitForExit()
+    if ($hashProcess.ExitCode -ne 0) {
         throw "Caddy failed to hash the administrator password"
     }
-    $hash = ($hashOutput | Select-Object -Last 1).Trim()
+    $hash = $hashOutput.Trim()
     if ($hash -notmatch '^\$2[aby]\$14\$.{53}$') {
         throw "Caddy returned an invalid bcrypt hash"
     }
@@ -122,4 +138,5 @@ finally {
     $confirmation = $null
     $hash = $null
     $credential = $null
+    $hashError = $null
 }
