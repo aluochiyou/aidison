@@ -47,15 +47,15 @@ try {
     $hashProcess = [Diagnostics.Process]::new()
     $hashProcess.StartInfo = $hashProcessInfo
     [void]$hashProcess.Start()
-    # Do not use a PowerShell pipeline here: native pipelines append a line ending,
-    # which would turn the newline into part of the password hash input.
-    $hashProcess.StandardInput.Write($password)
+    # Caddy's CLI reads one line and strips its line ending.  Write the line
+    # directly so the password never appears in a shell command or process args.
+    $hashProcess.StandardInput.WriteLine($password)
     $hashProcess.StandardInput.Close()
     $hashOutput = $hashProcess.StandardOutput.ReadToEnd()
     $hashError = $hashProcess.StandardError.ReadToEnd()
     $hashProcess.WaitForExit()
     if ($hashProcess.ExitCode -ne 0) {
-        throw "Caddy failed to hash the administrator password"
+        throw "Caddy failed to hash the administrator password: $($hashError.Trim())"
     }
     $hash = $hashOutput.Trim()
     if ($hash -notmatch '^\$2[aby]\$14\$.{53}$') {
