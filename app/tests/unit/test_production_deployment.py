@@ -98,3 +98,11 @@ def test_existing_private_deployment_can_add_cloudflare_tunnel_without_reinitial
     assert 'Cloudflare Tunnel Token（不回显）' in enabler
     assert 'CLOUDFLARE_TUNNEL_TOKEN=$tunnelToken' in enabler
     assert '-PublishMode CloudflareTunnel' in enabler
+
+
+def test_admin_password_reset_recreates_only_the_gateway() -> None:
+    resetter = (APP_ROOT / "ops" / "reset-production-admin-password.ps1").read_text(encoding="utf-8-sig")
+
+    assert "新管理员密码（至少 16 个字符，不回显）" in resetter
+    assert "AIDISON_ADMIN_PASSWORD_HASH='$hash'" in resetter
+    assert "--no-deps --force-recreate gateway" in resetter
