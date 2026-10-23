@@ -28,6 +28,7 @@ from aidison.research.researcher import (
     GatewayJsonModeSingleTaskResearcher,
     JsonModeResearchProviderAdapter,
     JsonModeSingleTaskResearcher,
+    _provider_receipt,
     _provider_usage_tokens,
     _research_messages,
 )
@@ -135,6 +136,25 @@ def test_provider_usage_accepts_complete_provider_reported_components(
     expected: int | None,
 ) -> None:
     assert _provider_usage_tokens(message) == expected  # type: ignore[arg-type]
+
+
+def test_provider_receipt_is_payload_free_and_marks_missing_usage() -> None:
+    message = SimpleNamespace(
+        usage_metadata={},
+        response_metadata={"finish_reason": "stop", "token_usage": {}},
+    )
+
+    assert _provider_receipt(
+        message,
+        provider_request_id="provider-request-1",
+        usage_tokens=None,
+    ) == {
+        "provider_request_id": "provider-request-1",
+        "usage_tokens": None,
+        "usage_metadata_present": True,
+        "response_usage_present": True,
+        "finish_reason": "stop",
+    }
 
 
 def test_research_payload_rejects_duplicate_evidence_assertion() -> None:

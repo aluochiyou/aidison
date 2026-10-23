@@ -226,6 +226,8 @@ class JsonModeResearchProviderAdapter(ProviderAdapter):
             # must therefore be represented as a typed, non-silent failure.
             raise ProviderFailure(ProviderFailureClass.TRANSIENT_UPSTREAM) from error
 
+        usage_tokens = _provider_usage_tokens(response)
+        provider_request_id = _provider_request_id(response)
         async with session_scope(self._session_factory) as session:
             artifact = await ContentAddressedArtifactStore(
                 session, self._artifact_root
@@ -234,12 +236,24 @@ class JsonModeResearchProviderAdapter(ProviderAdapter):
                 agent_run_id=request.run_id,
                 basis_hash=request.basis_hash,
                 kind="research_model_response",
-                value={"content": content},
+                value={
+                    "content": content,
+                    # Keep a payload-free receipt next to the immutable model
+                    # output.  When a provider omits billable usage on one
+                    # request, operators can distinguish an adapter parsing
+                    # issue from an upstream metering omission without
+                    # retaining prompts, source text, or model reasoning.
+                    "provider_receipt": _provider_receipt(
+                        response,
+                        provider_request_id=provider_request_id,
+                        usage_tokens=usage_tokens,
+                    ),
+                },
             )
         return {
             "response_ref": artifact.ref,
-            "provider_request_id": _provider_request_id(response),
-            "usage_tokens": _provider_usage_tokens(response),
+            "provider_request_id": provider_request_id,
+            "usage_tokens": usage_tokens,
         }
 
 
@@ -574,6 +588,36 @@ def _provider_usage_tokens(message: BaseMessage) -> int | None:
                 # field but retain both billable components.
                 return input_tokens + output_tokens
     return None
+
+
+def _provider_receipt(
+    message: BaseMessage,
+    *,
+    provider_request_id: str | None,
+    usage_tokens: int | None,
+) -> dict[str, object]:
+    """Return a compact, non-content receipt for a physical model response.
+
+    The receipt is diagnostic evidence only.  It deliberately excludes model
+    output, prompt data, headers, and arbitrary provider metadata.
+    """
+
+    response_metadata = getattr(message, "response_metadata", None)
+    finish_reason = (
+        response_metadata.get("finish_reason")
+        if isinstance(response_metadata, dict)
+        else None
+    )
+    return {
+        "provider_request_id": provider_request_id,
+        "usage_tokens": usage_tokens,
+        "usage_metadata_present": isinstance(getattr(message, "usage_metadata", None), dict),
+        "response_usage_present": isinstance(response_metadata, dict)
+        and any(
+            isinstance(response_metadata.get(key), dict) for key in ("token_usage", "usage")
+        ),
+        "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
+    }
 
 
 def _nonnegative_integer(value: object) -> int | None:
