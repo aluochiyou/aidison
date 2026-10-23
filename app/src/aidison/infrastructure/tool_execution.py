@@ -9,6 +9,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aidison.infrastructure.agent_run_budget import AgentRunBudgetLedger
+from aidison.infrastructure.agent_runs import AgentRunControl
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.database import session_scope
 from aidison.infrastructure.replay import InvocationRecordingRepository
@@ -75,7 +76,12 @@ class PostgresReadToolExecutor:
         target: str,
         invoke: ToolAdapterCallable,
     ) -> ToolExecutionResult:
-        invocation = self._dispatcher.authorize(intent, authority=authority)
+        async with session_scope(self._session_factory) as session:
+            refreshed_claim = await AgentRunControl(session).refresh_claim(claim=claim)
+        refreshed_authority = authority.model_copy(
+            update={"deadline": refreshed_claim.lease_expires_at}
+        )
+        invocation = self._dispatcher.authorize(intent, authority=refreshed_authority)
         self._validate_scope(
             invocation_effect=invocation.effect_class,
             run=run,

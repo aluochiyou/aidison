@@ -116,11 +116,17 @@ def _progress_events(
         if operation.state not in _DISPATCHED_STATES:
             continue
         occurred_at = operation.dispatched_at or operation.created_at
-        token_cost = (
-            operation.consumed_tokens
-            if operation.state is AgentRunBudgetState.SETTLED
-            else operation.reserved_tokens
-        )
+        # A concurrently running attempt has reserved capacity but has not
+        # consumed it yet. Counting that reservation as no-progress cost makes
+        # the second ready task trip the watchdog before the first task can
+        # finish and admit a result. Unknown post-dispatch outcomes remain
+        # conservative because their final usage cannot be proven.
+        if operation.state is AgentRunBudgetState.SETTLED:
+            token_cost = operation.consumed_tokens
+        elif operation.state is AgentRunBudgetState.AMBIGUOUS:
+            token_cost = operation.reserved_tokens
+        else:
+            token_cost = 0
         events.append(
             ProgressEvent(
                 run_id=run_id,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { toast } from "sonner";
 import {
@@ -1976,10 +1976,37 @@ export function ProjectConsole({
     () => getClient().getSnapshot(initialProject.id),
     { keepPreviousData: true }
   );
-  const refresh = useCallback(async () => mutate(), [mutate]);
-  const onRuntimeEvent = useCallback(() => {
-    void mutate();
+  const snapshotReadyRef = useRef(false);
+  const refreshInFlightRef = useRef<Promise<unknown> | null>(null);
+  const refreshQueuedRef = useRef(false);
+  useEffect(() => {
+    snapshotReadyRef.current = data !== undefined;
+  }, [data]);
+  const refresh = useCallback(async () => {
+    if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
+      return refreshInFlightRef.current;
+    }
+    let result;
+    do {
+      refreshQueuedRef.current = false;
+      const request = mutate();
+      refreshInFlightRef.current = request;
+      try {
+        result = await request;
+      } finally {
+        refreshInFlightRef.current = null;
+      }
+    } while (refreshQueuedRef.current);
+    return result;
   }, [mutate]);
+  const onRuntimeEvent = useCallback(() => {
+    // The initial Snapshot is authoritative and can be relatively large.
+    // Do not let replayed/live events restart that first request. Afterwards,
+    // coalesce bursts behind one in-flight refresh instead of creating an
+    // unbounded queue of identical Snapshot reads.
+    if (snapshotReadyRef.current) void refresh();
+  }, [refresh]);
 
   /** 各类行动完成后的通用收尾：刷新快照并收起需求表单状态。 */
   const handleActionDone = useCallback(async () => {

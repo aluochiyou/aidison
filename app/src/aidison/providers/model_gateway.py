@@ -577,11 +577,16 @@ class ModelGateway:
         if (
             not isinstance(usage_tokens, int)
             or usage_tokens < 0
-            or usage_tokens > request.budget_context.reserved_tokens
         ):
             await self._mark_budget_ambiguous(
                 operation_id=operation_id,
                 normalized_error="missing_or_unbounded_provider_usage",
+            )
+            return False
+        if usage_tokens > request.budget_context.reserved_tokens:
+            await self._mark_budget_ambiguous(
+                operation_id=operation_id,
+                normalized_error="provider_usage_exceeded_reservation",
             )
             return False
         await self._settle_budget(

@@ -17,7 +17,11 @@ from aidison.providers.model_gateway import ModelInvocationResult, ProviderFailu
 from aidison.research.coverage import CoverageCompileInput, compile_coverage_contract
 from aidison.research.langgraph_contracts import TaskEnvelope
 from aidison.research.researcher import ResearchModelInvocationError
-from aidison.research.strategy import ResearchRunContract, compile_research_execution_policy
+from aidison.research.strategy import (
+    ResearchRunContract,
+    compile_research_execution_policy,
+    compile_research_tool_call_cap,
+)
 from aidison.runtime.agent_runs import AgentRun, AgentRunKind
 
 
@@ -344,3 +348,24 @@ def test_server_compiles_each_approved_research_depth_to_frozen_policy(
     assert policy.adaptive.max_patch_revisions == patches
     assert policy.minimum_evidence_sources_for_must == sources
     assert policy.minimum_evidence_origins_for_must == sources
+
+
+@pytest.mark.parametrize(
+    ("research_depth", "without_verifier", "with_verifier"),
+    (("focused", 8, 16), ("standard", 16, 32), ("deep", 32, 64)),
+)
+def test_tool_call_cap_reserves_a_complete_independent_verifier_pass(
+    research_depth: str,
+    without_verifier: int,
+    with_verifier: int,
+) -> None:
+    policy = compile_research_execution_policy(research_depth=research_depth)
+
+    assert compile_research_tool_call_cap(
+        execution_policy=policy,
+        requires_independent_verification=False,
+    ) == without_verifier
+    assert compile_research_tool_call_cap(
+        execution_policy=policy,
+        requires_independent_verification=True,
+    ) == with_verifier

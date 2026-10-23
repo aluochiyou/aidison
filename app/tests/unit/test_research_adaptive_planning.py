@@ -270,6 +270,55 @@ def test_contract_or_high_impact_can_route_verifier_without_a_conflict() -> None
     )
 
 
+def test_verifier_groups_multiple_coverage_keys_for_the_same_module() -> None:
+    contract = CoverageContract(
+        basis_hash=_hash("basis"),
+        objective="Choose a compatible power system.",
+        keys=(
+            CoverageKey(
+                key="power.current",
+                question="What current is required?",
+                priority=CoveragePriority.MUST,
+                module_ids=("power",),
+                required_source_kinds=("specification",),
+                requires_independent_verification=True,
+            ),
+            CoverageKey(
+                key="power.voltage",
+                question="What voltage is compatible?",
+                priority=CoveragePriority.MUST,
+                module_ids=("power",),
+                required_source_kinds=("specification",),
+                requires_independent_verification=True,
+            ),
+        ),
+    )
+    snapshot = consolidate_research(
+        ConsolidationInput(
+            coverage_contract=contract,
+            observations=(),
+            policy=SufficiencyPolicy(verification_available=True),
+        )
+    )
+
+    routed = route_verifier_tasks(
+        VerifierRoutingInput(
+            run_id=uuid4(),
+            basis_hash=_hash("basis"),
+            plan_revision=1,
+            coverage_contract=contract,
+            snapshot=snapshot,
+            allowed_tool_ids=("web.search",),
+            budget_ref="budget://research/1",
+            policy=VerifierRoutingPolicy(max_verifier_tasks=1),
+        )
+    )
+
+    assert len(routed.tasks) == 1
+    assert routed.tasks[0].task_key == "verify.module.power"
+    assert routed.tasks[0].coverage_keys == ("power.current", "power.voltage")
+
+
 def test_verifier_limit_refuses_to_create_a_partial_verifier_batch() -> None:
     snapshot = consolidate_research(
         ConsolidationInput(

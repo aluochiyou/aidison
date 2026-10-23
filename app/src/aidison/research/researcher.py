@@ -160,7 +160,14 @@ class GatewayResearchOutput:
 
 
 class _ConservativeTokenEstimator(TokenEstimator):
-    """Reserve one token for every two characters before provider settlement."""
+    """Reserve one token per character before provider settlement.
+
+    The research context frequently contains CJK text, where the previous
+    two-characters-per-token heuristic under-reserved enough budget for a
+    valid provider response to exceed its reservation. Provider-reported
+    usage remains the settlement source of truth; this estimate only bounds
+    context assembly before dispatch.
+    """
 
     def estimate(self, text: str) -> int:
         return _conservative_text_tokens(text)
@@ -267,21 +274,21 @@ class GatewayJsonModeSingleTaskResearcher:
         session_factory: async_sessionmaker[AsyncSession],
         artifact_root: Path,
         target: ModelTarget,
-        reserved_tokens_per_call: int,
+        model_context_window_tokens: int,
         max_output_tokens: int,
         max_attempts_per_target: int = 2,
         timeout_seconds: int = 120,
         system_prompt: str = _SYSTEM_PROMPT,
     ) -> None:
-        if reserved_tokens_per_call < 1:
-            raise ValueError("reserved_tokens_per_call must be positive")
-        if not 1 <= max_output_tokens < reserved_tokens_per_call:
-            raise ValueError("max_output_tokens must fit within the model reservation")
+        if model_context_window_tokens < 1:
+            raise ValueError("model_context_window_tokens must be positive")
+        if not 1 <= max_output_tokens < model_context_window_tokens:
+            raise ValueError("max_output_tokens must fit within the model context window")
         self._gateway = gateway
         self._session_factory = session_factory
         self._artifact_root = artifact_root
         self._target = target
-        self._reserved_tokens_per_call = reserved_tokens_per_call
+        self._model_context_window_tokens = model_context_window_tokens
         self._max_output_tokens = max_output_tokens
         self._max_attempts_per_target = max_attempts_per_target
         self._timeout_seconds = timeout_seconds
@@ -319,8 +326,12 @@ class GatewayJsonModeSingleTaskResearcher:
             account = await AgentRunBudgetLedger(session).get_account_for_run(run.id)
         available_tokens = account.token_cap - account.token_reserved - account.token_consumed
         grant_cap = grant.model_token_cap if grant.model_token_cap is not None else available_tokens
-        reserved_tokens = min(self._reserved_tokens_per_call, available_tokens, grant_cap)
-        if reserved_tokens < 1:
+        invocation_token_cap = min(
+            self._model_context_window_tokens,
+            available_tokens,
+            grant_cap,
+        )
+        if invocation_token_cap < 1:
             raise ResearchContextBudgetError("research_run_budget_is_exhausted")
         assembly, max_output_tokens = self._assemble_budgeted_context(
             run=run,
@@ -329,9 +340,19 @@ class GatewayJsonModeSingleTaskResearcher:
             input_refs=input_refs,
             steering_instructions=steering_instructions,
             evidence_context=evidence_context,
-            reserved_tokens=reserved_tokens,
+            reserved_tokens=invocation_token_cap,
         )
         messages = _messages_from_assembly(assembly)
+        # Reserve what this concrete invocation can consume, rather than the
+        # model's entire context window.  This preserves parallelism while the
+        # run-level ledger still fails closed if provider usage exceeds the
+        # estimate plus output and safety reserves.
+        reserved_tokens = min(
+            invocation_token_cap,
+            assembly.manifest.input_token_estimate
+            + max_output_tokens
+            + assembly.manifest.safety_margin_tokens,
+        )
         async with session_scope(self._session_factory) as session:
             artifacts = ContentAddressedArtifactStore(session, self._artifact_root)
             context_manifest = await artifacts.put_agent_run_json(
@@ -424,7 +445,7 @@ class GatewayJsonModeSingleTaskResearcher:
                 safety_margin_tokens=200,
                 policy_version="research-gateway-context-v1",
                 authorization_scope_hash=run.basis_hash,
-                tokenizer_binding_hash=_sha256("conservative-char2-v1"),
+                tokenizer_binding_hash=_sha256("conservative-char1-v2"),
                 renderer_version="research-context-renderer-v1",
             )
             initial_excerpt_characters = max(
@@ -450,7 +471,10 @@ class GatewayJsonModeSingleTaskResearcher:
                         model_binding_hash=_sha256(self._target.key),
                     )
                 except ContextTooLargeError:
-                    break
+                    # The source excerpt is the only lossy context candidate in
+                    # this loop. Keep reducing it before sacrificing answer
+                    # capacity or rejecting an otherwise valid research task.
+                    continue
                 selected_source_refs = {
                     item.source_ref
                     for item in assembly.manifest.items
@@ -639,7 +663,7 @@ def _conservative_token_estimate(messages: list[dict[str, str]]) -> int:
 
 
 def _conservative_text_tokens(text: str) -> int:
-    return (len(text) + 1) // 2
+    return len(text)
 
 
 def _sha256(value: str) -> str:

@@ -378,6 +378,21 @@ class AgentRunControl:
         await self._session.flush()
         return claim.model_copy(update={"lease_expires_at": renewed_until})
 
+    async def refresh_claim(self, *, claim: AgentRunClaim) -> AgentRunClaim:
+        """Return the current durable expiry for the same fenced claim.
+
+        Long-running workers keep the database lease alive with a heartbeat,
+        while the immutable claim object intentionally retains its original
+        expiry.  External dispatchers must refresh that one volatile field
+        before checking a wall-clock deadline; generation and lease token stay
+        unchanged and remain the fencing authority.
+        """
+
+        row = await self._locked_active_row(claim)
+        if row.lease_expires_at is None:  # pragma: no cover - active row invariant
+            raise AgentRunConflictError("active AgentRun has no lease expiry")
+        return claim.model_copy(update={"lease_expires_at": row.lease_expires_at})
+
     async def wait_for_decision(self, *, claim: AgentRunClaim) -> AgentRun:
         """Persist an interrupt boundary and release the active worker lease.
 
@@ -438,6 +453,7 @@ class AgentRunControl:
         *,
         claim: AgentRunClaim,
         status: AgentRunStatus,
+        failure_code: str | None = None,
     ) -> AgentRun:
         """Finish a claimed run with an explicit terminal outcome."""
 
@@ -447,6 +463,8 @@ class AgentRunControl:
             AgentRunStatus.CANCELLED,
         }:
             raise ValueError("AgentRun completion requires a terminal status")
+        if failure_code is not None and status is not AgentRunStatus.FAILED:
+            raise ValueError("failure_code is valid only for failed AgentRuns")
         row = await self._locked_active_row(claim)
         now = utc_now()
         row.status = status.value
@@ -456,7 +474,11 @@ class AgentRunControl:
         row.updated_at = now
         row.completed_at = now
         await self._session.flush()
-        await self._append_lifecycle_event(row, _terminal_event_type(status))
+        await self._append_lifecycle_event(
+            row,
+            _terminal_event_type(status),
+            failure_code=failure_code,
+        )
         return self._from_row(row)
 
     async def ensure_active_claim(self, *, claim: AgentRunClaim) -> AgentRun:
@@ -642,6 +664,7 @@ class AgentRunControl:
         event_type: AgentRunEventType,
         *,
         reason: str | None = None,
+        failure_code: str | None = None,
     ) -> int | None:
         """Append a versioned transition only after the queued stream exists.
 
@@ -661,6 +684,8 @@ class AgentRunControl:
         payload: dict[str, object] = {"run": run.model_dump(mode="json")}
         if reason is not None:
             payload["reason"] = reason
+        if failure_code is not None:
+            payload["failure_code"] = failure_code
         artifact_refs = tuple(
             ref
             for ref in (run.run_contract_ref, run.coverage_contract_ref)

@@ -210,6 +210,42 @@ async def test_success_replays_without_second_physical_call(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_dispatch_refreshes_a_heartbeat_renewed_lease_before_authorizing(
+    tmp_path: Path,
+) -> None:
+    if "TEST_DATABASE_URL" not in os.environ:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine, factory, executor, run, claim, authority, intent = await _scope(
+        artifact_root=tmp_path
+    )
+    expired_authority = authority.model_copy(
+        update={"deadline": datetime.now(UTC) - timedelta(seconds=1)}
+    )
+
+    async def invoke(_invocation: object) -> ToolAdapterResponse:
+        return ToolAdapterResponse(value={"results": []})
+
+    try:
+        async with factory() as session:
+            await AgentRunControl(session).renew_claim(claim=claim, lease_seconds=60)
+            await session.commit()
+
+        result = await executor.execute(
+            intent,
+            authority=expired_authority,
+            run=run,
+            claim=claim,
+            provider="tavily",
+            target="search-v1",
+            invoke=invoke,
+        )
+
+        assert result.replayed is False
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_definite_provider_failure_is_settled_and_replayed(tmp_path: Path) -> None:
     if "TEST_DATABASE_URL" not in os.environ:
         pytest.skip("TEST_DATABASE_URL is not configured")

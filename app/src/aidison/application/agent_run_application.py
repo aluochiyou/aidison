@@ -21,7 +21,11 @@ from aidison.infrastructure.agent_runs import AgentRunConflictError, AgentRunCon
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.store import PostgresDomainStore
 from aidison.research.coverage import CoverageCompileInput, compile_coverage_contract
-from aidison.research.strategy import ResearchRunContract, compile_research_execution_policy
+from aidison.research.strategy import (
+    ResearchRunContract,
+    compile_research_execution_policy,
+    compile_research_tool_call_cap,
+)
 from aidison.runtime.agent_run_events import AgentRunEventType
 from aidison.runtime.agent_runs import AgentRun, AgentRunKind, AgentRunStatus
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
@@ -154,13 +158,15 @@ class AgentRunApplication:
         # Physical model calls may only reserve against this durable, user-
         # approved ceiling; a retry of the idempotent enqueue reuses the same
         # account and cannot silently change its cap.
+        execution_policy = compile_research_execution_policy(
+            research_depth=plan.research_depth
+        )
         await AgentRunBudgetLedger(self._session).create_account(
             agent_run_id=created.id,
             token_cap=plan.max_token_budget,
-            tool_call_cap=(
-                compile_research_execution_policy(
-                    research_depth=plan.research_depth
-                ).max_trusted_source_collection_calls
+            tool_call_cap=compile_research_tool_call_cap(
+                execution_policy=execution_policy,
+                requires_independent_verification=plan.requires_independent_verification,
             ),
         )
         run_contract = ResearchRunContract(
@@ -173,9 +179,7 @@ class AgentRunApplication:
             max_token_budget=plan.max_token_budget,
             max_duration_seconds=plan.max_duration_seconds,
             requires_independent_verification=plan.requires_independent_verification,
-            execution_policy=compile_research_execution_policy(
-                research_depth=plan.research_depth
-            ),
+            execution_policy=execution_policy,
             research_strategy=strategy,
         )
         artifacts = ContentAddressedArtifactStore(self._session, self._artifact_root)

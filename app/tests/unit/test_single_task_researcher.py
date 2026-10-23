@@ -28,6 +28,7 @@ from aidison.research.researcher import (
     GatewayJsonModeSingleTaskResearcher,
     JsonModeResearchProviderAdapter,
     JsonModeSingleTaskResearcher,
+    _conservative_text_tokens,
     _provider_receipt,
     _provider_usage_tokens,
     _research_messages,
@@ -157,6 +158,12 @@ def test_provider_receipt_is_payload_free_and_marks_missing_usage() -> None:
     }
 
 
+def test_research_token_estimate_is_conservative_for_cjk_context() -> None:
+    text = "抛投无人机需要验证推重比与安全互锁"
+
+    assert _conservative_text_tokens(text) == len(text)
+
+
 def test_research_payload_rejects_duplicate_evidence_assertion() -> None:
     evidence = {
         "coverage_key": "power.current",
@@ -177,6 +184,60 @@ def test_research_payload_rejects_duplicate_evidence_assertion() -> None:
             recommended_option="Controller A",
             alternatives=("Controller B",),
             evidence_claims=(evidence, evidence),
+        )
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "normalized"),
+    ((False, "false"), (True, "true"), (35, "35"), (12.5, "12.5")),
+)
+def test_research_payload_canonicalizes_json_scalar_claim_values(
+    raw_value: object,
+    normalized: str,
+) -> None:
+    payload = SingleTaskResearchPayload(
+        question="Compare controllers",
+        summary="Source-backed comparison.",
+        recommended_option="Controller A",
+        alternatives=("Controller B",),
+        evidence_claims=(
+            {
+                "coverage_key": "power.current",
+                "source_key": "manufacturer-spec",
+                "quote_text": "Continuous current is documented.",
+                "claim": "The controller has a documented current value.",
+                "subject_identity": "controller-a",
+                "predicate": "continuous_current",
+                "applicability": "nominal operation",
+                "normalization_schema": "current-amperes-v1",
+                "normalized_value": raw_value,
+            },
+        ),
+    )
+
+    assert payload.evidence_claims[0].normalized_value == normalized
+
+
+def test_research_payload_rejects_structured_normalized_claim_values() -> None:
+    with pytest.raises(ValueError):
+        SingleTaskResearchPayload(
+            question="Compare controllers",
+            summary="Source-backed comparison.",
+            recommended_option="Controller A",
+            alternatives=("Controller B",),
+            evidence_claims=(
+                {
+                    "coverage_key": "power.current",
+                    "source_key": "manufacturer-spec",
+                    "quote_text": "Continuous current is documented.",
+                    "claim": "The controller has a documented current value.",
+                    "subject_identity": "controller-a",
+                    "predicate": "continuous_current",
+                    "applicability": "nominal operation",
+                    "normalization_schema": "current-amperes-v1",
+                    "normalized_value": {"value": 35},
+                },
+            ),
         )
 
 
@@ -296,7 +357,7 @@ def test_gateway_context_shrinks_source_excerpt_before_rejecting_a_valid_task() 
         session_factory=MagicMock(),
         artifact_root=Path("/tmp/aidison-test-artifacts"),
         target=target,
-        reserved_tokens_per_call=5_000,
+        model_context_window_tokens=6_000,
         max_output_tokens=1_000,
     )
     task = _task(coverage_keys=("power.current",))
@@ -308,7 +369,7 @@ def test_gateway_context_shrinks_source_excerpt_before_rejecting_a_valid_task() 
         input_refs=(),
         steering_instructions=(),
         evidence_context=(source,),
-        reserved_tokens=5_000,
+        reserved_tokens=6_000,
     )
 
     source_item = next(

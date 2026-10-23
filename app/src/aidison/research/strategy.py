@@ -122,6 +122,17 @@ def compile_research_execution_policy(
         raise ValueError("unknown research depth") from exc
 
 
+def compile_research_tool_call_cap(
+    *,
+    execution_policy: ResearchExecutionPolicy,
+    requires_independent_verification: bool,
+) -> int:
+    """Reserve the complete source budget, including an independent verifier pass."""
+
+    multiplier = 2 if requires_independent_verification else 1
+    return min(128, execution_policy.max_trusted_source_collection_calls * multiplier)
+
+
 class ResearchRunContract(FrozenModel):
     """Immutable authorization projection consumed by ``ResearchRunExecutor``."""
 
@@ -158,4 +169,5 @@ __all__ = [
     "ResearchExecutionPolicy",
     "ResearchRunContract",
     "compile_research_execution_policy",
+    "compile_research_tool_call_cap",
 ]

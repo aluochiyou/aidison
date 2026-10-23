@@ -911,7 +911,7 @@ class ExecutionPlanProposal(FrozenModel):
     work_summary: tuple[str, ...] = Field(min_length=1, max_length=32)
     allowed_coordination_modes: tuple[CoordinationMode, ...] = Field(min_length=1, max_length=4)
     max_concurrency: int = Field(ge=1, le=16)
-    max_token_budget: int = Field(default=200_000_000, gt=0, le=1_000_000_000)
+    max_token_budget: int = Field(default=128_000, gt=0, le=1_000_000_000)
     # Measured from the first successful worker claim, not from queueing. The
     # broad default is a runaway guard, not a normal research-depth limit.
     max_duration_seconds: int = Field(default=36_000, ge=60, le=604_800)

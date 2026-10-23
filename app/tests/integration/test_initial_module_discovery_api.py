@@ -303,7 +303,7 @@ async def test_initial_module_discovery_requires_explicit_review_before_research
             execution_plan = plan.json()["execution_plan"]
             assert execution_plan["research_depth"] == "deep"
             assert execution_plan["requires_independent_verification"] is True
-            assert execution_plan["max_token_budget"] == 200_000_000
+            assert execution_plan["max_token_budget"] == 128_000
             assert execution_plan["max_duration_seconds"] == 36_000
             assert execution_plan["status"] == "proposed"
     finally:

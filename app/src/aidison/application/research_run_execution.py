@@ -1042,7 +1042,11 @@ class ResearchRunExecutor:
                         "failure_summary": _research_failure_summary(failure_code, error),
                     },
                 )
-                await control.complete(claim=claim, status=AgentRunStatus.FAILED)
+                await control.complete(
+                    claim=claim,
+                    status=AgentRunStatus.FAILED,
+                    failure_code=failure_code,
+                )
         except Exception:
             return
 
@@ -1546,9 +1550,13 @@ class ResearchRunExecutor:
         modules_by_id = {str(item.id): item for item in modules}
         materialized: list[tuple[TaskEnvelope, str]] = []
         for request in route.tasks:
-            coverage_key = request.coverage_keys[0]
-            coverage_item = coverage_by_key[coverage_key]
-            module_id = coverage_item.module_ids[0] if coverage_item.module_ids else None
+            coverage_items = tuple(coverage_by_key[key] for key in request.coverage_keys)
+            module_ids = {
+                item.module_ids[0]
+                for item in coverage_items
+                if item.module_ids
+            }
+            module_id = next(iter(module_ids)) if len(module_ids) == 1 else None
             module = modules_by_id.get(module_id) if module_id is not None else None
             if module is None:
                 raise DomainConflictError("research verifier task must target one active module")
@@ -1587,7 +1595,11 @@ class ResearchRunExecutor:
                     "freshly collected evidence; do not adopt prior agent conclusions.",
                     f"Source strategy: {source_strategy}",
                     f"Module: {module.name} ({module.key})",
-                    f"{coverage_item.key}: {coverage_item.question}",
+                    "Coverage questions:",
+                    *(
+                        f"{coverage_item.key}: {coverage_item.question}"
+                        for coverage_item in coverage_items
+                    ),
                     *(
                         ("Prior conflict identifiers: " + ", ".join(request.conflict_ids),)
                         if request.conflict_ids

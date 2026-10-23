@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aidison.application.service import ProjectApplication
@@ -153,6 +153,17 @@ class ResearchEvidenceClaim(BaseModel):
     applicability: str = Field(min_length=1, max_length=500)
     normalization_schema: str = Field(min_length=1, max_length=120)
     normalized_value: str = Field(min_length=1, max_length=8_000)
+
+    @field_validator("normalized_value", mode="before")
+    @classmethod
+    def normalize_json_scalar(cls, value: object) -> object:
+        """Canonicalize model-emitted JSON scalars without accepting structures."""
+
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, (int, float)):
+            return str(value)
+        return value
 
 
 class SingleTaskResearchPayload(BaseModel):

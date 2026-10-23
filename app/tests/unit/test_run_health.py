@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from uuid import uuid4
 
+from aidison.application.agent_run_health import _progress_events
+from aidison.runtime.agent_run_budget import (
+    AgentRunBudgetOperation,
+    AgentRunBudgetOperationKind,
+    AgentRunBudgetState,
+)
 from aidison.runtime.run_health import (
     FailureClass,
     ProgressEvent,
@@ -105,3 +112,33 @@ def test_watchdog_treats_user_wait_as_legitimate_wait_not_failure() -> None:
     finding = evaluate_run_health((_event(ProgressEventKind.USER_WAIT, seconds=0),))
     assert finding.health is RunHealth.WAITING_LEGITIMATELY
     assert finding.failure_class is FailureClass.USER_WAIT
+
+
+def test_in_flight_parallel_reservation_is_not_counted_as_consumed_cost() -> None:
+    run_id = uuid4()
+    now = datetime.now(UTC)
+    operation = AgentRunBudgetOperation(
+        account_id=uuid4(),
+        claim_generation=1,
+        lease_token=uuid4(),
+        kind=AgentRunBudgetOperationKind.MODEL,
+        logical_step="research.parallel-a",
+        physical_attempt_no=1,
+        idempotency_key="parallel-a:attempt:1",
+        request_hash=sha256(b"parallel-a").hexdigest(),
+        provider="fixture",
+        target="fixture-model",
+        state=AgentRunBudgetState.DISPATCHED,
+        reserved_tokens=40_000,
+        created_at=now,
+        dispatched_at=now,
+    )
+
+    events = _progress_events(run_id=run_id, operations=(operation,), admitted_at=())
+    finding = evaluate_run_health(
+        events,
+        policy=ProgressWatchdogPolicy(max_tokens_without_progress=20_000),
+    )
+
+    assert events[0].token_cost == 0
+    assert finding.health is RunHealth.HEALTHY

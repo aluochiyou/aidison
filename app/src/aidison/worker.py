@@ -208,11 +208,11 @@ class WorkerSettings(AidisonSettings):
         gt=0,
         le=120,
     )
-    research_model_reserved_tokens: int = Field(
-        default=8_000,
-        validation_alias="AIDISON_RESEARCH_MODEL_RESERVED_TOKENS",
+    research_model_context_window_tokens: int = Field(
+        default=128_000,
+        validation_alias="AIDISON_RESEARCH_MODEL_CONTEXT_WINDOW_TOKENS",
         ge=256,
-        le=100_000,
+        le=1_000_000,
     )
     research_model_timeout_seconds: int = Field(
         # Keep the research execution deadline aligned with the configured
@@ -461,9 +461,10 @@ async def run_research_worker(
                     session_factory=session_factory,
                     artifact_root=settings.artifact_root,
                     target=build_model_target(provider_settings, quota_group="research"),
-                    reserved_tokens_per_call=settings.research_model_reserved_tokens,
+                    model_context_window_tokens=settings.research_model_context_window_tokens,
                     max_output_tokens=min(
-                        1_600, max(256, settings.research_model_reserved_tokens // 2)
+                        1_600,
+                        max(256, settings.research_model_context_window_tokens // 2),
                     ),
                     timeout_seconds=settings.research_model_timeout_seconds,
                 ),

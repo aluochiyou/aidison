@@ -381,7 +381,7 @@ def _gateway_researcher(
         session_factory=factory,
         artifact_root=artifact_root,
         target=target,
-        reserved_tokens_per_call=4_000,
+        model_context_window_tokens=128_000,
         max_output_tokens=1_000,
     )
 

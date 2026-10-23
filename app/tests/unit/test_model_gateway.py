@@ -425,6 +425,34 @@ async def test_budgeted_request_with_missing_usage_fails_closed_after_ambiguity(
 
 
 @pytest.mark.asyncio
+async def test_budgeted_request_with_usage_over_reservation_has_distinct_diagnostic() -> None:
+    budget = RecordingBudgetPort()
+    request = _request(fallback=False).model_copy(update={"budget_context": _budget_context()})
+    result = await ModelGateway(
+        adapter=FakeAdapter(
+            [
+                {
+                    "response_ref": "artifact://response-over-reservation",
+                    "provider_request_id": "req-over-reservation",
+                    "usage_tokens": request.budget_context.reserved_tokens + 1,
+                }
+            ]
+        ),
+        quota=FakeQuota(),
+        circuit=FakeCircuit(),
+        budget=budget,
+    ).invoke(request)
+
+    assert result.status == "failed"
+    assert result.failure is ProviderFailureClass.UNKNOWN_USAGE_OR_EFFECT
+    assert budget.events[-1] == (
+        "ambiguous",
+        1,
+        "provider_usage_exceeded_reservation",
+    )
+
+
+@pytest.mark.asyncio
 async def test_stream_holds_quota_permit_until_provider_stream_is_exhausted() -> None:
     events: list[str] = []
     quota = FakeQuota()

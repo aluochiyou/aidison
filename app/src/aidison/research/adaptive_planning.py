@@ -300,10 +300,18 @@ def build_bounded_gap_patch(value: AdaptivePlanningInput) -> AdaptivePlanDecisio
 
 
 def route_verifier_tasks(value: VerifierRoutingInput) -> VerifierRouteDecision:
-    """Route only conflict, contract-required, or explicit high-impact verification."""
+    """Route one bounded verifier task per module that needs verification.
+
+    Coverage keys are the deterministic admission unit, but a verifier loads
+    module-scoped memory and evidence.  Grouping keys from the same module
+    avoids repeatedly paying for identical context while preserving every
+    required check in the task envelope.
+    """
 
     contract_by_key = {item.key: item for item in value.coverage_contract.keys}
-    candidates: list[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]] = []
+    candidates: list[
+        tuple[str, str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]
+    ] = []
     for coverage in value.snapshot.coverage:
         if coverage.priority is not CoveragePriority.MUST:
             continue
@@ -315,8 +323,10 @@ def route_verifier_tasks(value: VerifierRoutingInput) -> VerifierRouteDecision:
         if coverage.coverage_key in value.policy.high_impact_coverage_keys:
             reasons.append("high_impact_coverage")
         if reasons:
+            module_id = contract_by_key[coverage.coverage_key].module_ids[0]
             candidates.append(
                 (
+                    module_id,
                     coverage.coverage_key,
                     tuple(reasons),
                     coverage.conflict_ids,
@@ -326,20 +336,34 @@ def route_verifier_tasks(value: VerifierRoutingInput) -> VerifierRouteDecision:
 
     if not candidates:
         return VerifierRouteDecision(tasks=(), reason_codes=("verifier_not_required",))
-    candidates.sort(key=lambda item: item[0])
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    grouped: dict[
+        str,
+        list[tuple[str, tuple[str, ...], tuple[str, ...], tuple[str, ...]]],
+    ] = {}
+    for module_id, coverage_key, reasons, conflict_ids, evidence_refs in candidates:
+        grouped.setdefault(module_id, []).append(
+            (coverage_key, reasons, conflict_ids, evidence_refs)
+        )
     if (
         value.policy.max_verifier_tasks is not None
-        and len(candidates) > value.policy.max_verifier_tasks
+        and len(grouped) > value.policy.max_verifier_tasks
     ):
         return VerifierRouteDecision(tasks=(), reason_codes=("verifier_task_limit",))
 
-    tasks = tuple(
-        VerifierTaskRequest(
+    tasks: list[VerifierTaskRequest] = []
+    for module_id, entries in grouped.items():
+        coverage_keys = tuple(item[0] for item in entries)
+        reasons = tuple(sorted({reason for item in entries for reason in item[1]}))
+        conflict_ids = tuple(sorted({conflict for item in entries for conflict in item[2]}))
+        evidence_refs = tuple(sorted({ref for item in entries for ref in item[3]}))
+        tasks.append(
+            VerifierTaskRequest(
             run_id=value.run_id,
             basis_hash=value.basis_hash,
             plan_revision=value.plan_revision,
-            task_key=f"verify.{coverage_key}",
-            coverage_keys=(coverage_key,),
+            task_key=f"verify.module.{module_id}",
+            coverage_keys=coverage_keys,
             conflict_ids=conflict_ids,
             input_refs=evidence_refs,
             allowed_tool_ids=value.allowed_tool_ids,
@@ -350,20 +374,28 @@ def route_verifier_tasks(value: VerifierRoutingInput) -> VerifierRouteDecision:
                     "run_id": str(value.run_id),
                     "basis_hash": value.basis_hash,
                     "plan_revision": value.plan_revision,
-                    "coverage_key": coverage_key,
+                    "module_id": module_id,
+                    "coverage_keys": coverage_keys,
                     "conflict_ids": conflict_ids,
                     "input_refs": evidence_refs,
                     "reasons": reasons,
-                    "required_source_kinds": contract_by_key[
-                        coverage_key
-                    ].required_source_kinds,
+                    "required_source_kinds": tuple(
+                        sorted(
+                            {
+                                source_kind
+                                for coverage_key in coverage_keys
+                                for source_kind in contract_by_key[
+                                    coverage_key
+                                ].required_source_kinds
+                            }
+                        )
+                    ),
                 }
             ),
+            )
         )
-        for coverage_key, reasons, conflict_ids, evidence_refs in candidates
-    )
     return VerifierRouteDecision(
-        tasks=tasks,
+        tasks=tuple(tasks),
         reason_codes=("risk_based_verifier_tasks_created",),
     )
 
