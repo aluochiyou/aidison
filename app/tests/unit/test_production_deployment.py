@@ -106,3 +106,5 @@ def test_admin_password_reset_recreates_only_the_gateway() -> None:
     assert "新管理员密码（至少 16 个字符，不回显）" in resetter
     assert "AIDISON_ADMIN_PASSWORD_HASH='$hash'" in resetter
     assert "--no-deps --force-recreate gateway" in resetter
+    assert 'GetAsync("http://127.0.0.1:8080/")' in resetter
+    assert "Administrator password updated and verified locally" in resetter

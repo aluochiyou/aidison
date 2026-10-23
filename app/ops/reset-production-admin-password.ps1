@@ -78,7 +78,45 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "Gateway restart failed; the new password is stored but not active until gateway starts successfully"
     }
-    Write-Host "Administrator password updated. No secret values were printed."
+
+    $adminUserLine = $lines | Where-Object { $_ -match '^AIDISON_ADMIN_USER=' } | Select-Object -First 1
+    if (-not $adminUserLine) {
+        throw "AIDISON_ADMIN_USER is missing from $EnvFile"
+    }
+    $adminUser = ($adminUserLine -replace '^AIDISON_ADMIN_USER=', '').Trim().Trim("'", '"')
+    if ([string]::IsNullOrWhiteSpace($adminUser)) {
+        throw "AIDISON_ADMIN_USER is empty in $EnvFile"
+    }
+
+    $client = [Net.Http.HttpClient]::new()
+    try {
+        $credential = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${adminUser}:$password"))
+        $client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new("Basic", $credential)
+        $verified = $false
+        foreach ($attempt in 1..20) {
+            try {
+                $response = $client.GetAsync("http://127.0.0.1:8080/").GetAwaiter().GetResult()
+                if ([int]$response.StatusCode -ge 200 -and [int]$response.StatusCode -lt 400) {
+                    $verified = $true
+                    break
+                }
+            }
+            catch {
+                # The gateway may not have completed its health check yet.
+            }
+            Start-Sleep -Milliseconds 500
+        }
+        if (-not $verified) {
+            throw "Gateway restarted, but local Basic Auth verification did not succeed. Check gateway logs before using the public URL."
+        }
+    }
+    finally {
+        if ($null -ne $client) {
+            $client.Dispose()
+        }
+    }
+
+    Write-Host "Administrator password updated and verified locally. No secret values were printed."
 }
 finally {
     $password = $null
