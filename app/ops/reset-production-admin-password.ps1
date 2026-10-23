@@ -88,10 +88,11 @@ try {
         throw "AIDISON_ADMIN_USER is empty in $EnvFile"
     }
 
-    $client = [Net.Http.HttpClient]::new()
+    Add-Type -AssemblyName System.Net.Http
+    $client = [System.Net.Http.HttpClient]::new()
     try {
         $credential = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${adminUser}:$password"))
-        $client.DefaultRequestHeaders.Authorization = [Net.Http.Headers.AuthenticationHeaderValue]::new("Basic", $credential)
+        $client.DefaultRequestHeaders.Authorization = [System.Net.Http.Headers.AuthenticationHeaderValue]::new("Basic", $credential)
         $verified = $false
         foreach ($attempt in 1..20) {
             try {
