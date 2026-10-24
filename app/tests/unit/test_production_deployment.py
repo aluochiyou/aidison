@@ -123,3 +123,14 @@ def test_admin_password_reset_recreates_only_the_gateway() -> None:
     assert 'noproxy = "*"' in resetter
     assert "last HTTP status" in resetter
     assert "Administrator password updated and verified locally" in resetter
+
+
+def test_module_visual_key_script_uses_hidden_prompt_and_restarts_only_its_worker() -> None:
+    configurator = (
+        APP_ROOT / "ops" / "configure-module-visual-key.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert 'Read-Host "DashScope API Key（不回显）" -AsSecureString' in configurator
+    assert "Write-Host $apiKey" not in configurator
+    assert "--force-recreate module-visual-worker" in configurator
+    assert "No secret value was printed" in configurator

@@ -112,6 +112,19 @@ The deployment script validates required secrets and the Compose model, builds t
 images, starts the stack, and waits for the loopback-only edge health endpoint. It never prints
 secret values.
 
+### Enable optional module visuals
+
+Module structure is committed independently from its illustration, so Aidison remains usable when
+the optional Qwen visual-spec provider is not configured. To enable it without exposing the API key
+in shell history, run from `app/` in Windows PowerShell and paste the key into the hidden prompt:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\configure-module-visual-key.ps1
+```
+
+The script atomically updates the Git-ignored `.env.production`, recreates only
+`module-visual-worker`, and verifies that the secret reached the container without printing it.
+
 For manual initialization, copy `.env.production.example` to `.env.production` and fill every
 required value. In Cloudflare, create a remotely managed Tunnel and route the public hostname to
 `http://gateway:8080`. Configure the single-owner Access application for the same hostname before
