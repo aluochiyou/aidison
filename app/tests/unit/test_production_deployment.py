@@ -56,6 +56,8 @@ def test_caddy_keeps_the_only_health_route_outside_the_business_handler() -> Non
 
     # The loopback health probe is intentionally the only unauthenticated path.
     assert "@edge_health path /edge-health" in caddyfile
+    assert "@business not path /edge-health" in caddyfile
+    assert "basic_auth @business" in caddyfile
     assert "handle @edge_health" in caddyfile
     assert caddyfile.count("\thandle ") == 3
     assert "@api path /api/* /health" in caddyfile

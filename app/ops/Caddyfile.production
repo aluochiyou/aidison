@@ -5,6 +5,12 @@
 
 :8080 {
 	@edge_health path /edge-health
+	@business not path /edge-health
+
+	basic_auth @business {
+		{$AIDISON_ADMIN_USER} {$AIDISON_ADMIN_PASSWORD_HASH}
+	}
+
 	handle @edge_health {
 		respond "ok" 200
 	}
