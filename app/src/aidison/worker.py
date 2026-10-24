@@ -63,6 +63,7 @@ from aidison.research.researcher import (
 )
 from aidison.research.source_collection import (
     CompositeResearchSourceCollector,
+    FallbackResearchSourceCollector,
     FirecrawlSearchResearchSourceCollector,
     FirecrawlWebReader,
     GitHubRepositorySourceCollector,
@@ -581,7 +582,7 @@ def _research_source_collector(
     elif settings.firecrawl_api_key is None:
         raise ValueError("AIDISON_WEB_SEARCH_PROVIDER=firecrawl requires FIRECRAWL_API_KEY")
     else:
-        collectors.append(
+        firecrawl_collector: ResearchSourceCollector = (
             FirecrawlSearchResearchSourceCollector(
                 api_key=settings.firecrawl_api_key.get_secret_value(),
                 client=client,
@@ -589,6 +590,17 @@ def _research_source_collector(
                 max_queries=settings.firecrawl_max_queries,
             )
         )
+        if settings.tavily_api_key is not None:
+            firecrawl_collector = FallbackResearchSourceCollector(
+                primary=firecrawl_collector,
+                fallback=TavilySearchResearchSourceCollector(
+                    api_key=settings.tavily_api_key.get_secret_value(),
+                    client=client,
+                    max_results=settings.tavily_max_results,
+                    max_queries=settings.tavily_max_queries,
+                ),
+            )
+        collectors.append(firecrawl_collector)
     if not collectors:
         return NoopResearchSourceCollector()
     # The composite owns the Run-frozen total document budget. Returning a

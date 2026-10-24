@@ -785,6 +785,95 @@ class CompositeResearchSourceCollector:
         )
 
 
+class FallbackResearchSourceCollector:
+    """Use one alternate collector only when the primary cannot serve the task.
+
+    Unlike ``CompositeResearchSourceCollector``, this adapter does not query
+    both providers on a healthy request.  It is intended for metered discovery
+    providers where quota exhaustion or a transient outage should not fail an
+    otherwise recoverable research run.
+    """
+
+    _fallback_reason_codes = frozenset(
+        {
+            "firecrawl_network_failure",
+            "firecrawl_provider_unavailable",
+            "firecrawl_quota_exhausted",
+            "tavily_network_failure",
+            "tavily_provider_unavailable",
+            "tavily_quota_exhausted",
+        }
+    )
+
+    def __init__(
+        self,
+        *,
+        primary: ResearchSourceCollector,
+        fallback: ResearchSourceCollector,
+    ) -> None:
+        self._primary = primary
+        self._fallback = fallback
+
+    @property
+    def tool_ids(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    *source_tool_ids(self._primary),
+                    *source_tool_ids(self._fallback),
+                }
+            )
+        )
+
+    async def collect(
+        self,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+        tool_runtime: ResearchSourceToolRuntime | None = None,
+    ) -> tuple[CollectedResearchSource, ...]:
+        try:
+            sources = await self._collect(
+                self._primary,
+                run=run,
+                task=task,
+                question=question,
+                tool_runtime=tool_runtime,
+            )
+        except ResearchSourceCollectionError as error:
+            if error.reason_code not in self._fallback_reason_codes:
+                raise
+        else:
+            if sources:
+                return sources
+        return await self._collect(
+            self._fallback,
+            run=run,
+            task=task,
+            question=question,
+            tool_runtime=tool_runtime,
+        )
+
+    @staticmethod
+    async def _collect(
+        collector: ResearchSourceCollector,
+        *,
+        run: AgentRun,
+        task: TaskEnvelope,
+        question: str,
+        tool_runtime: ResearchSourceToolRuntime | None,
+    ) -> tuple[CollectedResearchSource, ...]:
+        if tool_runtime is not None and source_tool_ids(collector):
+            return await collector.collect(
+                run=run,
+                task=task,
+                question=question,
+                tool_runtime=tool_runtime,
+            )
+        return await collector.collect(run=run, task=task, question=question)
+
+
 def _fairly_bounded_collector_sources(
     collected_by_collector: Sequence[Sequence[CollectedResearchSource]],
     *,
@@ -1904,6 +1993,7 @@ def source_tool_ids(collector: object) -> tuple[str, ...]:
 __all__ = [
     "CollectedResearchSource",
     "CompositeResearchSourceCollector",
+    "FallbackResearchSourceCollector",
     "FirecrawlSearchResearchSourceCollector",
     "FirecrawlSourceCollectionError",
     "FirecrawlWebReader",

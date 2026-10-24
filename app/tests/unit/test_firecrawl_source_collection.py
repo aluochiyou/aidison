@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from aidison.research.source_collection import (
+    FallbackResearchSourceCollector,
     FirecrawlSearchResearchSourceCollector,
     FirecrawlSourceCollectionError,
     FirecrawlWebReader,
@@ -58,6 +59,49 @@ async def test_firecrawl_search_collects_bounded_rendered_markdown() -> None:
     assert sources[0].source.provider == "firecrawl-search-v2"
     assert sources[0].source.canonical_locator == "https://example.test/esc"
     assert sources[0].normalized_document.endswith("Continuous current: 60 A")
+
+
+@pytest.mark.asyncio
+async def test_firecrawl_quota_exhaustion_falls_back_to_tavily_without_double_search() -> None:
+    calls: list[str] = []
+
+    async def responder(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if str(request.url) == "https://api.firecrawl.dev/v2/search":
+            return httpx.Response(402, json={"success": False, "error": "quota exhausted"})
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "url": "https://example.test/airframe",
+                        "raw_content": "# Airframe specification\n\nPayload: 2 kg",
+                    }
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+        collector = FallbackResearchSourceCollector(
+            primary=FirecrawlSearchResearchSourceCollector(
+                api_key="fc-test-key", client=client, max_queries=1
+            ),
+            fallback=TavilySearchResearchSourceCollector(
+                api_key="tvly-test-key", client=client, max_queries=1
+            ),
+        )
+        sources = await collector.collect(
+            run=object(),  # type: ignore[arg-type]
+            task=SimpleNamespace(collection_policy=None),
+            question="airframe payload specification",
+        )
+
+    assert calls == [
+        "https://api.firecrawl.dev/v2/search",
+        "https://api.tavily.com/search",
+    ]
+    assert len(sources) == 1
+    assert sources[0].source.provider == "tavily-search-v1"
 
 
 @pytest.mark.asyncio

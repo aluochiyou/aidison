@@ -318,6 +318,23 @@ def test_firecrawl_can_be_selected_as_the_bounded_discovery_provider() -> None:
             assert isinstance(firecrawl_collector, CompositeResearchSourceCollector)
             assert firecrawl_collector.tool_ids == ("web.search.firecrawl",)
 
+            firecrawl_with_tavily_fallback = _research_source_collector(
+                settings=WorkerSettings(
+                    _env_file=None,
+                    firecrawl_api_key="fc-test-key",
+                    tavily_api_key="tavily-test-token",
+                    web_search_provider="firecrawl",
+                ),
+                client=client,
+            )
+            assert isinstance(
+                firecrawl_with_tavily_fallback, CompositeResearchSourceCollector
+            )
+            assert firecrawl_with_tavily_fallback.tool_ids == (
+                "web.search.firecrawl",
+                "web.search.tavily",
+            )
+
     asyncio.run(exercise())
 
 
