@@ -215,6 +215,7 @@ class ProjectDocumentResearchSourceCollector:
                     sources: list[tuple[ProjectSourceDocument, CollectedResearchSource]] = []
                     observed_at = datetime.now(UTC)
                     for document in active:
+
                         async def read_document(
                             _invocation: AuthorizedToolInvocation,
                             *,
@@ -227,9 +228,7 @@ class ProjectDocumentResearchSourceCollector:
                                 )
                             except ProjectSourceDocumentIntegrityError as error:
                                 await session.commit()
-                                raise ToolAdapterFailure(
-                                    "project_document_unavailable"
-                                ) from error
+                                raise ToolAdapterFailure("project_document_unavailable") from error
                             return ToolAdapterResponse(value={"content": content})
 
                         if tool_runtime is None:
@@ -394,6 +393,7 @@ class LocalFileResearchSourceCollector:
             if tool_runtime is None:
                 source = await self._read_target(target=target, observed_at=observed_at)
             else:
+
                 async def read_target(
                     _invocation: AuthorizedToolInvocation,
                     *,
@@ -579,15 +579,11 @@ class GitHubRepositorySourceCollector:
                 except ToolExecutionFailure as error:
                     raise GitHubSourceCollectionError(error.reason_code) from error
                 except ToolExecutionReplayUnavailable as error:
-                    raise GitHubSourceCollectionError(
-                        "github_replay_unavailable"
-                    ) from error
+                    raise GitHubSourceCollectionError("github_replay_unavailable") from error
                 try:
                     source = CollectedResearchSource.model_validate(executed.value)
                 except ValueError as error:
-                    raise GitHubSourceCollectionError(
-                        "github_response_schema_invalid"
-                    ) from error
+                    raise GitHubSourceCollectionError("github_response_schema_invalid") from error
             sources.append(source)
         return tuple(sources)
 
@@ -595,9 +591,7 @@ class GitHubRepositorySourceCollector:
     def _parse_target(cls, value: str) -> tuple[str, str, str]:
         match = cls._target_pattern.fullmatch(value.strip())
         if match is None:
-            raise ValueError(
-                "GitHub source target must be owner/repository@ref:path/to/file"
-            )
+            raise ValueError("GitHub source target must be owner/repository@ref:path/to/file")
         repository = match.group("repository")
         ref = match.group("ref")
         path = match.group("path")
@@ -624,9 +618,7 @@ class GitHubRepositorySourceCollector:
             )
             response.raise_for_status()
         except httpx.HTTPStatusError as error:
-            raise GitHubSourceCollectionError(
-                _github_http_failure_code(error.response)
-            ) from error
+            raise GitHubSourceCollectionError(_github_http_failure_code(error.response)) from error
         except httpx.RequestError as error:
             raise GitHubSourceCollectionError("github_network_failure") from error
         try:
@@ -783,9 +775,7 @@ class CompositeResearchSourceCollector:
             ]
         collection_policy = getattr(task, "collection_policy", None)
         max_documents = (
-            collection_policy.max_documents_total
-            if collection_policy is not None
-            else None
+            collection_policy.max_documents_total if collection_policy is not None else None
         )
         if max_documents is None:
             return tuple(source for group in collected_by_collector for source in group)
@@ -861,6 +851,7 @@ class FirecrawlWebReader:
         if tool_runtime is None:
             value, _ = await self._scrape_direct(normalized_url)
         else:
+
             async def invoke(
                 _invocation: AuthorizedToolInvocation,
             ) -> ToolAdapterResponse:
@@ -890,9 +881,7 @@ class FirecrawlWebReader:
             except ToolExecutionFailure as error:
                 raise FirecrawlSourceCollectionError(error.reason_code) from error
             except ToolExecutionReplayUnavailable as error:
-                raise FirecrawlSourceCollectionError(
-                    "firecrawl_replay_unavailable"
-                ) from error
+                raise FirecrawlSourceCollectionError("firecrawl_replay_unavailable") from error
             value = executed.value
 
         markdown = value.get("markdown") if isinstance(value, dict) else None
@@ -1017,15 +1006,9 @@ class TavilySearchResearchSourceCollector:
         )
         max_results_per_query = _narrowest_configured_limit(
             self._max_results,
-            (
-                collection_policy.max_documents_per_query
-                if collection_policy is not None
-                else None
-            ),
+            (collection_policy.max_documents_per_query if collection_policy is not None else None),
         )
-        search_depth = (
-            collection_policy.search_depth if collection_policy is not None else "basic"
-        )
+        search_depth = collection_policy.search_depth if collection_policy is not None else "basic"
         observed_at = datetime.now(UTC)
         candidates_by_query: list[tuple[CollectedResearchSource, ...]] = []
         recoverable_failures: list[TavilySourceCollectionError] = []
@@ -1129,8 +1112,7 @@ class TavilySearchResearchSourceCollector:
         failures = tuple(
             sorted(
                 {
-                    (item.coverage_key, item.reason_code): item
-                    for item in collection_failures
+                    (item.coverage_key, item.reason_code): item for item in collection_failures
                 }.values(),
                 key=lambda item: (item.coverage_key, item.reason_code),
             )
@@ -1282,11 +1264,7 @@ class FirecrawlSearchResearchSourceCollector:
         )
         max_results_per_query = _narrowest_configured_limit(
             self._max_results,
-            (
-                collection_policy.max_documents_per_query
-                if collection_policy is not None
-                else None
-            ),
+            (collection_policy.max_documents_per_query if collection_policy is not None else None),
         )
         observed_at = datetime.now(UTC)
         candidates_by_query: list[tuple[CollectedResearchSource, ...]] = []
@@ -1359,8 +1337,7 @@ class FirecrawlSearchResearchSourceCollector:
         failures = tuple(
             sorted(
                 {
-                    (item.coverage_key, item.reason_code): item
-                    for item in collection_failures
+                    (item.coverage_key, item.reason_code): item for item in collection_failures
                 }.values(),
                 key=lambda item: (item.coverage_key, item.reason_code),
             )
@@ -1482,6 +1459,23 @@ _SEARCH_CONTEXT_PREFIXES = (
     "Hard constraints:",
     "Budget context:",
 )
+_INLINE_SEARCH_LABELS = (
+    "Research task",
+    "Task objective",
+    "Module",
+    "Project goal",
+    "Hard constraints",
+    "Budget context",
+    "Project objective",
+    "Preferences",
+    "Skill context",
+    "Usage context",
+)
+_INLINE_SEARCH_LABEL_PATTERN = re.compile(
+    rf"(?P<label>{'|'.join(re.escape(item) for item in _INLINE_SEARCH_LABELS)}):\s*"
+    rf"(?P<value>.*?)(?=(?:{'|'.join(re.escape(item) for item in _INLINE_SEARCH_LABELS)}):|$)",
+    re.IGNORECASE,
+)
 
 
 def _coverage_search_queries(
@@ -1517,9 +1511,7 @@ def _coverage_search_queries(
         None,
     )
     source_strategy_guidance = (
-        _SOURCE_STRATEGY_GUIDANCE[source_strategy]
-        if source_strategy is not None
-        else None
+        _SOURCE_STRATEGY_GUIDANCE[source_strategy] if source_strategy is not None else None
     )
     research_lenses = _research_lenses(lines)
     if research_lenses:
@@ -1580,9 +1572,42 @@ def _searchable_question_lines(question: str) -> tuple[str, ...]:
 
 
 def _bounded_generic_search_query(lines: tuple[str, ...]) -> str:
-    """Keep legacy free-form collection useful without exposing peer context."""
+    """Compile labelled one-line contracts before falling back to free text.
 
-    return _truncate_search_text("\n".join(lines), _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS)
+    Some provider/planner payloads preserve field labels but flatten their
+    newlines.  Sending that entire 900-character contract to search lets the
+    generic project objective dominate the actual research task.  Recover the
+    stable labels deterministically and put the concrete task first.
+    """
+
+    joined = " ".join(lines)
+    labelled = {
+        match.group("label").casefold(): match.group("value").strip(" 。；;")
+        for match in _INLINE_SEARCH_LABEL_PATTERN.finditer(joined)
+        if match.group("value").strip(" 。；;")
+    }
+    if "research task" in labelled or "task objective" in labelled:
+        candidates = (
+            (labelled.get("research task"), 360),
+            (labelled.get("task objective"), 360),
+            (labelled.get("module"), 120),
+            (labelled.get("project goal"), 180),
+            (labelled.get("hard constraints"), 200),
+            (labelled.get("budget context"), 100),
+        )
+        parts: list[str] = []
+        remaining = _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS
+        for value, preferred_limit in candidates:
+            if not value or remaining < 32:
+                continue
+            compact = _truncate_search_text(value, min(preferred_limit, remaining))
+            if compact:
+                parts.append(compact)
+                remaining -= len(compact) + 1
+        if parts:
+            return "\n".join(parts)
+
+    return _truncate_search_text(joined, _MAX_EXTERNAL_SEARCH_QUERY_CHARACTERS)
 
 
 def _bounded_coverage_search_query(

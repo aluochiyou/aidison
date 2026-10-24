@@ -131,9 +131,7 @@ async def test_tavily_collector_keeps_trusted_sources_when_one_coverage_query_fa
     assert [source.source.canonical_locator for source in sources] == [
         "https://spec.example.test/voltage"
     ]
-    assert [
-        failure.model_dump(mode="json") for failure in sources[0].collection_failures
-    ] == [
+    assert [failure.model_dump(mode="json") for failure in sources[0].collection_failures] == [
         {
             "coverage_key": "propulsion.current",
             "reason_code": "tavily_provider_unavailable",
@@ -413,6 +411,50 @@ async def test_tavily_collector_omits_provider_breadth_cap_for_deep_policy() -> 
 
 
 @pytest.mark.asyncio
+async def test_tavily_collector_recovers_task_first_query_from_flattened_contract() -> None:
+    payloads: list[dict[str, Any]] = []
+
+    async def responder(request: httpx.Request) -> httpx.Response:
+        payloads.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "url": "https://docs.example.test/endurance",
+                        "raw_content": "# Multirotor endurance source",
+                    }
+                ]
+            },
+        )
+
+    question = (
+        "Project objective: produce a generic research report。"
+        "Budget context: 15000 CNY。"
+        "Hard constraints: 2 kg payload; 15 minute endurance; 3 km radius。"
+        "Preferences: compare every possible subsystem。"
+        "Project goal: build a rescue payload multirotor。"
+        "Research task: Define multirotor endurance and radius envelope。"
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
+        await TavilySearchResearchSourceCollector(
+            api_key="tvly-test-key",
+            client=client,
+        ).collect(
+            run=object(),  # type: ignore[arg-type]
+            task=object(),  # type: ignore[arg-type]
+            question=question,
+        )
+
+    query = payloads[0]["query"]
+    assert query.startswith("Define multirotor endurance and radius envelope")
+    assert "build a rescue payload multirotor" in query
+    assert "2 kg payload" in query
+    assert "produce a generic research report" not in query
+    assert "compare every possible subsystem" not in query
+
+
+@pytest.mark.asyncio
 async def test_deep_collection_expands_across_all_coverage_keys_without_product_caps() -> None:
     """Deep research must not stop at legacy query/source limits."""
     policy = compile_research_execution_policy(research_depth="deep").collection
@@ -485,9 +527,7 @@ async def test_tavily_collector_turns_approved_source_strategy_into_query_guidan
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
-        await TavilySearchResearchSourceCollector(
-            api_key="tvly-test-key", client=client
-        ).collect(
+        await TavilySearchResearchSourceCollector(api_key="tvly-test-key", client=client).collect(
             run=object(),  # type: ignore[arg-type]
             task=object(),  # type: ignore[arg-type]
             question=(
@@ -536,9 +576,7 @@ async def test_tavily_collector_keeps_an_engineering_coverage_query_focused() ->
         )
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(responder)) as client:
-        await TavilySearchResearchSourceCollector(
-            api_key="tvly-test-key", client=client
-        ).collect(
+        await TavilySearchResearchSourceCollector(api_key="tvly-test-key", client=client).collect(
             run=object(),  # type: ignore[arg-type]
             task=object(),  # type: ignore[arg-type]
             question=question,
