@@ -685,6 +685,15 @@ async def run_module_visual_worker(settings: WorkerSettings, *, once: bool = Fal
     """Consume typed module-visual Runs without blocking project approval requests."""
 
     settings.artifact_root.mkdir(parents=True, exist_ok=True)
+    visual_settings = ModuleVisualSettings()
+    if visual_settings.api_key is None:
+        if once:
+            raise RuntimeError("DASHSCOPE_API_KEY is required for module visual generation")
+        logger.warning(
+            "module visual worker is idle because DASHSCOPE_API_KEY is not configured"
+        )
+        await asyncio.Event().wait()
+        return
     database = DatabaseSettings()
     engine = create_engine(database)
     checkpoints = CheckpointRuntime(_checkpoint_settings(database))
@@ -694,7 +703,7 @@ async def run_module_visual_worker(settings: WorkerSettings, *, once: bool = Fal
             session_factory=create_session_factory(engine),
             artifact_root=settings.artifact_root,
             checkpointer=await checkpoints.start(),
-            provider=QwenModuleVisualProvider(ModuleVisualSettings()),
+            provider=QwenModuleVisualProvider(visual_settings),
             runtime_tracer=runtime_tracer,
         )
         worker = ModuleVisualLangGraphWorker(
