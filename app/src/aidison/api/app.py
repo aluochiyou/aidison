@@ -20,11 +20,17 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.middleware.sessions import SessionMiddleware
 
 from aidison.agents.research_strategy import (
     JsonModeResearchStrategyPlanner,
     ResearchStrategyPlanner,
     ResponsesJsonSchemaResearchStrategyPlanner,
+)
+from aidison.api.auth import (
+    SESSION_COOKIE_NAME,
+    ApplicationAuthenticator,
+    ApplicationAuthMiddleware,
 )
 from aidison.api.errors import (
     ApiErrorCode,
@@ -44,6 +50,7 @@ from aidison.api.schemas import (
     CreateRequirementsChangeRequest,
     CreateSelectionLockRequest,
     FreezeSolutionRequest,
+    LoginRequest,
     ModuleDiscoveryRequest,
     PostConversationMessageRequest,
     PreviewShoppingBudgetRequest,
@@ -115,7 +122,7 @@ from aidison.application.shopping import (
 )
 from aidison.application.solution_proposal_commit import SolutionProposalCommitApplication
 from aidison.application.workspace import build_workspace_projection
-from aidison.config import ConversationSettings, DraftSettings
+from aidison.config import ApplicationAuthSettings, ConversationSettings, DraftSettings
 from aidison.domain.models import DecisionRequest as DomainDecisionRequest
 from aidison.domain.models import (
     EffectApprovalStatus,
@@ -696,6 +703,7 @@ def create_app(
     research_strategy_planner_factory: Callable[[], ResearchStrategyPlanner] | None = None,
     runtime_tracer: RuntimeTracer | None = None,
     enable_legacy_purchase_writes: bool = False,
+    auth_settings: ApplicationAuthSettings | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -705,6 +713,22 @@ def create_app(
             cast(RuntimeTracer, app.state.runtime_tracer).flush()
 
     api = FastAPI(title="Aidison API", version="0.1.0", lifespan=_lifespan)
+    resolved_auth_settings = auth_settings or ApplicationAuthSettings()
+    authenticator = ApplicationAuthenticator(resolved_auth_settings)
+    api.state.authenticator = authenticator
+    api.add_middleware(ApplicationAuthMiddleware, authenticator=authenticator)
+    api.add_middleware(
+        SessionMiddleware,
+        secret_key=(
+            resolved_auth_settings.session_secret.get_secret_value()
+            if resolved_auth_settings.enabled
+            else "aidison-local-development-session-secret"
+        ),
+        session_cookie=SESSION_COOKIE_NAME,
+        max_age=resolved_auth_settings.session_ttl_seconds,
+        same_site="strict",
+        https_only=True,
+    )
     api.state.session_factory = session_factory or create_session_factory()
     api.state.shopping_provider = shopping_provider
     api.state.runtime_tracer = runtime_tracer or build_runtime_tracer(RuntimeTracingSettings())
@@ -923,6 +947,62 @@ def create_app(
     @api.exception_handler(Exception)
     async def unexpected_error(_: Request, __: Exception) -> JSONResponse:
         return _error(500, ApiErrorCode.INTERNAL_ERROR, "internal server error")
+
+    @api.post("/api/auth/login")
+    async def login(request: Request, command: LoginRequest) -> Response:
+        auth = cast(ApplicationAuthenticator, request.app.state.authenticator)
+        if not auth.settings.enabled:
+            return JSONResponse({"authenticated": True, "username": "local-development"})
+
+        client_host = request.client.host if request.client is not None else "unknown"
+        rate_key = f"{client_host}:{command.username}"
+        retry_after = auth.rate_limiter.retry_after(rate_key)
+        if retry_after is not None:
+            response = _error(
+                429,
+                ApiErrorCode.INGRESS_RATE_LIMITED,
+                "too many login attempts; retry later",
+            )
+            response.headers["Retry-After"] = str(retry_after)
+            return response
+
+        verified = await asyncio.to_thread(
+            auth.verify_credentials,
+            command.username,
+            command.password,
+        )
+        if not verified:
+            auth.rate_limiter.record_failure(rate_key)
+            return _error(401, ApiErrorCode.UNAUTHENTICATED, "invalid credentials")
+
+        auth.rate_limiter.clear(rate_key)
+        principal = auth.establish_session(request)
+        return JSONResponse(
+            {
+                "authenticated": True,
+                "username": principal.username,
+                "expires_at": principal.expires_at,
+            }
+        )
+
+    @api.get("/api/auth/session")
+    async def read_auth_session(request: Request) -> dict[str, object]:
+        auth = cast(ApplicationAuthenticator, request.app.state.authenticator)
+        if not auth.settings.enabled:
+            return {"authenticated": True, "username": "local-development"}
+        principal = auth.principal(request)
+        if principal is None:
+            return {"authenticated": False}
+        return {
+            "authenticated": True,
+            "username": principal.username,
+            "expires_at": principal.expires_at,
+        }
+
+    @api.post("/api/auth/logout")
+    async def logout(request: Request) -> Response:
+        request.session.clear()
+        return Response(status_code=204)
 
     @api.get("/health")
     async def health() -> dict[str, str]:

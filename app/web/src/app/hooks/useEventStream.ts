@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getClient } from "@/lib/api";
+import { apiFetch, getClient } from "@/lib/api";
 import type { ProjectEvent } from "@/app/types/types";
 
 const RECONNECT_DELAY = 1_500;
@@ -161,13 +161,14 @@ export function useEventStream(
           const headers: HeadersInit = cursor
             ? { "Last-Event-ID": cursor }
             : {};
-          const response = await fetch(
+          const response = await apiFetch(
             getClient().createEventStreamUrl(projectId),
             {
               headers,
               signal: controller.signal,
             }
           );
+          if (response.status === 401) return;
           if (!response.ok || !response.body)
             throw new Error(`SSE HTTP ${response.status}`);
           streamConnected = true;

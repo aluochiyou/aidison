@@ -51,22 +51,62 @@ def test_public_connector_reaches_the_gateway() -> None:
     assert 'X-Frame-Options "DENY"' in caddyfile
 
 
-def test_caddy_keeps_the_only_health_route_outside_the_business_handler() -> None:
+def test_caddy_routes_health_api_and_web_without_edge_basic_auth() -> None:
     caddyfile = (APP_ROOT / "ops" / "Caddyfile.production").read_text(encoding="utf-8")
 
-    # The loopback health probe is intentionally the only unauthenticated path.
+    # Application routes authenticate in FastAPI so the login page itself can load.
     assert "@edge_health path /edge-health" in caddyfile
-    assert "@business not path /edge-health" in caddyfile
-    assert "basic_auth @business" in caddyfile
+    assert "basic_auth" not in caddyfile
     assert "handle @edge_health" in caddyfile
     assert caddyfile.count("\thandle ") == 3
     assert "@api path /api/* /health" in caddyfile
     assert "reverse_proxy api:8000" in caddyfile
     assert caddyfile.count("reverse_proxy ") == 2
 
-    business_handler = caddyfile.split("\thandle {", maxsplit=1)[1]
-    assert "basic_auth" not in business_handler
-    assert "reverse_proxy web:3000" in business_handler
+    web_handler = caddyfile.split("\thandle {", maxsplit=1)[1]
+    assert "reverse_proxy web:3000" in web_handler
+
+
+def test_application_auth_secrets_are_scoped_to_api() -> None:
+    compose = _production_compose()
+    services = compose["services"]
+    assert isinstance(services, dict)
+    api = services["api"]
+    gateway = services["gateway"]
+    worker = services["worker"]
+    assert isinstance(api, dict)
+    assert isinstance(gateway, dict)
+    assert isinstance(worker, dict)
+
+    api_environment = api["environment"]
+    assert api_environment["AIDISON_AUTH_ENABLED"] == "1"
+    assert "AIDISON_ADMIN_PASSWORD_HASH" in api_environment
+    assert "AIDISON_SESSION_SECRET" in api_environment
+    assert "AIDISON_PUBLIC_ORIGIN" in api_environment
+    assert "environment" not in gateway
+    assert "AIDISON_SESSION_SECRET" not in worker["environment"]
+
+
+def test_application_auth_configurator_generates_secret_without_printing_it() -> None:
+    configurator = (APP_ROOT / "ops" / "configure-application-auth.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert 'AIDISON_PUBLIC_ORIGIN" -Value $PublicOrigin' in configurator
+    assert 'AIDISON_SESSION_SECRET" -Value (New-UrlSafeSecret)' in configurator
+    assert "Write-Host $Value" not in configurator
+    assert "No secret value was printed" in configurator
+
+
+def test_application_password_reset_recreates_api_and_verifies_login() -> None:
+    resetter = (APP_ROOT / "ops" / "reset-application-admin-password.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "--no-deps --force-recreate api" in resetter
+    assert "/api/auth/login" in resetter
+    assert "Origin = $publicOrigin" in resetter
+    assert "Existing application sessions are invalidated" in resetter
 
 
 def test_production_initializer_requires_an_explicit_access_mode_choice() -> None:
@@ -75,7 +115,7 @@ def test_production_initializer_requires_an_explicit_access_mode_choice() -> Non
     assert '[ValidateSet("CloudflareAccess", "OriginBasicAuth")]' in initializer
     assert '[string]$AccessMode = "CloudflareAccess"' in initializer
     assert 'if ($AccessMode -eq "CloudflareAccess")' in initializer
-    assert "OriginBasicAuth mode is for a single trusted operator only" in initializer
+    assert "OriginBasicAuth is a legacy mode name" in initializer
 
 
 def test_production_scripts_support_private_tailscale_without_a_tunnel_token() -> None:
@@ -126,9 +166,9 @@ def test_admin_password_reset_recreates_only_the_gateway() -> None:
 
 
 def test_module_visual_key_script_uses_hidden_prompt_and_restarts_only_its_worker() -> None:
-    configurator = (
-        APP_ROOT / "ops" / "configure-module-visual-key.ps1"
-    ).read_text(encoding="utf-8-sig")
+    configurator = (APP_ROOT / "ops" / "configure-module-visual-key.ps1").read_text(
+        encoding="utf-8-sig"
+    )
 
     assert 'Read-Host "DashScope API Key（不回显）" -AsSecureString' in configurator
     assert "Write-Host $apiKey" not in configurator

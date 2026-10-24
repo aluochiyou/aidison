@@ -3,6 +3,7 @@ param(
     [string]$EnvFile = ".env.production",
     [string]$SourceEnvFile = ".env",
     [string]$AdminUser = "aidison",
+    [string]$PublicOrigin = "https://aidison.xyz",
     [ValidateSet("CloudflareAccess", "OriginBasicAuth")]
     [string]$AccessMode = "CloudflareAccess",
     [ValidateSet("Tailscale", "CloudflareTunnel")]
@@ -147,6 +148,9 @@ if (Test-Path -LiteralPath $targetPath) {
 if ($AdminUser -notmatch '^[A-Za-z0-9._-]{1,64}$') {
     throw "AdminUser must contain only letters, digits, dot, underscore, or hyphen"
 }
+if ($PublicOrigin -notmatch '^https://[^/]+$') {
+    throw "PublicOrigin must be one exact HTTPS origin without a trailing slash"
+}
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker CLI is unavailable"
 }
@@ -177,7 +181,7 @@ if ($PublishMode -eq "CloudflareTunnel") {
         Confirm-CloudflareAccessGuard
     }
     else {
-        Write-Warning "OriginBasicAuth mode is for a single trusted operator only. Caddy authentication remains required; do not expose API, PostgreSQL, or web ports."
+        Write-Warning "OriginBasicAuth is a legacy mode name. FastAPI application login remains required; do not expose API, PostgreSQL, or web ports."
     }
 }
 else {
@@ -208,6 +212,8 @@ $values = @{
     AIDISON_ADMIN_USER = $AdminUser
     # Preserve bcrypt dollar signs in the dotenv file without relying on nested quotes.
     AIDISON_ADMIN_PASSWORD_HASH = ($dotenvQuote + $adminHash + $dotenvQuote)
+    AIDISON_SESSION_SECRET = New-UrlSafeSecret
+    AIDISON_PUBLIC_ORIGIN = $PublicOrigin
 }
 if ($PublishMode -eq "CloudflareTunnel") {
     $values["CLOUDFLARE_TUNNEL_TOKEN"] = $tunnelToken

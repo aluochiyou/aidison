@@ -91,6 +91,16 @@ services:
   api:
     <<: *backend-service
     command: ["uvicorn", "aidison.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    environment:
+      <<: *backend-environment
+      # Application authentication is fail-closed in production. Credentials
+      # are intentionally scoped to the API rather than every worker.
+      AIDISON_AUTH_ENABLED: "1"
+      AIDISON_ADMIN_USER: ${AIDISON_ADMIN_USER:?set AIDISON_ADMIN_USER}
+      AIDISON_ADMIN_PASSWORD_HASH: ${AIDISON_ADMIN_PASSWORD_HASH:?set AIDISON_ADMIN_PASSWORD_HASH}
+      AIDISON_SESSION_SECRET: ${AIDISON_SESSION_SECRET:?set AIDISON_SESSION_SECRET}
+      AIDISON_PUBLIC_ORIGIN: ${AIDISON_PUBLIC_ORIGIN:?set AIDISON_PUBLIC_ORIGIN}
+      AIDISON_SESSION_TTL_SECONDS: ${AIDISON_SESSION_TTL_SECONDS:-28800}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -243,9 +253,6 @@ services:
 
   gateway:
     image: caddy:2.11.7-alpine
-    environment:
-      AIDISON_ADMIN_USER: ${AIDISON_ADMIN_USER:?set AIDISON_ADMIN_USER}
-      AIDISON_ADMIN_PASSWORD_HASH: ${AIDISON_ADMIN_PASSWORD_HASH:?set AIDISON_ADMIN_PASSWORD_HASH}
     volumes:
       - ./ops/Caddyfile.production:/etc/caddy/Caddyfile:ro
     depends_on:

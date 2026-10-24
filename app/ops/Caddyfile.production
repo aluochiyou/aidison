@@ -5,10 +5,15 @@
 
 :8080 {
 	@edge_health path /edge-health
-	@business not path /edge-health
 
-	basic_auth @business {
-		{$AIDISON_ADMIN_USER} {$AIDISON_ADMIN_PASSWORD_HASH}
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		Cross-Origin-Opener-Policy "same-origin"
 	}
 
 	handle @edge_health {
@@ -26,16 +31,6 @@
 	}
 
 	handle {
-		header {
-			-Server
-			Strict-Transport-Security "max-age=31536000; includeSubDomains"
-			X-Content-Type-Options "nosniff"
-			X-Frame-Options "DENY"
-			Referrer-Policy "same-origin"
-			Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
-			Cross-Origin-Opener-Policy "same-origin"
-		}
-
 		reverse_proxy web:3000 {
 			flush_interval -1
 		}

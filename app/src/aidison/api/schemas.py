@@ -19,6 +19,11 @@ class ApiModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class LoginRequest(ApiModel):
+    username: str = Field(min_length=1, max_length=64)
+    password: str = Field(min_length=1, max_length=128)
+
+
 class CreateProjectRequest(ApiModel):
     name: str = Field(min_length=1, max_length=160)
     goal: str = Field(min_length=1, max_length=8_000)

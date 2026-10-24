@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import ClassVar
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, SecretStr, model_validator
 from pydantic_settings import (
     BaseSettings,
     PydanticBaseSettingsSource,
@@ -93,3 +93,55 @@ class ConversationSettings(AidisonSettings):
         ge=0.0,
         le=1.0,
     )
+
+
+class ApplicationAuthSettings(AidisonSettings):
+    """Single-owner application session settings.
+
+    Authentication is disabled for local development and tests. Production
+    Compose enables it explicitly and validation fails closed when any secret
+    or the canonical HTTPS origin is absent.
+    """
+
+    enabled: bool = Field(default=False, validation_alias="AIDISON_AUTH_ENABLED")
+    admin_user: str = Field(
+        default="aidison",
+        validation_alias="AIDISON_ADMIN_USER",
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Za-z0-9._-]+$",
+    )
+    admin_password_hash: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="AIDISON_ADMIN_PASSWORD_HASH",
+    )
+    session_secret: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias="AIDISON_SESSION_SECRET",
+    )
+    public_origin: str | None = Field(
+        default=None,
+        validation_alias="AIDISON_PUBLIC_ORIGIN",
+    )
+    session_ttl_seconds: int = Field(
+        default=28_800,
+        validation_alias="AIDISON_SESSION_TTL_SECONDS",
+        ge=300,
+        le=604_800,
+    )
+
+    @model_validator(mode="after")
+    def validate_enabled_configuration(self) -> ApplicationAuthSettings:
+        if not self.enabled:
+            return self
+        password_hash = self.admin_password_hash.get_secret_value()
+        session_secret = self.session_secret.get_secret_value()
+        if not password_hash.startswith(("$2a$", "$2b$", "$2y$")):
+            raise ValueError("enabled application auth requires a bcrypt password hash")
+        if len(session_secret) < 43:
+            raise ValueError("enabled application auth requires a 32-byte URL-safe secret")
+        if self.public_origin is None or not self.public_origin.startswith("https://"):
+            raise ValueError("enabled application auth requires an HTTPS public origin")
+        if self.public_origin.rstrip("/") != self.public_origin:
+            raise ValueError("AIDISON_PUBLIC_ORIGIN must not end with a slash")
+        return self

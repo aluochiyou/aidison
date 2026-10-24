@@ -4910,3 +4910,130 @@ button {
   display: flex;
   justify-content: flex-end;
 }
+
+/* Application session boundary */
+.auth-shell {
+  position: relative;
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  overflow: hidden;
+  padding: 1.5rem;
+  background: radial-gradient(
+      circle at 22% 18%,
+      rgba(135, 191, 105, 0.28),
+      transparent 32rem
+    ),
+    linear-gradient(145deg, #e9f0d6 0%, #d7e7c5 48%, #b7d2af 100%);
+  color: #2d261e;
+}
+
+.auth-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.16;
+  background-image: linear-gradient(rgba(45, 38, 30, 0.45) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(45, 38, 30, 0.45) 2px, transparent 2px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, #000, transparent 85%);
+}
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 28rem);
+  padding: 2rem;
+  border: 3px solid #34291f;
+  background: rgba(255, 251, 235, 0.96);
+  box-shadow: 10px 10px 0 rgba(52, 41, 31, 0.28);
+}
+
+.auth-mark {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  margin-bottom: 1.2rem;
+  place-items: center;
+  border: 2px solid #34291f;
+  background: #78a95f;
+  color: #fffbea;
+  box-shadow: 4px 4px 0 #34291f;
+}
+
+.auth-mark svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.auth-heading span {
+  color: #52753f;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.auth-heading h1 {
+  margin: 0.35rem 0 0.55rem;
+  font-size: clamp(1.65rem, 5vw, 2.15rem);
+  line-height: 1.15;
+}
+.auth-heading p {
+  margin: 0;
+  color: #655b50;
+  font-size: 0.9rem;
+}
+.auth-form {
+  display: grid;
+  gap: 1rem;
+  margin: 1.5rem 0 1rem;
+}
+.auth-form > div {
+  display: grid;
+  gap: 0.45rem;
+}
+.auth-form input {
+  height: 2.7rem;
+  border-width: 2px;
+  background: #fff;
+}
+.auth-form button {
+  width: 100%;
+}
+.auth-error {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border-left: 4px solid #b84334;
+  background: #fce8df;
+  color: #7f2d25;
+  font-size: 0.82rem;
+}
+.auth-card > small {
+  color: #756b60;
+  font-size: 0.68rem;
+}
+.auth-checking {
+  display: flex;
+  gap: 0.7rem;
+  font-weight: 700;
+}
+.auth-loader {
+  width: 1rem;
+  height: 1rem;
+  border: 3px solid rgba(52, 41, 31, 0.2);
+  border-top-color: #52753f;
+  animation: auth-spin 0.8s linear infinite;
+}
+.auth-logout {
+  position: fixed;
+  z-index: 80;
+  right: 1rem;
+  bottom: 1rem;
+  border-width: 2px;
+  background: rgba(255, 251, 235, 0.94);
+  box-shadow: 3px 3px 0 rgba(52, 41, 31, 0.25);
+}
+
+@keyframes auth-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -38,13 +38,14 @@ the active `aidison` runtime database or Artifact volume.
 `compose.production.yaml` is deliberately separate from the local developer stack. PostgreSQL and
 the FastAPI service have no host port; only Caddy binds to `127.0.0.1`. `cloudflared` creates the
 outbound-only public connection, so the router needs no port forwarding and the home IP is not
-published. Caddy Basic Auth is an origin-side fail-closed guard. For the current single-owner test
-deployment, Cloudflare Access is a required first identity gate rather than an optional recommendation.
+published. FastAPI owns the single-user login and signs an eight-hour
+`HttpOnly + Secure + SameSite=Strict` session Cookie. Cloudflare Access can remain an optional outer
+identity gate, while application authentication is the API's authoritative boundary.
 
 For a temporary one-person test deployment without Cloudflare Zero Trust, use the explicit
-`OriginBasicAuth` mode below. It retains the Tunnel and Caddy's bcrypt-protected Basic Auth, but it
-does not provide identity-based access logs, MFA, or per-user revocation. Never use this mode for
-multiple users or sensitive shared access.
+`OriginBasicAuth` compatibility switch below. Despite its historical name, the current deployment
+uses the same FastAPI application login and does not restore browser Basic Auth. It does not provide
+MFA or per-user revocation, so it remains a single-owner mode.
 
 1. In Cloudflare, create a remotely managed Tunnel and copy its connector token. Set the public
    hostname service to `http://gateway:8080`. Before running the initializer, create a **Self-hosted**
@@ -88,13 +89,14 @@ tailscale serve --bg http://127.0.0.1:8080
 tailscale serve status
 ```
 
-Tailscale prints the private HTTPS address. Caddy Basic Auth remains a second gate, so a Tailscale
-member must also know the locally generated administrator password. To remove private access later,
-run `tailscale serve reset`.
+Tailscale prints the private HTTPS address. Aidison's application login remains the second gate, so
+a tailnet member must also know the locally generated administrator password. To remove private
+access later, run `tailscale serve reset`.
 
 The initializer asks for the administrator password and Tunnel Token without echoing them,
 generates a URL-safe PostgreSQL password, hashes the administrator password through Caddy stdin,
-and imports only the allowlisted Provider keys already present in `.env`. Standard `LANGFUSE_*`
+generates a separate session-signing secret, and imports only the allowlisted Provider keys already
+present in `.env`. Standard `LANGFUSE_*`
 variables are mapped to Aidison's runtime configuration; when both Langfuse keys are present, tracing
 is enabled. It creates the Git-ignored `.env.production` atomically and refuses to overwrite an
 existing file.
@@ -111,6 +113,14 @@ Initialization and deployment can also be run together with
 The deployment script validates required secrets and the Compose model, builds the application
 images, starts the stack, and waits for the loopback-only edge health endpoint. It never prints
 secret values.
+
+To rotate the administrator password after deployment, use the application-aware reset script. It
+recreates only the API, verifies the new credential against the login endpoint, and invalidates all
+existing sessions because every session is bound to the active password hash:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\reset-application-admin-password.ps1
+```
 
 ### Enable optional module visuals
 

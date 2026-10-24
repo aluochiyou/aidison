@@ -21,6 +21,8 @@ $requiredKeys = @(
     "POSTGRES_PASSWORD",
     "AIDISON_ADMIN_USER",
     "AIDISON_ADMIN_PASSWORD_HASH",
+    "AIDISON_SESSION_SECRET",
+    "AIDISON_PUBLIC_ORIGIN",
     "DEEPSEEK_API_KEY"
 )
 if ($PublishMode -eq "CloudflareTunnel") {
@@ -48,7 +50,19 @@ if ($postgresPassword.Length -lt 32 -or $postgresPassword -notmatch '^[A-Za-z0-9
 $hashMatch = [regex]::Match($envText, "(?m)^AIDISON_ADMIN_PASSWORD_HASH=(?<value>[^\r\n]+)")
 $passwordHash = $hashMatch.Groups["value"].Value.Trim().Trim("'", '"')
 if ($passwordHash -notmatch '^\$2[aby]\$\d{2}\$.{53}$') {
-    throw "AIDISON_ADMIN_PASSWORD_HASH must be a Caddy-compatible bcrypt hash"
+    throw "AIDISON_ADMIN_PASSWORD_HASH must be a valid bcrypt hash"
+}
+
+$sessionSecretMatch = [regex]::Match($envText, "(?m)^AIDISON_SESSION_SECRET=(?<value>[^\r\n]+)")
+$sessionSecret = $sessionSecretMatch.Groups["value"].Value.Trim().Trim("'", '"')
+if ($sessionSecret.Length -lt 43 -or $sessionSecret -notmatch '^[A-Za-z0-9_-]+$') {
+    throw "AIDISON_SESSION_SECRET must contain at least 43 URL-safe random characters"
+}
+
+$originMatch = [regex]::Match($envText, "(?m)^AIDISON_PUBLIC_ORIGIN=(?<value>[^\r\n]+)")
+$publicOrigin = $originMatch.Groups["value"].Value.Trim().Trim("'", '"')
+if ($publicOrigin -notmatch '^https://[^/]+$') {
+    throw "AIDISON_PUBLIC_ORIGIN must be one exact HTTPS origin without a trailing slash"
 }
 
 $composeArguments = @("--env-file", $EnvFile, "-f", $composeFile)

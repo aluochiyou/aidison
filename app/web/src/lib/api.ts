@@ -2,6 +2,33 @@
   error: { code: string; message: string; details?: unknown };
 }
 
+export interface AuthSession {
+  authenticated: boolean;
+  username?: string;
+  expires_at?: number;
+}
+
+export const AUTH_REQUIRED_EVENT = "aidison:auth-required";
+
+export async function apiFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+  notifyUnauthorized = true
+): Promise<Response> {
+  const response = await fetch(input, {
+    ...init,
+    credentials: "same-origin",
+  });
+  if (
+    notifyUnauthorized &&
+    response.status === 401 &&
+    typeof window !== "undefined"
+  ) {
+    window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
+  }
+  return response;
+}
+
 class AidisonClient {
   private baseUrl: string;
   private counter = 0;
@@ -36,7 +63,7 @@ class AidisonClient {
     if (opts.prefix) headers["Idempotency-Key"] = this.genKey(opts.prefix);
     if (opts.ifMatch !== undefined) headers["If-Match"] = `"${opts.ifMatch}"`;
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
+    const res = await apiFetch(`${this.baseUrl}${path}`, {
       method,
       headers,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -60,9 +87,47 @@ class AidisonClient {
   }
 
   async healthCheck(): Promise<{ status: string }> {
-    const res = await fetch(`${this.baseUrl}/health`);
+    const res = await apiFetch(`${this.baseUrl}/health`);
     if (!res.ok) throw new Error(`Health check failed: ${res.status}`);
     return res.json();
+  }
+
+  async getAuthSession(): Promise<AuthSession> {
+    const res = await apiFetch(`${this.baseUrl}/api/auth/session`, {}, false);
+    if (!res.ok) throw new Error(`Session check failed: ${res.status}`);
+    return res.json();
+  }
+
+  async login(username: string, password: string): Promise<AuthSession> {
+    const res = await apiFetch(
+      `${this.baseUrl}/api/auth/login`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      },
+      false
+    );
+    if (!res.ok) {
+      let err: ApiError & { status?: number };
+      try {
+        err = await res.json();
+      } catch {
+        err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
+      }
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  }
+
+  async logout(): Promise<void> {
+    const res = await apiFetch(
+      `${this.baseUrl}/api/auth/logout`,
+      { method: "POST", headers: { "Content-Type": "application/json" } },
+      false
+    );
+    if (!res.ok) throw new Error(`Logout failed: ${res.status}`);
   }
 
   async resolveAgentRunDecision(
@@ -92,7 +157,7 @@ class AidisonClient {
   }
 
   async listProjects(): Promise<import("@/app/types/types").Project[]> {
-    const res = await fetch(`${this.baseUrl}/api/projects`);
+    const res = await apiFetch(`${this.baseUrl}/api/projects`);
     if (!res.ok) {
       let err: ApiError;
       try {
@@ -115,7 +180,7 @@ class AidisonClient {
   async getSnapshot(
     projectId: string
   ): Promise<import("@/app/types/types").ProjectSnapshot> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${this.baseUrl}/api/projects/${projectId}/snapshot`
     );
     if (!res.ok) {
@@ -531,7 +596,7 @@ class AidisonClient {
     after = 0,
     limit = 200
   ): Promise<import("@/app/types/types").ProjectEvent[]> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${this.baseUrl}/api/projects/${projectId}/events?after=${after}&limit=${limit}`
     );
     if (!res.ok) {
@@ -558,7 +623,7 @@ class AidisonClient {
   async getIntegrationHealth(): Promise<
     import("@/app/types/types").IntegrationHealth
   > {
-    const res = await fetch(`${this.baseUrl}/api/integration-health`);
+    const res = await apiFetch(`${this.baseUrl}/api/integration-health`);
     if (!res.ok) {
       throw {
         error: {
@@ -588,7 +653,7 @@ class AidisonClient {
     };
     headers["If-Match"] = `"${ifMatch}"`;
     headers["Idempotency-Key"] = this.genKey("search-offers");
-    const res = await fetch(
+    const res = await apiFetch(
       `${this.baseUrl}/api/projects/${projectId}/shopping/offers/search`,
       { method: "POST", headers, body: JSON.stringify(body) }
     );
@@ -614,7 +679,7 @@ class AidisonClient {
     bomLineId: string,
     limit = 10
   ): Promise<import("@/app/types/types").ShoppingOfferRecommendations> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${
         this.baseUrl
       }/api/projects/${projectId}/shopping/recommendations/${encodeURIComponent(
@@ -640,7 +705,7 @@ class AidisonClient {
     projectId: string,
     selections: import("@/app/types/types").ShoppingBudgetSelection[]
   ): Promise<import("@/app/types/types").ShoppingBudgetSummary> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${this.baseUrl}/api/projects/${projectId}/shopping/budget-summary`,
       {
         method: "POST",
@@ -665,7 +730,7 @@ class AidisonClient {
     projectId: string,
     artifactId: string
   ): Promise<import("@/app/types/types").ArtifactMeta> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${this.baseUrl}/api/projects/${projectId}/artifacts/${artifactId}`
     );
     if (!res.ok) {
@@ -685,7 +750,7 @@ class AidisonClient {
     projectId: string,
     artifactId: string
   ): Promise<string> {
-    const res = await fetch(
+    const res = await apiFetch(
       `${this.baseUrl}/api/projects/${projectId}/artifacts/${artifactId}/content`
     );
     if (!res.ok) {
