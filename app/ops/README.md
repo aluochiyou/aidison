@@ -125,6 +125,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\configure-module-visua
 The script atomically updates the Git-ignored `.env.production`, recreates only
 `module-visual-worker`, and verifies that the secret reached the container without printing it.
 
+### Switch deep research discovery to Firecrawl
+
+Aidison supports either Tavily or Firecrawl as the bounded search provider. To switch production
+research to Firecrawl without putting its key in PowerShell history, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\configure-firecrawl-search.ps1
+```
+
+The script stores the key in `.env.production`, sets
+`AIDISON_WEB_SEARCH_PROVIDER=firecrawl`, recreates only the research worker, and verifies the
+effective provider without printing the credential.
+
 For manual initialization, copy `.env.production.example` to `.env.production` and fill every
 required value. In Cloudflare, create a remotely managed Tunnel and route the public hostname to
 `http://gateway:8080`. Configure the single-owner Access application for the same hostname before

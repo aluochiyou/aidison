@@ -134,3 +134,15 @@ def test_module_visual_key_script_uses_hidden_prompt_and_restarts_only_its_worke
     assert "Write-Host $apiKey" not in configurator
     assert "--force-recreate module-visual-worker" in configurator
     assert "No secret value was printed" in configurator
+
+
+def test_firecrawl_search_script_uses_hidden_prompt_and_restarts_only_research_worker() -> None:
+    configurator = (APP_ROOT / "ops" / "configure-firecrawl-search.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert 'Read-Host "Firecrawl API Key（不回显）" -AsSecureString' in configurator
+    assert "Write-Host $apiKey" not in configurator
+    assert "AIDISON_WEB_SEARCH_PROVIDER=firecrawl" in configurator
+    assert "--force-recreate worker" in configurator
+    assert "No secret value was printed" in configurator
