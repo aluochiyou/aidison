@@ -28,6 +28,19 @@ RUN_A = UUID("00000000-0000-0000-0000-0000000000a1")
 RUN_B = UUID("00000000-0000-0000-0000-0000000000b2")
 
 
+class _FakeObservation:
+    def __init__(self, observation_id: str) -> None:
+        self.id = observation_id
+        self.ended = False
+        self.updates: list[dict[str, object]] = []
+
+    def update(self, **kwargs: object) -> None:
+        self.updates.append(kwargs)
+
+    def end(self) -> None:
+        self.ended = True
+
+
 class _FakeScope(AbstractContextManager[None]):
     def __enter__(self) -> None:
         return None
@@ -41,9 +54,9 @@ class _FakeLangfuse:
         self.calls: list[dict[str, object]] = []
         self.flush_calls = 0
 
-    def start_as_current_observation(self, **kwargs: object) -> _FakeScope:
+    def start_observation(self, **kwargs: object) -> _FakeObservation:
         self.calls.append(kwargs)
-        return _FakeScope()
+        return _FakeObservation(f"{len(self.calls):016x}")
 
     def flush(self) -> None:
         self.flush_calls += 1
@@ -181,6 +194,38 @@ def test_runtime_trace_isolates_parallel_run_trace_ids() -> None:
     }
 
 
+def test_run_root_parents_parallel_observations_without_current_context() -> None:
+    client = _FakeLangfuse()
+    tracer = _tracer(client)
+    correlation = TelemetryCorrelation(run_id=RUN_A)
+
+    async def child(name: str) -> None:
+        with tracer.span(
+            name=name,
+            correlation=correlation,
+            attributes={"aidison.event": "task_started"},
+        ):
+            await asyncio.sleep(0)
+
+    async def emit_all() -> None:
+        with tracer.span(
+            name="aidison.deep_research.run",
+            correlation=correlation,
+            kind="agent",
+            attributes={"aidison.event": "agent_run_started"},
+        ):
+            await asyncio.gather(child("child-a"), child("child-b"))
+
+    asyncio.run(emit_all())
+
+    root_id = "0000000000000001"
+    assert client.calls[0]["trace_context"] == {"trace_id": RUN_A.hex}
+    assert [item["trace_context"] for item in client.calls[1:]] == [
+        {"trace_id": RUN_A.hex, "parent_span_id": root_id},
+        {"trace_id": RUN_A.hex, "parent_span_id": root_id},
+    ]
+
+
 def test_model_invocation_observer_exports_only_scalar_settlement_summary() -> None:
     client = _FakeLangfuse()
     tracer = _tracer(client)
@@ -281,10 +326,11 @@ class _RecordingRuntimeTracer(RuntimeTracer):
         *,
         name: str,
         correlation: TelemetryCorrelation,
-        kind: Literal["span", "agent", "tool", "chain", "retriever"] = "span",
+        kind: Literal["span", "agent", "tool", "chain", "retriever", "generation"] = "span",
         attributes: Mapping[str, str | int | float | bool | None] | None = None,
+        parent_observation_id: str | None = None,
     ) -> AbstractContextManager[None]:
-        del kind
+        del kind, parent_observation_id
         self.calls.append((name, correlation, dict(attributes) if attributes is not None else None))
         return _FakeScope()
 

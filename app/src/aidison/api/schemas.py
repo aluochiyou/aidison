@@ -102,7 +102,10 @@ class ResearchStrategyPlanRequest(ApiModel):
     # an older client that simply did not know this field existed.
     requires_independent_verification: bool | None = None
     max_concurrency: int | None = Field(default=None, ge=1, le=16)
-    max_token_budget: int | None = Field(default=None, gt=0, le=1_000_000_000)
+    # Product-level safety ceiling.  A single approved research run may spend
+    # at most one 128k context window even if an older client submits a larger
+    # value.  Follow-up research must be a separately reviewed plan/run.
+    max_token_budget: int | None = Field(default=None, gt=0, le=128_000)
     max_duration_seconds: int | None = Field(default=None, ge=60, le=604_800)
     research_depth: Literal["focused", "standard", "deep"] = "deep"
     source_strategy: Literal["primary", "independent", "official", "mixed"] | None = None

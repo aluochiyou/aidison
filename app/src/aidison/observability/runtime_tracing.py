@@ -12,7 +12,6 @@ from __future__ import annotations
 import re
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from contextvars import ContextVar, Token
 from threading import RLock
 from typing import Any, Literal, Protocol
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -23,7 +22,7 @@ from pydantic import AliasChoices, Field, SecretStr
 from aidison.config import AidisonSettings
 from aidison.observability.contracts import TelemetryCorrelation
 
-_TraceKind = Literal["span", "agent", "tool", "chain", "retriever"]
+_TraceKind = Literal["span", "agent", "tool", "chain", "retriever", "generation"]
 _TraceScalar = str | int | float | bool | None
 _SAFE_ATTRIBUTE_KEYS = frozenset(
     {
@@ -48,7 +47,6 @@ _SAFE_ATTRIBUTE_KEYS = frozenset(
         "gen_ai.usage.total_tokens",
     }
 )
-_current_trace_id: ContextVar[str | None] = ContextVar("aidison_runtime_trace_id", default=None)
 
 
 class RuntimeTracingSettings(AidisonSettings):
@@ -103,6 +101,7 @@ class RuntimeTracer(Protocol):
         correlation: TelemetryCorrelation,
         kind: _TraceKind = "span",
         attributes: Mapping[str, _TraceScalar] | None = None,
+        parent_observation_id: str | None = None,
     ) -> AbstractContextManager[None]: ...
 
     def flush(self) -> None: ...
@@ -128,8 +127,9 @@ class DisabledRuntimeTracer:
         correlation: TelemetryCorrelation,
         kind: _TraceKind = "span",
         attributes: Mapping[str, _TraceScalar] | None = None,
+        parent_observation_id: str | None = None,
     ) -> AbstractContextManager[None]:
-        del name, correlation, kind, attributes
+        del name, correlation, kind, attributes, parent_observation_id
         return _NoopTraceSpan()
 
     def flush(self) -> None:
@@ -145,42 +145,65 @@ class _LangfuseTraceSpan(AbstractContextManager[None]):
         name: str,
         kind: _TraceKind,
         metadata: dict[str, _TraceScalar],
+        correlation: TelemetryCorrelation,
+        parent_observation_id: str | None,
+        is_run_root: bool,
     ) -> None:
         self._tracer = tracer
         self._trace_id = trace_id
         self._name = name
         self._kind = kind
         self._metadata = metadata
-        self._scope: Any | None = None
-        self._token: Token[str | None] | None = None
+        self._correlation = correlation
+        self._parent_observation_id = parent_observation_id
+        self._is_run_root = is_run_root
+        self._observation: Any | None = None
+
+    @property
+    def observation_id(self) -> str | None:
+        value = getattr(self._observation, "id", None)
+        return value if isinstance(value, str) else None
 
     def __enter__(self) -> None:
-        self._token = _current_trace_id.set(self._trace_id)
         try:
             client = self._tracer._client_or_none()
             if client is not None:
-                self._scope = client.start_as_current_observation(
-                    trace_context={"trace_id": self._trace_id},
+                parent_observation_id = self._parent_observation_id
+                if parent_observation_id is None and self._correlation.run_id is not None:
+                    parent_observation_id = self._tracer._run_root_id(self._correlation.run_id)
+                trace_context = {"trace_id": self._trace_id}
+                if parent_observation_id is not None:
+                    trace_context["parent_span_id"] = parent_observation_id
+                self._observation = client.start_observation(
+                    trace_context=trace_context,
                     name=self._name,
                     as_type=self._kind,
                     metadata=self._metadata,
                     version=self._tracer.release,
                 )
-                self._scope.__enter__()
+                if self._is_run_root and self._correlation.run_id is not None:
+                    observation_id = self.observation_id
+                    if observation_id is not None:
+                        self._tracer._register_run_root(self._correlation.run_id, observation_id)
         except Exception:
             # Telemetry cannot make a request, graph, or database command fail.
-            self._scope = None
+            self._observation = None
         return None
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
         try:
-            if self._scope is not None:
-                self._scope.__exit__(exc_type, exc, traceback)
+            if self._observation is not None:
+                if exc is not None:
+                    self._observation.update(
+                        level="ERROR",
+                        status_message=type(exc).__name__,
+                    )
+                self._observation.end()
         except Exception:
             pass
         finally:
-            if self._token is not None:
-                _current_trace_id.reset(self._token)
+            if self._is_run_root and self._correlation.run_id is not None:
+                self._tracer._unregister_run_root(self._correlation.run_id, self.observation_id)
         return None
 
 
@@ -209,6 +232,8 @@ class LangfuseRuntimeTracer:
         self._client_factory = client_factory or _default_client
         self._client: Any | None = None
         self._client_failed = False
+        self._run_roots: dict[UUID, str] = {}
+        self._lock = RLock()
 
     def span(
         self,
@@ -217,6 +242,7 @@ class LangfuseRuntimeTracer:
         correlation: TelemetryCorrelation,
         kind: _TraceKind = "span",
         attributes: Mapping[str, _TraceScalar] | None = None,
+        parent_observation_id: str | None = None,
     ) -> AbstractContextManager[None]:
         metadata = _safe_metadata(correlation=correlation, attributes=attributes)
         if metadata is None:
@@ -226,13 +252,34 @@ class LangfuseRuntimeTracer:
         # deployment label so traces from several Aidison environments can be
         # distinguished without exporting request/model payloads.
         metadata["aidison.service"] = self._project
+        is_run_root = bool(
+            correlation.run_id is not None
+            and attributes is not None
+            and attributes.get("aidison.event") == "agent_run_started"
+        )
         return _LangfuseTraceSpan(
             tracer=self,
             trace_id=_trace_id_for(correlation),
             name=name,
             kind=kind,
             metadata=metadata,
+            correlation=correlation,
+            parent_observation_id=parent_observation_id,
+            is_run_root=is_run_root,
         )
+
+    def _run_root_id(self, run_id: UUID) -> str | None:
+        with self._lock:
+            return self._run_roots.get(run_id)
+
+    def _register_run_root(self, run_id: UUID, observation_id: str) -> None:
+        with self._lock:
+            self._run_roots[run_id] = observation_id
+
+    def _unregister_run_root(self, run_id: UUID, observation_id: str | None) -> None:
+        with self._lock:
+            if self._run_roots.get(run_id) == observation_id:
+                self._run_roots.pop(run_id, None)
 
     def flush(self) -> None:
         try:
@@ -297,9 +344,12 @@ class LangGraphRuntimeCallback(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        del serialized, inputs, parent_run_id
+        del serialized, inputs
         node_name = _safe_observation_name(kwargs.get("name"), fallback="node")
         correlation = self._correlation.model_copy(update={"invocation_id": run_id})
+        with self._lock:
+            parent_scope = self._spans.get(parent_run_id) if parent_run_id else None
+        parent_observation_id = getattr(parent_scope, "observation_id", None)
         scope = self._tracer.span(
             name=f"aidison.langgraph.{self._graph_name}.{node_name}",
             correlation=correlation,
@@ -310,6 +360,7 @@ class LangGraphRuntimeCallback(BaseCallbackHandler):
                 "aidison.graph_revision": self._graph_revision,
                 "aidison.node_name": node_name,
             },
+            parent_observation_id=parent_observation_id,
         )
         try:
             scope.__enter__()
@@ -409,9 +460,6 @@ def _safe_observation_name(value: object, *, fallback: str) -> str:
 def _trace_id_for(correlation: TelemetryCorrelation) -> str:
     if correlation.run_id is not None:
         return correlation.run_id.hex
-    current = _current_trace_id.get()
-    if current is not None:
-        return current
     if correlation.request_id is not None:
         return uuid5(NAMESPACE_URL, f"aidison-request:{correlation.request_id}").hex
     return uuid4().hex

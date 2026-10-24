@@ -37,7 +37,7 @@ class RuntimeModelInvocationObserver:
                 task_id=str(observation.task_id),
                 invocation_id=observation.logical_invocation_id,
             ),
-            kind="agent",
+            kind="generation",
             attributes=attributes,
         ):
             pass
