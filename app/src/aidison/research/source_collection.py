@@ -1220,6 +1220,7 @@ class FirecrawlSearchResearchSourceCollector:
 
     tool_ids = (FIRECRAWL_SEARCH_TOOL_ID,)
     _endpoint = "https://api.firecrawl.dev/v2/search"
+    _max_query_characters = 500
 
     def __init__(
         self,
@@ -1271,6 +1272,7 @@ class FirecrawlSearchResearchSourceCollector:
         recoverable_failures: list[FirecrawlSourceCollectionError] = []
         collection_failures: list[ResearchSourceCollectionFailure] = []
         for coverage_key, query in _coverage_search_queries(question, limit=max_queries):
+            query = _truncate_search_text(query, self._max_query_characters)
             try:
                 body = await self._search(
                     query,

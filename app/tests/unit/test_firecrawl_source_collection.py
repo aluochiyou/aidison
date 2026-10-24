@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -45,13 +46,14 @@ async def test_firecrawl_search_collects_bounded_rendered_markdown() -> None:
         ).collect(
             run=object(),  # type: ignore[arg-type]
             task=SimpleNamespace(collection_policy=None),
-            question="ESC continuous current specification",
+            question="ESC continuous current specification " + "integration limits " * 80,
         )
 
     assert captured["url"] == "https://api.firecrawl.dev/v2/search"
     assert captured["authorization"] == "Bearer fc-test-key"
     assert '"sources":["web"]' in str(captured["body"])
     assert '"onlyMainContent":true' in str(captured["body"])
+    assert len(json.loads(str(captured["body"]))["query"]) <= 500
     assert len(sources) == 1
     assert sources[0].source.provider == "firecrawl-search-v2"
     assert sources[0].source.canonical_locator == "https://example.test/esc"
