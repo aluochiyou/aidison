@@ -131,6 +131,28 @@ def test_runtime_trace_rejects_prompt_like_attributes_without_calling_exporter()
     assert client.calls == []
 
 
+def test_runtime_trace_accepts_payload_free_tool_dimensions() -> None:
+    client = _FakeLangfuse()
+    tracer = _tracer(client)
+
+    with tracer.span(
+        name="aidison.tool.invoke",
+        correlation=TelemetryCorrelation(project_id=uuid4(), run_id=RUN_A, task_id="task-1"),
+        kind="tool",
+        attributes={
+            "aidison.event": "tool_invocation",
+            "tool.name": "web.search.firecrawl",
+            "tool.provider": "firecrawl",
+        },
+    ):
+        pass
+
+    assert client.calls[0]["as_type"] == "tool"
+    metadata = client.calls[0]["metadata"]
+    assert metadata["tool.name"] == "web.search.firecrawl"
+    assert metadata["tool.provider"] == "firecrawl"
+
+
 def test_langgraph_callback_ignores_graph_inputs_outputs_and_uses_agent_run_trace() -> None:
     client = _FakeLangfuse()
     tracer = _tracer(client)

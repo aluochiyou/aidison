@@ -45,6 +45,8 @@ _SAFE_ATTRIBUTE_KEYS = frozenset(
         "gen_ai.provider.name",
         "gen_ai.request.model",
         "gen_ai.usage.total_tokens",
+        "tool.name",
+        "tool.provider",
     }
 )
 

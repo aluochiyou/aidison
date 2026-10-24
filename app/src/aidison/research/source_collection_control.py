@@ -20,6 +20,7 @@ from aidison.infrastructure.agent_run_budget import AgentRunBudgetLedger
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.database import session_scope
 from aidison.infrastructure.tool_execution import PostgresReadToolExecutor
+from aidison.observability import DisabledRuntimeTracer, RuntimeTracer, TelemetryCorrelation
 from aidison.research.langgraph_contracts import ExecutionGrant, TaskEnvelope
 from aidison.research.source_collection import (
     CollectedResearchSource,
@@ -77,6 +78,7 @@ class _TaskBoundSourceToolRuntime(ResearchSourceToolRuntime):
         task: TaskEnvelope,
         grant: ExecutionGrant,
         configured_tool_ids: tuple[str, ...],
+        runtime_tracer: RuntimeTracer,
     ) -> None:
         specs = tuple(
             spec
@@ -88,6 +90,7 @@ class _TaskBoundSourceToolRuntime(ResearchSourceToolRuntime):
         self._executor = executor
         self._run = run
         self._claim = claim
+        self._runtime_tracer = runtime_tracer
         self._authority = DispatchAuthority(
             task=task,
             grant=grant,
@@ -128,21 +131,35 @@ class _TaskBoundSourceToolRuntime(ResearchSourceToolRuntime):
             separators=(",", ":"),
             default=str,
         )
-        return await self._executor.execute(
-            ToolCallIntent(
-                tool_call_id=f"source-{sha256(canonical.encode()).hexdigest()[:32]}",
-                tool_id=tool_id,
-                revision=1,
-                arguments=arguments,
-                purpose_code=purpose_code,
+        with self._runtime_tracer.span(
+            name="aidison.tool.invoke",
+            correlation=TelemetryCorrelation(
+                project_id=self._run.project_id,
+                run_id=self._run.id,
+                task_id=str(self._authority.task.id),
             ),
-            authority=self._authority,
-            run=self._run,
-            claim=self._claim,
-            provider=provider,
-            target=target,
-            invoke=invoke,
-        )
+            kind="tool",
+            attributes={
+                "aidison.event": "tool_invocation",
+                "tool.name": tool_id,
+                "tool.provider": provider,
+            },
+        ):
+            return await self._executor.execute(
+                ToolCallIntent(
+                    tool_call_id=f"source-{sha256(canonical.encode()).hexdigest()[:32]}",
+                    tool_id=tool_id,
+                    revision=1,
+                    arguments=arguments,
+                    purpose_code=purpose_code,
+                ),
+                authority=self._authority,
+                run=self._run,
+                claim=self._claim,
+                provider=provider,
+                target=target,
+                invoke=invoke,
+            )
 
 
 class BudgetedResearchSourceCollector:
@@ -161,10 +178,12 @@ class BudgetedResearchSourceCollector:
         collector: ResearchSourceCollector,
         session_factory: async_sessionmaker[AsyncSession],
         artifact_root: Path,
+        runtime_tracer: RuntimeTracer | None = None,
     ) -> None:
         self._collector = collector
         self._session_factory = session_factory
         self._artifact_root = artifact_root
+        self._runtime_tracer = runtime_tracer or DisabledRuntimeTracer()
         self._tool_ids = source_tool_ids(collector)
         self._tool_executor = PostgresReadToolExecutor(
             dispatcher=ToolDispatcher(build_source_tool_registry()),
@@ -193,6 +212,7 @@ class BudgetedResearchSourceCollector:
                 task=task,
                 grant=grant,
                 configured_tool_ids=self._tool_ids,
+                runtime_tracer=self._runtime_tracer,
             )
             return await self._collector.collect(
                 run=run,

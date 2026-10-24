@@ -185,6 +185,7 @@ class ResearchRunExecutor:
         self._artifact_root = artifact_root
         self._checkpointer = checkpointer
         self._researcher = researcher
+        self._runtime_tracer = runtime_tracer or DisabledRuntimeTracer()
         configured_collector = source_collector or NoopResearchSourceCollector()
         self._source_tool_ids = source_tool_ids(configured_collector)
         self._source_collector: ResearchSourceCollector | RunScopedResearchSourceCollector = (
@@ -194,9 +195,9 @@ class ResearchRunExecutor:
                 collector=configured_collector,
                 session_factory=session_factory,
                 artifact_root=artifact_root,
+                runtime_tracer=self._runtime_tracer,
             )
         )
-        self._runtime_tracer = runtime_tracer or DisabledRuntimeTracer()
 
     def _graph_callback(self, *, run: AgentRun, graph_name: str) -> LangGraphRuntimeCallback:
         """Bind callback spans to one durable AgentRun, never GraphState content."""
