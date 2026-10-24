@@ -28,6 +28,8 @@ def test_strategy_prompts_expose_closed_task_enums_and_key_format() -> None:
         RESEARCH_STRATEGY_SYSTEM_PROMPT
     )
     assert "cannot contain spaces, Chinese text, or `:`" in RESEARCH_STRATEGY_RETRY_PROMPT
+    assert "self-contained for external retrieval" in RESEARCH_STRATEGY_SYSTEM_PROMPT
+    assert "self-contained for external retrieval" in RESEARCH_STRATEGY_RETRY_PROMPT
 
 
 @pytest.mark.asyncio

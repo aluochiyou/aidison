@@ -26,7 +26,10 @@ never use spaces, Chinese characters, or a colon. Dependencies may only referenc
 in the same proposal and must be acyclic. Every task belongs to exactly one module because
 evidence is
 admitted per module; a complex module may have multiple tasks only when their objectives differ
-materially. Honor research_depth and planning_guidance from the user context: deep research can
+materially. Every task title and objective must be self-contained for external retrieval: repeat
+the concrete engineering subject and subsystem instead of using context-dependent phrases such as
+"define the envelope", "compare options", or "verify compatibility". Honor research_depth and
+planning_guidance from the user context: deep research can
 use a layered DAG for constraints, compatibility, trade-offs, and risks, while focused research
 must remain minimal. Use `must` only for work necessary to answer the objective. Stop conditions
 must say when the task has enough evidence or should report a gap; they must not request
@@ -76,6 +79,8 @@ with a lowercase letter, and cannot contain spaces, Chinese text, or `:`. `prior
 `must` or `should`; `expected_outputs` is one to four exact values from `evidence`, `candidate`,
 `compatibility`, `constraint`; `source_strategy` is exactly `primary`, `independent`, `official`,
 or `mixed`. Use only provided module UUIDs, no unknown fields, no Markdown, and no explanation.
+Make every task title and objective self-contained for external retrieval by naming the concrete
+engineering subject and subsystem; do not use context-dependent generic phrases.
 Apply every
 strategy_review_feedback and strategy_schema_feedback issue by correcting the complete task DAG,
 including dependency edges when an issue names a missing dependency handoff."""
