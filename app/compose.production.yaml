@@ -179,6 +179,7 @@ services:
       web:
         condition: service_healthy
     networks:
+      - app-internal
       - edge
     ports:
       - "127.0.0.1:${AIDISON_EDGE_PORT:-8080}:8080"

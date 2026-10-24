@@ -823,6 +823,31 @@ export function DraftWorkbench({
       });
       await onRefresh();
     } catch (error) {
+      const status =
+        error && typeof error === "object" && "status" in error
+          ? (error as { status?: unknown }).status
+          : undefined;
+      if (decision === "approved" && status === 524) {
+        const refreshed = await onRefresh();
+        const latest = refreshed as ProjectSnapshot | undefined;
+        const committed = latest?.execution_plans?.some(
+          (item) => item.id === planId && item.status === "approved"
+        );
+        report(
+          committed
+            ? {
+                kind: "success",
+                title: "执行边界已批准",
+                message: "后台已接收研究任务；刚才只是公网响应超时。",
+              }
+            : {
+                kind: "error",
+                title: "批准结果仍未知",
+                message: "已刷新项目事实，请确认计划状态后再操作，避免重复提交。",
+              }
+        );
+        return;
+      }
       report(describeApiError(error));
     } finally {
       setBusyPlanId(null);

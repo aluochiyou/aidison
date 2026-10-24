@@ -202,6 +202,15 @@ function displayError(error: unknown, fallback: string): string {
   return fallback;
 }
 
+function isAmbiguousGatewayTimeout(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === "object" &&
+    "status" in error &&
+    (error as { status?: unknown }).status === 524
+  );
+}
+
 function eventTime(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime())
@@ -848,6 +857,19 @@ function ReviewExecutionPlanAction({
       );
       await onDone();
     } catch (error) {
+      if (decision === "approved" && isAmbiguousGatewayTimeout(error)) {
+        const refreshed = await onDone();
+        const latest = refreshed as ProjectSnapshot | undefined;
+        const committed = latest?.execution_plans?.some(
+          (item) => item.id === plan.id && item.status === "approved"
+        );
+        if (committed) {
+          toast.success("计划已批准并进入后台队列；刚才只是公网响应超时。");
+          return;
+        }
+        toast.error("公网响应超时，批准结果仍未知；已刷新项目，请确认状态后再操作。");
+        return;
+      }
       toast.error(
         displayError(
           error,

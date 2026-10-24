@@ -9,6 +9,16 @@
 		respond "ok" 200
 	}
 
+	# Keep API commands and SSE on one proxy hop. Routing these requests through
+	# Next.js first added buffering/cancellation semantics and could leave the
+	# browser with a Cloudflare 524 even after FastAPI committed the command.
+	@api path /api/* /health
+	handle @api {
+		reverse_proxy api:8000 {
+			flush_interval -1
+		}
+	}
+
 	handle {
 		header {
 			-Server
