@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { FolderOpen, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { ProjectConsole } from "@/app/components/ProjectConsole";
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { ProjectSelector } from "@/app/components/ProjectSelector";
-import { VoxelAmbientScene } from "@/app/components/VoxelAmbientScene";
 import { useProjects } from "@/app/hooks/useProjects";
 import { Button } from "@/components/ui/button";
 import { getClient } from "@/lib/api";
@@ -72,24 +71,18 @@ export default function HomePage() {
 
   return (
     <main className="launch-shell">
-      <VoxelAmbientScene />
-      <div
-        className="launch-grid"
-        aria-hidden="true"
-      />
       <section className="launch-copy">
         <div className="launch-kicker">
           <span className="status-lamp" />
-          Local engineering workspace
+          AIDISON · 工程项目工作台
         </div>
         <h1>
-          <span className="launch-title-primary">把 DIY 想法变成</span>
-          <span className="launch-title-accent">可验证的工程方案</span>
+          <span className="launch-title-primary">从一个想法开始，</span>
+          <span className="launch-title-accent">做出靠谱的方案。</span>
         </h1>
         <p>
-          Aidison
-          把需求、研究证据、候选方案、用户决策和现场反馈串成一条可审计闭环。
-          Agent 提建议，只有你的确认才能写入项目事实。
+          先写需求单，再拆模块、查资料、比较选型。每一步都留在项目里；
+          方案由你确认，不会被自动改掉。
         </p>
         <div className="launch-actions">
           <Button
@@ -112,47 +105,54 @@ export default function HomePage() {
       </section>
 
       <aside
-        className="launch-specimen"
-        aria-label="Aidison collaboration preview"
+        className="launch-workflow"
+        aria-label="项目会经历的四步"
       >
-        <div className="specimen-head">
-          <span>你的想法 → 可验证的方案</span>
-          <span>你决定 · AI 执行</span>
+        <div className="launch-workflow-title">
+          <span>项目路线</span>
+          <small>所有进度都保存在同一个项目中</small>
         </div>
-        <div
-          className="specimen-loop"
-          aria-hidden="true"
-        >
-          {[
-            { icon: "✎", label: "需求" },
-            { icon: "▦", label: "模块" },
-            { icon: "◎", label: "候选" },
-            { icon: "✓", label: "决策" },
-            { icon: "▣", label: "方案" },
-            { icon: "↺", label: "反馈" },
-          ].map((item, index) => (
-            <div
-              className="specimen-loop-node"
-              key={item.label}
-              style={
-                {
-                  "--node-angle": `${index * 60}deg`,
-                } as React.CSSProperties
-              }
-            >
-              <span className="specimen-loop-icon">{item.icon}</span>
-              <strong>{item.label}</strong>
-            </div>
-          ))}
-          <div className="specimen-loop-center">
-            <span>闭环协作</span>
-            <small>你确认才生效</small>
+        {[
+          {
+            icon: "notepad_write",
+            title: "创建需求单",
+            detail: "写下目标、预算和必须满足的条件",
+          },
+          {
+            icon: "puzzle",
+            title: "拆分模块",
+            detail: "确认各部分的职责与依赖",
+          },
+          {
+            icon: "cards_seek",
+            title: "研究与选型",
+            detail: "对照来源，比较候选的得失",
+          },
+          {
+            icon: "book_open",
+            title: "确认并导出",
+            detail: "定下方案，保留证据和修改记录",
+          },
+        ].map((step, index) => (
+          <div
+            className="launch-workflow-step"
+            key={step.title}
+          >
+            <span className="launch-step-number">
+              {String(index + 1).padStart(2, "0")}
+            </span>
+            <span className="launch-step-icon">
+              <img
+                src={`/art/kenney/${step.icon}.png`}
+                alt=""
+              />
+            </span>
+            <span className="launch-step-copy">
+              <strong>{step.title}</strong>
+              <small>{step.detail}</small>
+            </span>
           </div>
-        </div>
-        <div className="specimen-note">
-          <span>AI 负责查找、比较、提议</span>
-          <span>你负责确认边界与最终决定</span>
-        </div>
+        ))}
       </aside>
 
       <CreateProjectDialog
@@ -185,7 +185,7 @@ export default function HomePage() {
             );
           } catch {
             toast.error(
-              "项目已创建，但自动开启澄清对话失败；进入项目后可在“与 AI 对话”页手动新建会话并重试。"
+              "项目已创建，但未能开始整理需求。打开项目后，可以在“与 AI 对话”中新建会话。"
             );
           }
           selectProject(project);

@@ -36,7 +36,7 @@ const ATTENTION_TONE: Record<string, string> = {
 };
 
 const KIND_LABELS: Record<string, string> = {
-  clarify_requirements: "确认需求边界",
+  clarify_requirements: "创建需求单",
   start_research: "开始查找资料",
   review_decision: "确认研究决策",
   review_solution: "确认方案",

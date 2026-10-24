@@ -22,7 +22,6 @@ import { ActivityFeed } from "@/app/components/ActivityFeed";
 import { RequirementsRevisionForm } from "@/app/components/RequirementsRevisionForm";
 import { ConversationPanel } from "@/app/components/ConversationPanel";
 import { ProjectConsoleHeader } from "@/app/components/ProjectConsoleHeader";
-import { VoxelAmbientScene } from "@/app/components/VoxelAmbientScene";
 import {
   ModuleCard,
   ProjectPulse,
@@ -127,7 +126,7 @@ function eventLabel(type: string): string {
 function humanizeActionTitle(kind: string, title: string): string {
   if (title) return title;
   const labels: Record<string, string> = {
-    clarify_requirements: "先确认需求边界",
+    clarify_requirements: "创建需求单",
     discover_initial_modules: "让 AI 生成模块结构",
     start_research: "让 AI 查找资料",
     review_decision: "确认一项研究决策",
@@ -361,9 +360,7 @@ function ResearchAction({
             : "开始查找资料"
           : "先查看查找计划"}
       </Button>
-      <details
-        className="research-plan-settings"
-      >
+      <details className="research-plan-settings">
         <summary>调整研究范围、来源与预算</summary>
         <p className="research-plan-note">
           修改以下边界会生成一份新的待审核策略，不会自动启动研究，也不会改写当前项目事实。
@@ -538,7 +535,7 @@ function DecisionAction({
         decision.basis_hash,
         approvedPlan.id
       );
-      toast.success("决策已写入 canonical state");
+      toast.success("已保存这项决策");
       await onDone();
     } catch (error) {
       toast.error(displayError(error, "无法确认这个选项"));
@@ -868,7 +865,9 @@ function ReviewExecutionPlanAction({
           toast.success("计划已批准并进入后台队列；刚才只是公网响应超时。");
           return;
         }
-        toast.error("公网响应超时，批准结果仍未知；已刷新项目，请确认状态后再操作。");
+        toast.error(
+          "公网响应超时，批准结果仍未知；已刷新项目，请确认状态后再操作。"
+        );
         return;
       }
       toast.error(
@@ -1544,7 +1543,7 @@ function ActionNotice({
       <div className="action-title">
         <Bot className="h-5 w-5" />
         <div>
-          <small>AI 需要你处理</small>
+          <small>待办事项</small>
           <h2>
             {action
               ? humanizeActionTitle(action.kind, action.title)
@@ -1585,12 +1584,10 @@ function ClarifyHint({
         <Bot className="h-5 w-5" />
         <div>
           <small>下一步</small>
-          <h2>确认项目需求</h2>
+          <h2>创建需求单</h2>
         </div>
       </div>
-      <p>
-        你可以直接填写并确认需求；也可以先和 AI 对话，让它整理出草案后再确认。
-      </p>
+      <p>写下目标和约束，也可以先在项目讨论里补充想法。</p>
       <Button
         variant="outline"
         onClick={onOpenRequirementsForm}
@@ -2071,11 +2068,7 @@ export function ProjectConsole({
   const latestEvents = useMemo(() => events.slice(-20).toReversed(), [events]);
 
   if (isLoading && !snapshot) {
-    return (
-      <div className="console-loading">
-        正在读取 canonical project snapshot…
-      </div>
-    );
+    return <div className="console-loading">正在打开项目…</div>;
   }
   if (error || !snapshot) {
     return (
@@ -2092,7 +2085,6 @@ export function ProjectConsole({
 
   return (
     <main className="console-shell">
-      <VoxelAmbientScene compact />
       <ProjectConsoleHeader
         project={project}
         connected={connected}
@@ -2141,7 +2133,7 @@ export function ProjectConsole({
             <ProjectPulse workspace={snapshot.workspace} />
           ) : null}
           <div className="goal-strip">
-            <span>GOAL</span>
+            <span>项目目标</span>
             <p>{project.goal}</p>
           </div>
 
@@ -2156,7 +2148,7 @@ export function ProjectConsole({
               onClick={() => setConsolePage("activity")}
               type="button"
             >
-              与 AI 对话
+              项目讨论
             </button>
             <button
               className={consolePage === "workbench" ? "is-active" : ""}
@@ -2164,7 +2156,7 @@ export function ProjectConsole({
               onClick={() => setConsolePage("workbench")}
               type="button"
             >
-              工程工作台
+              模块与方案
             </button>
           </div>
 
@@ -2227,8 +2219,23 @@ export function ProjectConsole({
             <>
               <section className="workbench-primary-action">
                 <div className="workbench-primary-heading">
-                  <small>NEXT REQUIRED ACTION</small>
-                  <strong>当前需要你处理</strong>
+                  <small>下一步</small>
+                  <strong>现在该做什么</strong>
+                  <img
+                    alt=""
+                    className="workbench-action-art"
+                    src={`/art/kenney/${
+                      project.stage === "intake" ||
+                      project.stage === "requirements"
+                        ? "notepad_write"
+                        : project.stage === "research"
+                        ? "puzzle"
+                        : project.stage === "comparing" ||
+                          project.stage === "deciding"
+                        ? "cards_seek"
+                        : "book_open"
+                    }.png`}
+                  />
                 </div>
                 <NextAction
                   snapshot={snapshot}
@@ -2261,7 +2268,7 @@ export function ProjectConsole({
               <section className="solution-board">
                 <div className="panel-heading">
                   <div>
-                    <small>IMMUTABLE VERSIONS</small>
+                    <small>已保存的方案</small>
                     <h2>方案版本</h2>
                   </div>
                   <span>{snapshot.solutions.length}</span>
@@ -2335,7 +2342,7 @@ export function ProjectConsole({
           <aside className="audit-board">
             <div className="panel-heading">
               <div>
-                <small>WORK ACTIVITY</small>
+                <small>运行记录</small>
                 <h2>工作动态</h2>
               </div>
               <Activity className="h-4 w-4" />

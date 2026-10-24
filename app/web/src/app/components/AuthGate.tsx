@@ -74,7 +74,7 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
         aria-live="polite"
       >
         <span className="auth-loader" />
-        正在验证安全会话…
+        正在打开项目空间…
       </main>
     );
   }
@@ -97,9 +97,9 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             <ShieldCheck />
           </div>
           <div className="auth-heading">
-            <span>Aidison secure workspace</span>
-            <h1 id="auth-title">进入工程项目空间</h1>
-            <p>身份验证在应用层完成，凭据不会保存到浏览器。</p>
+            <span>AIDISON · 私人项目空间</span>
+            <h1 id="auth-title">登录 Aidison</h1>
+            <p>登录后继续查看你的项目、资料和方案。</p>
           </div>
           <form
             onSubmit={submit}
@@ -145,10 +145,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
               disabled={submitting}
             >
               <LogIn className="h-4 w-4" />
-              {submitting ? "正在验证…" : "安全登录"}
+              {submitting ? "正在登录…" : "登录并继续"}
             </Button>
           </form>
-          <small>会话使用 HttpOnly、Secure、SameSite=Strict Cookie</small>
+          <small>退出后，其他人无法从这个浏览器打开你的项目。</small>
         </section>
       </main>
     );

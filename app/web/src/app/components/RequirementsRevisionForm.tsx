@@ -256,7 +256,7 @@ export function RequirementsRevisionForm({
           <small>
             {snapshot.project.active_requirement_revision_id
               ? "修订需求"
-              : "确认需求边界"}
+              : "创建需求单"}
           </small>
           <h2>
             {snapshot.project.active_requirement_revision_id
@@ -266,15 +266,15 @@ export function RequirementsRevisionForm({
         </div>
       </div>
       <p>
-        AI 已根据你们的对话整理出这份需求单。请核对或补充下面的目标与事实，
-        确认后 AI 会只在确认的范围内工作，之后的任何修改都需要你再次确认。
+        请核对目标、预算和已有条件。确认后，后续研究会以这份需求单为准；
+        要改需求时，可以再提交新版本。
       </p>
       <div className="requirements-ai-note">
         <Sparkles className="h-4 w-4" />
         <span>
           {draft
-            ? "这份草案来自对话页 AI 的建议，请逐项审阅或调整后再确认。"
-            : "请填写你的实际需求事实；确认后可再显式让 AI 生成模块结构。"}
+            ? "已带入对话中的内容，请检查并补全。"
+            : "先填写已确定的内容，确认后再生成模块表。"}
         </span>
       </div>
       {draft && onDismissDraft ? (

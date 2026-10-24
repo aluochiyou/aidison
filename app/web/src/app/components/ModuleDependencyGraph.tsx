@@ -21,7 +21,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { LockKeyhole } from "lucide-react";
-import { ModulePixelSprite } from "@/app/components/ModulePixelSprite";
 import type { Module } from "@/app/types/types";
 
 interface ModuleGraphNodeData extends Record<string, unknown> {
@@ -136,7 +135,7 @@ function buildGraph(modules: Module[]): BuiltGraph {
   return { nodes, edges, canonicalEdges };
 }
 
-/** Pixel sprite for graph nodes — larger & more detailed than ModulePixel. */
+/** Use the same licensed module icon as the workbench cards. */
 function ModuleGraphNodeView({ data, selected }: NodeProps<ModuleGraphNode>) {
   const { module, tone, selectionLabel, locked } = data;
   return (
@@ -150,11 +149,10 @@ function ModuleGraphNodeView({ data, selected }: NodeProps<ModuleGraphNode>) {
         position={Position.Top}
         type="target"
       />
-      <span className="crafting-graph-node-pixel">
-        <ModulePixelSprite
-          seed={module.key}
-          tone={tone}
-          size={72}
+      <span className={`crafting-graph-node-pixel ${tone}`}>
+        <img
+          alt=""
+          src="/art/kenney/puzzle.png"
         />
         {locked ? (
           <LockKeyhole

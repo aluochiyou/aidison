@@ -27,7 +27,6 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { getClient } from "@/lib/api";
 import { ModuleDependencyGraph } from "@/app/components/ModuleDependencyGraph";
-import { ModulePixel } from "@/app/components/ModulePixel";
 import { SchemaParameterForm } from "@/app/components/SchemaParameterForm";
 import type {
   Candidate,
@@ -323,10 +322,10 @@ function ModuleInspector({
     >
       <header className="crafting-inspector-head">
         <div className="crafting-inspector-title">
-          <ModulePixel
-            seed={module.key}
-            tone={stageTone(module.stage)}
-            size={9}
+          <img
+            alt=""
+            className="crafting-module-fallback"
+            src="/art/kenney/puzzle.png"
           />
           <div>
             <code>{module.key}</code>
@@ -857,7 +856,8 @@ export function DraftWorkbench({
             : {
                 kind: "error",
                 title: "批准结果仍未知",
-                message: "已刷新项目事实，请确认计划状态后再操作，避免重复提交。",
+                message:
+                  "已刷新项目事实，请确认计划状态后再操作，避免重复提交。",
               }
         );
         return;
@@ -876,9 +876,8 @@ export function DraftWorkbench({
       );
       report({
         kind: "success",
-        title: "已提交给 AI 生成研究执行提案",
-        message:
-          "新 ExecutionPlanProposal 已生成，需你批准后才会进入执行边界。",
+        title: "研究计划已准备好",
+        message: "请检查研究范围和预算，确认后才会开始执行。",
       });
       await onRefresh();
     } catch (error) {
@@ -983,12 +982,9 @@ export function DraftWorkbench({
           <small>你的 DIY 工程工作台</small>
           <h2>
             <Hammer className="h-5 w-5" />
-            先选模块，再慢慢做出你的作品
+            从模块开始完善方案
           </h2>
-          <p>
-            点右侧模块查看方案与参数；你的调整会先保存，AI
-            只能提出建议，不能替你改决定。
-          </p>
+          <p>选择模块查看候选和参数。你的修改会保留，是否采用建议由你决定。</p>
         </div>
         {openBatch ? (
           <Button
@@ -1010,7 +1006,7 @@ export function DraftWorkbench({
         className="crafting-quickstart"
         aria-label="第一次使用提示"
       >
-        <strong>第一次来这里？</strong>
+        <strong>从这里开始</strong>
         <ol>
           <li>
             <b>1</b> 点一个模块，看看它负责什么。
@@ -1066,11 +1062,7 @@ export function DraftWorkbench({
                 <Boxes className="h-5 w-5" />
               </div>
               <div className="crafting-output-copy">
-                <small>
-                  {developerMode
-                    ? "PROJECT OUTPUT SLOT · 你在制作"
-                    : "你正在制作"}
-                </small>
+                <small>{developerMode ? "当前项目" : "你正在制作"}</small>
                 <strong>{snapshot.project.name}</strong>
                 <span>{snapshot.project.goal}</span>
               </div>
@@ -1123,10 +1115,10 @@ export function DraftWorkbench({
                             src={visualByModule.get(module.id)}
                           />
                         ) : (
-                          <ModulePixel
-                            seed={module.key}
-                            tone={stageTone(module.stage)}
-                            size={7}
+                          <img
+                            alt=""
+                            className="crafting-module-fallback"
+                            src="/art/kenney/puzzle.png"
                           />
                         )}
                         {locked ? (
@@ -1300,10 +1292,9 @@ export function DraftWorkbench({
             aria-hidden="true"
           />
           <div>
-            <strong>想改变作品结构？先看 AI 的建议，再由你决定</strong>
+            <strong>调整模块结构</strong>
             <p>
-              新增、调整或删除模块会影响整个作品，所以会经过“AI 建议 → 你确认 →
-              应用”。平时调参数和选型不会偷偷改变你已确定的作品结构。
+              新增、调整或删除模块前，请先检查变更内容。参数和选型的修改不会改变模块结构。
             </p>
           </div>
         </div>
@@ -1315,10 +1306,8 @@ export function DraftWorkbench({
               aria-hidden="true"
             />
             <div>
-              <small>
-                {developerMode ? "EXECUTION PLAN PROPOSALS" : "需要 AI 帮忙时"}
-              </small>
-              <strong>让 AI 先写一份查找与修改计划</strong>
+              <small>{developerMode ? "研究计划" : "需要查资料时"}</small>
+              <strong>先确认研究范围</strong>
             </div>
             <Button
               disabled={busyPlanId !== null}
@@ -1326,7 +1315,8 @@ export function DraftWorkbench({
               size="sm"
               variant="outline"
             >
-              <Sparkles className="h-3.5 w-3.5" />让 AI 先写计划
+              <Sparkles className="h-3.5 w-3.5" />
+              生成研究计划
             </Button>
           </div>
           {executionPlans.length ? (
@@ -1345,7 +1335,7 @@ export function DraftWorkbench({
                         } · 预算 ≤ ${plan.max_token_budget.toLocaleString()} · 时长 ≤ ${plan.max_duration_seconds.toLocaleString()} 秒 · 结果需确认 ${
                           plan.requires_result_approval ? "是" : "否"
                         } · scope ${shortHash(plan.scope_hash)}`
-                      : "确认后，AI 只会在这份计划的范围内工作；结果仍由你决定是否采用。"}
+                      : "确认后按这份计划查找资料；研究结论仍需你决定是否采用。"}
                   </small>
                 </div>
                 {plan.status === "proposed" ? (
@@ -1357,7 +1347,7 @@ export function DraftWorkbench({
                       }
                       size="sm"
                     >
-                      批准范围
+                      确认并开始
                     </Button>
                     <Button
                       disabled={busyPlanId !== null}
@@ -1373,7 +1363,7 @@ export function DraftWorkbench({
                 ) : (
                   <span className="draft-batch-status">
                     {plan.status === "approved"
-                      ? "已批准：Agent 只能在该边界内执行"
+                      ? "已确认，正在按计划执行"
                       : plan.status}
                   </span>
                 )}
@@ -1381,8 +1371,7 @@ export function DraftWorkbench({
             ))
           ) : (
             <p className="crafting-empty">
-              还没有计划。需要查资料、修改模块或验证方案时，先让 AI
-              把它准备做什么写清楚，再由你确认。
+              还没有研究计划。需要查资料或验证方案时，先生成计划，检查后再开始。
             </p>
           )}
         </div>
@@ -1395,8 +1384,8 @@ export function DraftWorkbench({
                 aria-hidden="true"
               />
               <div>
-                <small>PROJECT RESHAPE PROPOSALS</small>
-                <strong>模块骨架重塑提案</strong>
+                <small>模块变更</small>
+                <strong>待确认的模块调整</strong>
               </div>
             </div>
             {reshapeProposals.map((proposal) => (
@@ -1413,7 +1402,7 @@ export function DraftWorkbench({
                       "无"}
                   </p>
                   <small>
-                    应用后会生成新的模块骨架；现有骨架和草稿记录仍可追溯。
+                    确认后会保存新的模块版本；旧版本和修改记录仍可查看。
                   </small>
                 </div>
                 {proposal.status === "proposed" ? (
@@ -1425,7 +1414,7 @@ export function DraftWorkbench({
                       }
                       size="sm"
                     >
-                      应用骨架
+                      确认调整
                     </Button>
                     <Button
                       disabled={busyReshapeId !== null}

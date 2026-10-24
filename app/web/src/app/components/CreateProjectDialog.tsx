@@ -48,10 +48,9 @@ export function CreateProjectDialog({
     >
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>创建工程项目</DialogTitle>
+          <DialogTitle>创建项目</DialogTitle>
           <DialogDescription>
-            填写作品名称和最初想法。创建后，AI
-            会先问少量关键问题；任何工作计划仍需你批准才会执行。
+            给项目起个名字，写下你想做什么。接下来可以边聊边补全需求单。
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-4 py-4">
@@ -68,7 +67,7 @@ export function CreateProjectDialog({
             <Label htmlFor="project-goal">最初想法</Label>
             <Textarea
               id="project-goal"
-              placeholder="描述你想做什么；预算、使用环境和细节不确定也没关系，AI 会先向你确认。"
+              placeholder="例如：做一架可抛投的小型无人机；预算和细节可以稍后补充。"
               rows={5}
               value={goal}
               onChange={(e) => setGoal(e.target.value)}
@@ -86,7 +85,7 @@ export function CreateProjectDialog({
             onClick={handleSubmit}
             disabled={!name.trim() || !goal.trim() || submitting}
           >
-            {submitting ? "正在创建并准备澄清…" : "创建并开始澄清"}
+            {submitting ? "正在创建…" : "创建项目并填写需求"}
           </Button>
         </DialogFooter>
       </DialogContent>

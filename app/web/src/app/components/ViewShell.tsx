@@ -67,7 +67,7 @@ const NAV_ITEMS: {
   },
   {
     view: "shopping",
-    label: "Shopping",
+    label: "采购清单",
     icon: <ShoppingCart className="h-4 w-4" />,
   },
   {

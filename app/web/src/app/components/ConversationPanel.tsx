@@ -474,7 +474,7 @@ export function ConversationPanel({
               <h2>还没有活动对话</h2>
             </div>
           </div>
-          <p>AI 会基于项目事实与你自由对话，澄清和行动建议也会出现在这里。</p>
+          <p>可以先说说想做什么。关键问题、需求单和下一步建议都会留在这里。</p>
           <Button
             disabled={creating}
             onClick={() => void startSession()}
