@@ -34,6 +34,10 @@ x-backend-environment: &backend-environment
   AIDISON_RUNTIME_LANGFUSE_RELEASE: ${AIDISON_RUNTIME_LANGFUSE_RELEASE:-${LANGFUSE_RELEASE:-}}
   TAOBAO_APP_KEY: ${TAOBAO_APP_KEY:-}
   TAOBAO_APP_SECRET: ${TAOBAO_APP_SECRET:-}
+  DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+  AIDISON_MODULE_VISUAL_BASE_URL: ${AIDISON_MODULE_VISUAL_BASE_URL:-https://cn-beijing.maas.qianwenaiapi.com/compatible-mode/v1}
+  AIDISON_MODULE_VISUAL_MODEL: ${AIDISON_MODULE_VISUAL_MODEL:-qwen3.7-flash}
+  AIDISON_MODULE_VISUAL_TIMEOUT_SECONDS: ${AIDISON_MODULE_VISUAL_TIMEOUT_SECONDS:-90}
 
 x-backend-service: &backend-service
   image: aidison-backend:${AIDISON_RELEASE:-local}
@@ -167,6 +171,75 @@ services:
     cpus: 1.0
     pids_limit: 128
     logging: *bounded-logging
+
+  solution-worker:
+    <<: *backend-service
+    command: ["python", "-m", "aidison.worker", "--runtime", "solution"]
+    environment:
+      <<: *backend-environment
+      AIDISON_WORKER_CONCURRENCY: ${AIDISON_SOLUTION_WORKER_CONCURRENCY:-1}
+      AIDISON_WORKER_LEASE_SECONDS: ${AIDISON_WORKER_LEASE_SECONDS:-60}
+      AIDISON_WORKER_POLL_SECONDS: ${AIDISON_WORKER_POLL_SECONDS:-0.5}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - artifacts:/data/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-m", "aidison.worker", "--runtime", "solution", "--check"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+
+  impact-worker:
+    <<: *backend-service
+    command: ["python", "-m", "aidison.worker", "--runtime", "impact"]
+    environment:
+      <<: *backend-environment
+      AIDISON_WORKER_CONCURRENCY: ${AIDISON_IMPACT_WORKER_CONCURRENCY:-1}
+      AIDISON_WORKER_LEASE_SECONDS: ${AIDISON_WORKER_LEASE_SECONDS:-60}
+      AIDISON_WORKER_POLL_SECONDS: ${AIDISON_WORKER_POLL_SECONDS:-0.5}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - artifacts:/data/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-m", "aidison.worker", "--runtime", "impact", "--check"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    mem_limit: 1g
+    cpus: 1.5
+    pids_limit: 256
+
+  module-visual-worker:
+    <<: *backend-service
+    command: ["python", "-m", "aidison.worker", "--runtime", "module-visual"]
+    environment:
+      <<: *backend-environment
+      AIDISON_WORKER_CONCURRENCY: ${AIDISON_MODULE_VISUAL_WORKER_CONCURRENCY:-1}
+      AIDISON_WORKER_LEASE_SECONDS: ${AIDISON_WORKER_LEASE_SECONDS:-60}
+      AIDISON_WORKER_POLL_SECONDS: ${AIDISON_WORKER_POLL_SECONDS:-0.5}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - artifacts:/data/artifacts
+    healthcheck:
+      test: ["CMD", "python", "-m", "aidison.worker", "--runtime", "module-visual", "--check"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    mem_limit: 768m
+    cpus: 1.0
+    pids_limit: 192
 
   gateway:
     image: caddy:2.11.7-alpine

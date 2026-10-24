@@ -64,9 +64,7 @@ def _tracer(client: _FakeLangfuse) -> LangfuseRuntimeTracer:
 def test_runtime_tracing_is_disabled_without_explicit_complete_configuration() -> None:
     assert isinstance(build_runtime_tracer(RuntimeTracingSettings()), DisabledRuntimeTracer)
     assert isinstance(
-        build_runtime_tracer(
-            RuntimeTracingSettings(enabled=True, public_key=SecretStr("pk-only"))
-        ),
+        build_runtime_tracer(RuntimeTracingSettings(enabled=True, public_key=SecretStr("pk-only"))),
         DisabledRuntimeTracer,
     )
 
@@ -135,6 +133,7 @@ def test_langgraph_callback_ignores_graph_inputs_outputs_and_uses_agent_run_trac
         {"name": "private-node"},
         {"raw_prompt": "must never leave the process"},
         run_id=callback_run_id,
+        name="collect_sources",
     )
     callback.on_chain_end(
         {"raw_response": "must never leave the process"},
@@ -155,7 +154,9 @@ def test_langgraph_callback_ignores_graph_inputs_outputs_and_uses_agent_run_trac
         "aidison.event": "chain_started",
         "aidison.graph_name": "admitted_ready_set",
         "aidison.graph_revision": "research/v1",
+        "aidison.node_name": "collect_sources",
     }
+    assert call["name"] == "aidison.langgraph.admitted_ready_set.collect_sources"
 
 
 def test_runtime_trace_isolates_parallel_run_trace_ids() -> None:

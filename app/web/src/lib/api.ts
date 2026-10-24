@@ -130,6 +130,10 @@ class AidisonClient {
     return res.json();
   }
 
+  getProjectReportUrl(projectId: string): string {
+    return `${this.baseUrl}/api/projects/${projectId}/report.md`;
+  }
+
   async approveRequirements(
     projectId: string,
     revision: number,
@@ -321,6 +325,16 @@ class AidisonClient {
     }>("POST", `/api/reshape-proposals/${proposalId}/resolve`, {
       body: { decision },
       prefix: "resolve-project-reshape",
+      ifMatch: revision,
+    });
+  }
+
+  async generateModuleVisuals(projectId: string, revision: number) {
+    return this.req<{
+      agent_run: import("@/app/types/types").AgentRunSummary;
+      project_revision: number;
+    }>("POST", `/api/projects/${projectId}/module-visuals`, {
+      prefix: "generate-module-visuals",
       ifMatch: revision,
     });
   }

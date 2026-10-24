@@ -717,6 +717,7 @@ export interface ProjectSnapshot {
   blueprints?: ProjectBlueprint[];
   requirements: RequirementRevision[];
   modules: Module[];
+  module_visuals?: Array<{ module_id: string; artifact_id: string }>;
   module_configurations?: ModuleConfiguration[];
   selection_locks?: SelectionLock[];
   adjustment_batches?: AdjustmentBatch[];

@@ -9,6 +9,7 @@ LangGraph state.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from contextvars import ContextVar, Token
@@ -30,6 +31,8 @@ _SAFE_ATTRIBUTE_KEYS = frozenset(
         "aidison.event",
         "aidison.graph_name",
         "aidison.graph_revision",
+        "aidison.node_name",
+        "aidison.run_kind",
         "aidison.attempt_count",
         "aidison.fallback_used",
         "aidison.outcome",
@@ -60,15 +63,11 @@ class RuntimeTracingSettings(AidisonSettings):
     )
     public_key: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "AIDISON_RUNTIME_LANGFUSE_PUBLIC_KEY", "LANGFUSE_PUBLIC_KEY"
-        ),
+        validation_alias=AliasChoices("AIDISON_RUNTIME_LANGFUSE_PUBLIC_KEY", "LANGFUSE_PUBLIC_KEY"),
     )
     secret_key: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices(
-            "AIDISON_RUNTIME_LANGFUSE_SECRET_KEY", "LANGFUSE_SECRET_KEY"
-        ),
+        validation_alias=AliasChoices("AIDISON_RUNTIME_LANGFUSE_SECRET_KEY", "LANGFUSE_SECRET_KEY"),
     )
     base_url: str = Field(
         default="https://cloud.langfuse.com",
@@ -298,16 +297,18 @@ class LangGraphRuntimeCallback(BaseCallbackHandler):
         parent_run_id: UUID | None = None,
         **kwargs: Any,
     ) -> None:
-        del serialized, inputs, parent_run_id, kwargs
+        del serialized, inputs, parent_run_id
+        node_name = _safe_observation_name(kwargs.get("name"), fallback="node")
         correlation = self._correlation.model_copy(update={"invocation_id": run_id})
         scope = self._tracer.span(
-            name="aidison.langgraph.node",
+            name=f"aidison.langgraph.{self._graph_name}.{node_name}",
             correlation=correlation,
             kind="chain",
             attributes={
                 "aidison.event": "chain_started",
                 "aidison.graph_name": self._graph_name,
                 "aidison.graph_revision": self._graph_revision,
+                "aidison.node_name": node_name,
             },
         )
         try:
@@ -395,6 +396,14 @@ def build_runtime_tracer(settings: RuntimeTracingSettings) -> RuntimeTracer:
         environment=settings.environment,
         release=settings.release,
     )
+
+
+def _safe_observation_name(value: object, *, fallback: str) -> str:
+    """Keep code-owned LangGraph labels useful without exporting graph payloads."""
+
+    candidate = str(value or fallback).strip()
+    candidate = re.sub(r"[^A-Za-z0-9_.:-]+", "_", candidate).strip("_.:-")
+    return (candidate or fallback)[:120]
 
 
 def _trace_id_for(correlation: TelemetryCorrelation) -> str:

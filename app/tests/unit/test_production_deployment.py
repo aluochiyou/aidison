@@ -48,7 +48,7 @@ def test_public_connector_reaches_the_gateway() -> None:
 
     caddyfile = (APP_ROOT / "ops" / "Caddyfile.production").read_text(encoding="utf-8")
     assert "reverse_proxy web:3000" in caddyfile
-    assert "X-Frame-Options \"DENY\"" in caddyfile
+    assert 'X-Frame-Options "DENY"' in caddyfile
 
 
 def test_caddy_keeps_the_only_health_route_outside_the_business_handler() -> None:
@@ -57,8 +57,10 @@ def test_caddy_keeps_the_only_health_route_outside_the_business_handler() -> Non
     # The loopback health probe is intentionally the only unauthenticated path.
     assert "@edge_health path /edge-health" in caddyfile
     assert "handle @edge_health" in caddyfile
-    assert caddyfile.count("\thandle ") == 2
-    assert caddyfile.count("reverse_proxy ") == 1
+    assert caddyfile.count("\thandle ") == 3
+    assert "@api path /api/* /health" in caddyfile
+    assert "reverse_proxy api:8000" in caddyfile
+    assert caddyfile.count("reverse_proxy ") == 2
 
     business_handler = caddyfile.split("\thandle {", maxsplit=1)[1]
     assert "basic_auth" not in business_handler
@@ -87,27 +89,32 @@ def test_production_scripts_support_private_tailscale_without_a_tunnel_token() -
 def test_deployer_resolves_relative_files_from_the_app_directory() -> None:
     deployer = (APP_ROOT / "ops" / "deploy-production.ps1").read_text(encoding="utf-8")
 
-    assert '$appRoot = Split-Path -Parent $PSScriptRoot' in deployer
+    assert "$appRoot = Split-Path -Parent $PSScriptRoot" in deployer
     assert '$composeFile = Join-Path $appRoot "compose.production.yaml"' in deployer
-    assert '$EnvFile = Join-Path $appRoot $EnvFile' in deployer
+    assert "$EnvFile = Join-Path $appRoot $EnvFile" in deployer
 
 
 def test_existing_private_deployment_can_add_cloudflare_tunnel_without_reinitializing() -> None:
     enabler = (APP_ROOT / "ops" / "enable-cloudflare-tunnel.ps1").read_text(encoding="utf-8-sig")
 
-    assert 'Cloudflare Tunnel Token（不回显）' in enabler
-    assert 'CLOUDFLARE_TUNNEL_TOKEN=$tunnelToken' in enabler
-    assert '-PublishMode CloudflareTunnel' in enabler
+    assert "Cloudflare Tunnel Token（不回显）" in enabler
+    assert "CLOUDFLARE_TUNNEL_TOKEN=$tunnelToken" in enabler
+    assert "-PublishMode CloudflareTunnel" in enabler
 
 
 def test_admin_password_reset_recreates_only_the_gateway() -> None:
-    resetter = (APP_ROOT / "ops" / "reset-production-admin-password.ps1").read_text(encoding="utf-8-sig")
+    resetter = (APP_ROOT / "ops" / "reset-production-admin-password.ps1").read_text(
+        encoding="utf-8-sig"
+    )
 
     assert "新管理员密码（至少 16 个字符，不回显）" in resetter
     assert "AIDISON_ADMIN_PASSWORD_HASH='$hash'" in resetter
     assert "--no-deps --force-recreate gateway" in resetter
-    assert '[IO.File]::WriteAllText($hashInputPath, "$password`n", [Text.UTF8Encoding]::new($false))' in resetter
-    assert '/run/secrets/aidison-admin-password:ro' in resetter
+    assert (
+        '[IO.File]::WriteAllText($hashInputPath, "$password`n", [Text.UTF8Encoding]::new($false))'
+        in resetter
+    )
+    assert "/run/secrets/aidison-admin-password:ro" in resetter
     assert "Remove-Item -LiteralPath $hashInputPath -Force" in resetter
     assert "Get-Command curl.exe" in resetter
     assert 'url = "http://127.0.0.1:8080/"' in resetter

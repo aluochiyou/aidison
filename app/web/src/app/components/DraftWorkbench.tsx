@@ -707,6 +707,20 @@ export function DraftWorkbench({
     return names;
   }, [snapshot.modules, configurations, candidateById]);
 
+  const visualByModule = useMemo(
+    () =>
+      new Map(
+        (snapshot.module_visuals ?? []).map((item) => [
+          item.module_id,
+          getClient().getArtifactContentUrl(
+            snapshot.project.id,
+            item.artifact_id
+          ),
+        ])
+      ),
+    [snapshot.module_visuals, snapshot.project.id]
+  );
+
   const report = (next: Feedback) => setFeedback(next);
 
   const submitRelationshipProposal = async () => {
@@ -878,11 +892,25 @@ export function DraftWorkbench({
   ) => {
     setBusyReshapeId(proposalId);
     try {
-      await getClient().resolveProjectReshape(
+      const resolved = await getClient().resolveProjectReshape(
         proposalId,
         snapshot.project.revision,
         decision
       );
+      if (decision === "applied") {
+        try {
+          await getClient().generateModuleVisuals(
+            snapshot.project.id,
+            resolved.data.project_revision
+          );
+        } catch {
+          report({
+            kind: "error",
+            title: "工程骨架已应用，但插图任务未启动",
+            message: "模块事实不受影响；请刷新后重试插图生成。",
+          });
+        }
+      }
       report({
         kind: "success",
         title:
@@ -1087,11 +1115,20 @@ export function DraftWorkbench({
                       type="button"
                     >
                       <span className="crafting-block-pixel">
-                        <ModulePixel
-                          seed={module.key}
-                          tone={stageTone(module.stage)}
-                          size={7}
-                        />
+                        {visualByModule.get(module.id) ? (
+                          <img
+                            alt=""
+                            className="crafting-module-visual"
+                            loading="lazy"
+                            src={visualByModule.get(module.id)}
+                          />
+                        ) : (
+                          <ModulePixel
+                            seed={module.key}
+                            tone={stageTone(module.stage)}
+                            size={7}
+                          />
+                        )}
                         {locked ? (
                           <LockKeyhole className="crafting-lock-badge" />
                         ) : null}

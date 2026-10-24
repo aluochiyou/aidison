@@ -209,6 +209,20 @@ class ResearchRunExecutor:
         )
 
     async def execute_claim(self, *, run: AgentRun, claim: AgentRunClaim) -> ResearchRunExecution:
+        with self._runtime_tracer.span(
+            name="aidison.deep_research.run",
+            correlation=TelemetryCorrelation(project_id=run.project_id, run_id=run.id),
+            kind="agent",
+            attributes={
+                "aidison.event": "agent_run_started",
+                "aidison.graph_name": "research",
+                "aidison.graph_revision": run.runtime_binding.graph_revision,
+                "aidison.run_kind": run.kind.value,
+            },
+        ):
+            return await self._execute_claim(run=run, claim=claim)
+
+    async def _execute_claim(self, *, run: AgentRun, claim: AgentRunClaim) -> ResearchRunExecution:
         if run.kind is not AgentRunKind.RESEARCH:
             raise DomainConflictError("claimed AgentRun is not a Research run")
         try:
@@ -521,13 +535,14 @@ class ResearchRunExecutor:
             collection_policy=collection_policy,
             allowed_tool_ids=self._source_tool_ids,
         )
-        reusable_memory_by_task_id, revalidation_task_ids = (
-            await self._route_workstream_memory_for_tasks(
-                run=run,
-                coverage=coverage,
-                modules=modules,
-                tasks=tasks,
-            )
+        (
+            reusable_memory_by_task_id,
+            revalidation_task_ids,
+        ) = await self._route_workstream_memory_for_tasks(
+            run=run,
+            coverage=coverage,
+            modules=modules,
+            tasks=tasks,
         )
         for task_id in revalidation_task_ids:
             questions[task_id] = (
@@ -693,8 +708,7 @@ class ResearchRunExecutor:
         ordered = tuple(sorted(tasks, key=lambda item: (item.task_key, str(item.id))))
         base, remainder = divmod(max_token_budget, len(ordered))
         return {
-            task.id: base + (1 if index < remainder else 0)
-            for index, task in enumerate(ordered)
+            task.id: base + (1 if index < remainder else 0) for index, task in enumerate(ordered)
         }
 
     @staticmethod
@@ -794,23 +808,18 @@ class ResearchRunExecutor:
             module_id = item.module_ids[0]
             primary_task_key_by_module_id.setdefault(module_id, item.task_key)
         coverage_by_module_id: dict[str, tuple[str, ...]] = {}
-        project_scope_keys = tuple(
-            item.key for item in coverage.keys if not item.module_ids
-        )
+        project_scope_keys = tuple(item.key for item in coverage.keys if not item.module_ids)
         for module in modules:
             coverage_by_module_id[str(module.id)] = tuple(
                 item.key
                 for item in coverage.keys
-                if item.module_ids == (str(module.id),)
-                and not item.key.startswith("strategy.")
+                if item.module_ids == (str(module.id),) and not item.key.startswith("strategy.")
             )
 
         task_envelopes: list[TaskEnvelope] = []
         questions: dict[Any, str] = {}
         first_task_key = next(
-            item.task_key
-            for item in ordered_strategy_tasks
-            if not item.depends_on_task_keys
+            item.task_key for item in ordered_strategy_tasks if not item.depends_on_task_keys
         )
         coverage_questions = {item.key: item.question for item in coverage.keys}
         for planned_task in ordered_strategy_tasks:
@@ -844,10 +853,7 @@ class ResearchRunExecutor:
                     f"Expected outputs: {', '.join(planned_task.expected_outputs)}",
                     "Stop when: " + "; ".join(planned_task.stop_conditions),
                     *(
-                        (
-                            "Research lenses: "
-                            + " | ".join(planned_task.research_lenses),
-                        )
+                        ("Research lenses: " + " | ".join(planned_task.research_lenses),)
                         if planned_task.research_lenses
                         else ()
                     ),
@@ -877,9 +883,7 @@ class ResearchRunExecutor:
                     coverage_keys=tuple(assigned_keys),
                     allowed_tool_ids=allowed_tool_ids,
                     budget_ref=f"budget://agent-run/{run.id}",
-                    idempotency_key=(
-                        f"research.strategy:{run.id}:{planned_task.task_key}:1"
-                    ),
+                    idempotency_key=(f"research.strategy:{run.id}:{planned_task.task_key}:1"),
                     collection_policy=collection_policy,
                 )
             )
@@ -1364,9 +1368,7 @@ class ResearchRunExecutor:
             if item.coverage_key not in gaps:
                 continue
             rejected = evidence.get(item.coverage_key, {}).get("rejected_reason_codes", [])
-            unavailable = collection.get(item.coverage_key, {}).get(
-                "unavailable_reason_codes", []
-            )
+            unavailable = collection.get(item.coverage_key, {}).get("unavailable_reason_codes", [])
             rejected_codes = rejected if isinstance(rejected, list) else []
             unavailable_codes = unavailable if isinstance(unavailable, list) else []
             entries.append(
@@ -1551,11 +1553,7 @@ class ResearchRunExecutor:
         materialized: list[tuple[TaskEnvelope, str]] = []
         for request in route.tasks:
             coverage_items = tuple(coverage_by_key[key] for key in request.coverage_keys)
-            module_ids = {
-                item.module_ids[0]
-                for item in coverage_items
-                if item.module_ids
-            }
+            module_ids = {item.module_ids[0] for item in coverage_items if item.module_ids}
             module_id = next(iter(module_ids)) if len(module_ids) == 1 else None
             module = modules_by_id.get(module_id) if module_id is not None else None
             if module is None:

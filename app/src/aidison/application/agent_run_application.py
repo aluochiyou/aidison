@@ -20,6 +20,7 @@ from aidison.infrastructure.agent_run_budget import AgentRunBudgetLedger
 from aidison.infrastructure.agent_runs import AgentRunConflictError, AgentRunControl
 from aidison.infrastructure.artifacts import ContentAddressedArtifactStore
 from aidison.infrastructure.store import PostgresDomainStore
+from aidison.module_visuals import ModuleVisualContract, ModuleVisualInput
 from aidison.research.coverage import CoverageCompileInput, compile_coverage_contract
 from aidison.research.strategy import (
     ResearchRunContract,
@@ -65,6 +66,16 @@ DEFAULT_IMPACT_PROPOSAL_RUNTIME_BINDING = RuntimeBinding(
     state_schema_version="impact-proposal-state-v1",
     profile_binding_ref="profile://impact-analyst/1",
     policy_binding_ref="policy://impact-proposal/1",
+)
+
+DEFAULT_MODULE_VISUAL_RUNTIME_BINDING = RuntimeBinding(
+    runtime_family=RuntimeFamily.LANGGRAPH_V1,
+    runtime_revision="runtime-v1",
+    graph_key="module_visual",
+    graph_revision="module-visual-v1",
+    state_schema_version="module-visual-state-v1",
+    profile_binding_ref="profile://module-visual/1",
+    policy_binding_ref="policy://module-visual/typed-svg-v1",
 )
 
 
@@ -129,8 +140,7 @@ class AgentRunApplication:
         if any(len(item.module_ids) != 1 for item in strategy.tasks):
             raise DomainConflictError("research strategy tasks must target exactly one module")
         scope_modules = tuple(
-            modules_by_id[item]
-            for item in sorted(scope_ids, key=lambda value: str(value))
+            modules_by_id[item] for item in sorted(scope_ids, key=lambda value: str(value))
         )
 
         key = f"research-plan:{plan.id}"
@@ -158,9 +168,7 @@ class AgentRunApplication:
         # Physical model calls may only reserve against this durable, user-
         # approved ceiling; a retry of the idempotent enqueue reuses the same
         # account and cannot silently change its cap.
-        execution_policy = compile_research_execution_policy(
-            research_depth=plan.research_depth
-        )
+        execution_policy = compile_research_execution_policy(research_depth=plan.research_depth)
         await AgentRunBudgetLedger(self._session).create_account(
             agent_run_id=created.id,
             token_cap=plan.max_token_budget,
@@ -243,6 +251,7 @@ class AgentRunApplication:
         if commit:
             await self._session.commit()
         return created
+
     async def enqueue_solution_run(
         self,
         *,
@@ -423,6 +432,80 @@ class AgentRunApplication:
             )
         await self._session.commit()
         return created
+
+    async def enqueue_module_visual_run(
+        self,
+        *,
+        project_id: UUID,
+        expected_project_revision: int,
+        runtime_binding: RuntimeBinding = DEFAULT_MODULE_VISUAL_RUNTIME_BINDING,
+    ) -> AgentRun:
+        """Queue one idempotent visual Agent for the active module blueprint."""
+
+        project = await self._store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        if project.revision != expected_project_revision:
+            raise PreconditionFailedError("project revision is stale")
+        if project.active_blueprint_id is None:
+            raise DomainConflictError("module visuals require an active blueprint")
+        modules = await ProjectApplication(self._store)._active_modules(project)
+        if not modules:
+            raise DomainConflictError("module visuals require active modules")
+        basis_hash = canonical_hash("module_visual", project.active_blueprint_id, modules)
+        key = f"module-visual-blueprint:{project.active_blueprint_id}"
+        run_id = uuid5(NAMESPACE_URL, f"aidison://agent-run/{key}")
+        run = AgentRun(
+            id=run_id,
+            project_id=project_id,
+            kind=AgentRunKind.MODULE_VISUAL,
+            idempotency_key=key,
+            basis_hash=basis_hash,
+            basis_project_revision=project.revision,
+            runtime_binding=runtime_binding,
+            thread_id=f"agent-run:{run_id}",
+        )
+        control = AgentRunControl(self._session)
+        existing = await control.get(run.id)
+        created = await control.create(run)
+        contract = ModuleVisualContract(
+            modules=tuple(
+                ModuleVisualInput(
+                    module_id=item.id,
+                    name=item.name,
+                    responsibility=item.responsibility,
+                )
+                for item in modules
+            )
+        )
+        artifact = await ContentAddressedArtifactStore(
+            self._session, self._artifact_root
+        ).put_agent_run_json(
+            project_id=project_id,
+            agent_run_id=created.id,
+            basis_hash=basis_hash,
+            kind="module_visual_contract",
+            value=contract.model_dump(mode="json"),
+            commit=False,
+        )
+        created = await control.bind_run_contract(
+            run_id=created.id,
+            run_contract_ref=artifact.ref,
+        )
+        if existing is None:
+            created = await control.record_queued_event(
+                run_id=created.id,
+                event_type=AgentRunEventType.MODULE_VISUAL_QUEUED,
+                context={
+                    "blueprint_id": str(project.active_blueprint_id),
+                    "basis_hash": basis_hash,
+                    "run_contract_ref": artifact.ref,
+                },
+                artifact_refs=(artifact.ref,),
+            )
+        await self._session.commit()
+        return created
+
     async def enqueue_impact_run(
         self,
         *,
@@ -560,7 +643,5 @@ def _research_requirement_context(requirement: object) -> tuple[str, ...]:
         ("Available resources", "; ".join(getattr(requirement, "available_resources", ()))),
     )
     return tuple(
-        f"{label}: {text}"
-        for label, text in values
-        if isinstance(text, str) and text.strip()
+        f"{label}: {text}" for label, text in values if isinstance(text, str) and text.strip()
     )

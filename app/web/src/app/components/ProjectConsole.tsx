@@ -22,6 +22,7 @@ import { ActivityFeed } from "@/app/components/ActivityFeed";
 import { RequirementsRevisionForm } from "@/app/components/RequirementsRevisionForm";
 import { ConversationPanel } from "@/app/components/ConversationPanel";
 import { ProjectConsoleHeader } from "@/app/components/ProjectConsoleHeader";
+import { VoxelAmbientScene } from "@/app/components/VoxelAmbientScene";
 import {
   ModuleCard,
   ProjectPulse,
@@ -360,10 +361,10 @@ function ResearchAction({
             : "开始查找资料"
           : "先查看查找计划"}
       </Button>
-      <div
+      <details
         className="research-plan-settings"
-        aria-label="研究计划预算设置"
       >
+        <summary>调整研究范围、来源与预算</summary>
         <p className="research-plan-note">
           修改以下边界会生成一份新的待审核策略，不会自动启动研究，也不会改写当前项目事实。
           已批准的旧计划仍保留在审计记录中。
@@ -500,7 +501,7 @@ function ResearchAction({
             <small>生成后先进入执行边界审核；未批准前不会创建研究 Run。</small>
           </div>
         </div>
-      </div>
+      </details>
     </div>
   );
 }
@@ -1171,11 +1172,21 @@ function ReviewReshapeAction({
   const resolve = async (decision: "applied" | "rejected") => {
     setBusy(decision);
     try {
-      await getClient().resolveProjectReshape(
+      const resolved = await getClient().resolveProjectReshape(
         proposal.id,
         snapshot.project.revision,
         decision
       );
+      if (decision === "applied") {
+        try {
+          await getClient().generateModuleVisuals(
+            snapshot.project.id,
+            resolved.data.project_revision
+          );
+        } catch {
+          toast.warning("模块结构已保存；插图生成暂未启动，可稍后重试。");
+        }
+      }
       toast.success(
         decision === "applied"
           ? "结构草案已应用，新模块骨架已生成"
@@ -2081,6 +2092,7 @@ export function ProjectConsole({
 
   return (
     <main className="console-shell">
+      <VoxelAmbientScene compact />
       <ProjectConsoleHeader
         project={project}
         connected={connected}
@@ -2213,6 +2225,30 @@ export function ProjectConsole({
             </>
           ) : (
             <>
+              <section className="workbench-primary-action">
+                <div className="workbench-primary-heading">
+                  <small>NEXT REQUIRED ACTION</small>
+                  <strong>当前需要你处理</strong>
+                </div>
+                <NextAction
+                  snapshot={snapshot}
+                  onDone={handleActionDone}
+                  requirementsDraft={requirementsDraft}
+                  manualRequirements={manualRequirements}
+                  onDismissRequirementsDraft={() => {
+                    setRequirementsDraft(null);
+                    setManualRequirements(true);
+                  }}
+                  onOpenRequirementsForm={() => {
+                    setRequirementsDraft(null);
+                    setManualRequirements(true);
+                  }}
+                  onOpenAudit={() => {
+                    setDeveloperMode(true);
+                    setAuditOpen(true);
+                  }}
+                />
+              </section>
               <DraftWorkbench
                 developerMode={developerMode}
                 onOpenModuleIdChange={(selectedId) =>
@@ -2222,25 +2258,6 @@ export function ProjectConsole({
                 snapshot={snapshot}
                 onRefresh={refresh}
               />
-              <NextAction
-                snapshot={snapshot}
-                onDone={handleActionDone}
-                requirementsDraft={requirementsDraft}
-                manualRequirements={manualRequirements}
-                onDismissRequirementsDraft={() => {
-                  setRequirementsDraft(null);
-                  setManualRequirements(true);
-                }}
-                onOpenRequirementsForm={() => {
-                  setRequirementsDraft(null);
-                  setManualRequirements(true);
-                }}
-                onOpenAudit={() => {
-                  setDeveloperMode(true);
-                  setAuditOpen(true);
-                }}
-              />
-
               <section className="solution-board">
                 <div className="panel-heading">
                   <div>

@@ -97,7 +97,100 @@ a[role="button"]:not(.no-pixel-style):active,
 
 .launch-shell,
 .console-shell {
+  position: relative;
+  overflow-x: clip;
   min-height: 100vh;
+}
+
+.launch-shell > :not(.voxel-ambient),
+.console-shell > :not(.voxel-ambient) {
+  position: relative;
+  z-index: 2;
+}
+
+.voxel-ambient {
+  position: fixed;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.voxel-ground {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 54px;
+  border-top: 10px solid #72a34e;
+  background: repeating-linear-gradient(90deg, #78502e 0 34px, #694326 34px 68px);
+  box-shadow: inset 0 8px 0 #527e39;
+}
+
+.voxel-cloud {
+  position: absolute;
+  width: 88px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 22px -18px 0 rgba(255, 255, 255, 0.82), 58px -4px 0 rgba(255, 255, 255, 0.82);
+  animation: voxel-cloud-drift 24s linear infinite;
+}
+
+.cloud-a { top: 12%; left: 7%; }
+.cloud-b { top: 24%; left: 66%; animation-duration: 31s; }
+
+.voxel-builder,
+.voxel-sheep,
+.voxel-fox,
+.voxel-drone {
+  position: absolute;
+  display: block;
+  filter: drop-shadow(4px 4px 0 rgba(36, 26, 18, 0.2));
+}
+
+.voxel-builder { right: 7%; bottom: 54px; width: 58px; height: 112px; animation: voxel-idle 2.4s steps(2) infinite; }
+.voxel-builder i { position: absolute; display: block; }
+.voxel-builder .head { top: 0; left: 12px; width: 34px; height: 34px; background: #c98f64; box-shadow: inset 0 -9px 0 #402b20; }
+.voxel-builder .body { top: 34px; left: 8px; width: 42px; height: 46px; background: #2e7794; }
+.voxel-builder .arm { top: 39px; right: -2px; width: 12px; height: 42px; background: #c98f64; transform-origin: top; animation: voxel-wave 2.4s steps(3) infinite; }
+.voxel-builder .leg { bottom: 0; width: 16px; height: 34px; background: #3e414d; }
+.voxel-builder .leg.left { left: 9px; }
+.voxel-builder .leg.right { right: 9px; }
+
+.voxel-sheep { left: 6%; bottom: 50px; width: 76px; height: 48px; animation: voxel-idle 3s steps(2) infinite reverse; }
+.voxel-sheep i { position: absolute; display: block; }
+.voxel-sheep .body { left: 0; top: 4px; width: 58px; height: 34px; background: #f3eee0; box-shadow: inset 0 -6px 0 #d8d2c4; }
+.voxel-sheep .face { right: 0; top: 12px; width: 24px; height: 28px; background: #8e8173; }
+.voxel-sheep .leg { bottom: 0; width: 9px; height: 15px; background: #514a43; }
+.voxel-sheep .leg.left { left: 12px; }
+.voxel-sheep .leg.right { right: 15px; }
+
+.voxel-fox { left: 23%; bottom: 51px; width: 70px; height: 38px; animation: voxel-walk 6s steps(6) infinite alternate; }
+.voxel-fox i { position: absolute; display: block; background: #c8642d; }
+.voxel-fox .body { left: 18px; top: 12px; width: 42px; height: 22px; }
+.voxel-fox .head { right: 0; top: 3px; width: 24px; height: 25px; box-shadow: inset 0 -7px 0 #eee3c8; }
+.voxel-fox .tail { left: 0; top: 5px; width: 27px; height: 15px; transform: rotate(22deg); }
+
+.voxel-drone { right: 24%; top: 17%; width: 76px; height: 26px; animation: voxel-fly 4s ease-in-out infinite; }
+.voxel-drone::before,
+.voxel-drone::after { content: ""; position: absolute; top: 4px; width: 28px; height: 4px; background: #26363d; }
+.voxel-drone::before { left: 0; }
+.voxel-drone::after { right: 0; }
+.voxel-drone i { position: absolute; top: 8px; left: 27px; width: 24px; height: 16px; background: #d98934; }
+.voxel-drone b { position: absolute; top: 0; left: 8px; width: 8px; height: 8px; background: #26363d; box-shadow: 52px 0 0 #26363d; }
+
+.voxel-ambient.is-compact { opacity: 0.48; }
+.voxel-ambient.is-compact .voxel-builder { right: 1.5%; transform: scale(0.72); transform-origin: bottom; }
+.voxel-ambient.is-compact .voxel-sheep { left: 1.5%; transform: scale(0.72); transform-origin: bottom; }
+
+@keyframes voxel-cloud-drift { 50% { transform: translateX(34px); } }
+@keyframes voxel-idle { 50% { transform: translateY(-3px); } }
+@keyframes voxel-wave { 50% { transform: rotate(-32deg); } }
+@keyframes voxel-walk { to { transform: translateX(90px); } }
+@keyframes voxel-fly { 50% { transform: translate(20px, 12px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .voxel-ambient * { animation: none !important; }
 }
 
 .launch-shell {

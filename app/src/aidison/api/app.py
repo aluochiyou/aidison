@@ -14,7 +14,7 @@ from uuid import UUID, uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 from openai import APIConnectionError, APIStatusError, APITimeoutError
 from sqlalchemy import func, select, text
@@ -70,6 +70,7 @@ from aidison.api.schemas import (
 )
 from aidison.application.agent_run_application import (
     DEFAULT_IMPACT_PROPOSAL_RUNTIME_BINDING,
+    DEFAULT_MODULE_VISUAL_RUNTIME_BINDING,
     DEFAULT_RESEARCH_RUNTIME_BINDING,
     DEFAULT_SOLUTION_RUNTIME_BINDING,
     AgentRunApplication,
@@ -87,6 +88,7 @@ from aidison.application.failure_regression import (
 )
 from aidison.application.impact_proposal_commit import ImpactProposalCommitApplication
 from aidison.application.ports import DuplicateCommandError, OptimisticConcurrencyError
+from aidison.application.project_report import render_project_report
 from aidison.application.proposal_commit import ProposalCommitApplication
 from aidison.application.research_consolidation import (
     read_research_consolidation_snapshot,
@@ -149,6 +151,7 @@ from aidison.infrastructure.orm import (
     AgentRunBudgetOperationRow,
     AgentRunDecisionRow,
     AgentRunRow,
+    ArtifactRow,
     DecisionRequestRow,
     DomainEventRow,
     ImpactAnalysisRow,
@@ -552,9 +555,7 @@ def _consume_detached_planning_task(task: asyncio.Future[Any]) -> None:
         pass
 
 
-async def _await_planning_operation(
-    operation: Awaitable[Any], *, timeout_seconds: float
-) -> Any:
+async def _await_planning_operation(operation: Awaitable[Any], *, timeout_seconds: float) -> Any:
     """Enforce a wall-clock planning deadline even if an SDK delays cancellation."""
 
     task = asyncio.ensure_future(operation)
@@ -743,8 +744,8 @@ def create_app(
 
         api.state.research_strategy_planner_factory = _research_strategy_planner_factory
     else:
-        api.state.research_strategy_planner_factory = (
-            lambda: JsonModeResearchStrategyPlanner(research_strategy_model_factory())
+        api.state.research_strategy_planner_factory = lambda: JsonModeResearchStrategyPlanner(
+            research_strategy_model_factory()
         )
 
     @api.middleware("http")
@@ -912,9 +913,7 @@ def create_app(
         )
 
     @api.exception_handler(APIConnectionError)
-    async def model_provider_connection_error(
-        _: Request, __: APIConnectionError
-    ) -> JSONResponse:
+    async def model_provider_connection_error(_: Request, __: APIConnectionError) -> JSONResponse:
         return _error(
             503,
             ApiErrorCode.DEPENDENCY_UNAVAILABLE,
@@ -1136,9 +1135,7 @@ def create_app(
             Path(cast(Path, api.state.artifact_root)),
         )
         if receipt is not None:
-            document = await documents.get(
-                project_id=project_id, document_id=UUID(receipt)
-            )
+            document = await documents.get(project_id=project_id, document_id=UUID(receipt))
             response.headers["ETag"] = f'"{project.revision}"'
             return document
 
@@ -1177,9 +1174,7 @@ def create_app(
             Path(cast(Path, api.state.artifact_root)),
         ).list_all(project_id=project_id)
 
-    @api.post(
-        "/api/projects/{project_id}/source-documents/{document_id}/quarantine"
-    )
+    @api.post("/api/projects/{project_id}/source-documents/{document_id}/quarantine")
     async def quarantine_project_source_document(
         project_id: UUID,
         document_id: UUID,
@@ -1201,9 +1196,7 @@ def create_app(
             Path(cast(Path, api.state.artifact_root)),
         )
         if receipt is not None:
-            document = await documents.get(
-                project_id=project_id, document_id=UUID(receipt)
-            )
+            document = await documents.get(project_id=project_id, document_id=UUID(receipt))
             response.headers["ETag"] = f'"{project.revision}"'
             return document
         document, changed = await documents.quarantine(
@@ -1247,9 +1240,7 @@ def create_app(
             Path(cast(Path, api.state.artifact_root)),
         )
         if receipt is not None:
-            document = await documents.get(
-                project_id=project_id, document_id=UUID(receipt)
-            )
+            document = await documents.get(project_id=project_id, document_id=UUID(receipt))
             response.headers["ETag"] = f'"{project.revision}"'
             return document
         document, changed = await documents.restore(
@@ -1461,13 +1452,10 @@ def create_app(
         # Semantic idempotency is scoped to the approved requirement basis,
         # rather than a browser-generated click key. This serializes concurrent
         # explicit requests into one reviewable initial structure proposal.
-        internal_key = (
-            "initial-module-discovery:"
-            + canonical_hash(
-                project_id,
-                project.active_requirement_revision_id,
-                body.model_dump(mode="json"),
-            )
+        internal_key = "initial-module-discovery:" + canonical_hash(
+            project_id,
+            project.active_requirement_revision_id,
+            body.model_dump(mode="json"),
         )
         proposal = await ProjectApplication(store).propose_project_reshape(
             proposal=ProjectReshapeProposal(
@@ -1729,12 +1717,8 @@ def create_app(
                 "research strategy planning rejected diagnostics=%s",
                 exc.diagnostics,
             )
-            raise HTTPException(
-                status_code=502, detail=str(exc)
-            ) from exc
-        max_concurrency = min(
-            len(strategy.tasks), requested_concurrency, MAX_DELEGATION_WAVE_SIZE
-        )
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        max_concurrency = min(len(strategy.tasks), requested_concurrency, MAX_DELEGATION_WAVE_SIZE)
         requires_independent_verification = (
             body.requires_independent_verification
             if body.requires_independent_verification is not None
@@ -1939,6 +1923,27 @@ def create_app(
         project_revision = revision + (1 if proposal.status is ProjectReshapeStatus.APPLIED else 0)
         response.headers["ETag"] = f'"{project_revision}"'
         return {"reshape_proposal": proposal, "project_revision": project_revision}
+
+    @api.post("/api/projects/{project_id}/module-visuals", status_code=status.HTTP_202_ACCEPTED)
+    async def generate_module_visuals(
+        project_id: UUID,
+        if_match: IfMatch,
+        response: Response,
+        session: DbSession,
+    ) -> dict[str, Any]:
+        """Queue optional module illustrations after the authoritative reshape commit."""
+
+        revision = _parse_revision(if_match)
+        run = await AgentRunApplication(
+            session,
+            artifact_root=Path(getattr(api.state, "artifact_root", "artifacts/data")),
+        ).enqueue_module_visual_run(
+            project_id=project_id,
+            expected_project_revision=revision,
+            runtime_binding=DEFAULT_MODULE_VISUAL_RUNTIME_BINDING,
+        )
+        response.headers["ETag"] = f'"{revision}"'
+        return {"agent_run": run, "project_revision": revision}
 
     @api.get("/api/projects/{project_id}/requirements-change-proposals")
     async def list_requirements_change_proposals(project_id: UUID, session: DbSession) -> Any:
@@ -2686,6 +2691,49 @@ def create_app(
             Path(getattr(api.state, "artifact_root", "artifacts/data")),
             record_integrity_status=False,
         )
+        module_visuals: list[dict[str, str]] = []
+        latest_visual_run = await session.scalar(
+            select(AgentRunRow)
+            .where(
+                AgentRunRow.project_id == project_id,
+                AgentRunRow.kind == AgentRunKind.MODULE_VISUAL.value,
+                AgentRunRow.status == AgentRunStatus.SUCCEEDED.value,
+            )
+            .order_by(AgentRunRow.completed_at.desc(), AgentRunRow.id.desc())
+            .limit(1)
+        )
+        if latest_visual_run is not None:
+            manifest = await session.scalar(
+                select(ArtifactRow)
+                .where(
+                    ArtifactRow.project_id == project_id,
+                    ArtifactRow.agent_run_id == latest_visual_run.id,
+                    ArtifactRow.kind == "module_visual_manifest",
+                )
+                .order_by(ArtifactRow.created_at.desc())
+                .limit(1)
+            )
+            if manifest is not None:
+                try:
+                    payload = json.loads(
+                        await snapshot_artifacts.read_bytes(
+                            project_id=project_id, artifact_id=manifest.id
+                        )
+                    )
+                    raw_items = payload.get("items", []) if isinstance(payload, dict) else []
+                    if isinstance(raw_items, list):
+                        module_visuals = [
+                            {
+                                "module_id": str(item["module_id"]),
+                                "artifact_id": str(item["artifact_id"]),
+                            }
+                            for item in raw_items
+                            if isinstance(item, dict)
+                            and "module_id" in item
+                            and "artifact_id" in item
+                        ]
+                except (ArtifactIntegrityError, json.JSONDecodeError, UnicodeDecodeError):
+                    module_visuals = []
         agent_run_decision_previews = {
             decision.id: await _agent_run_proposal_preview(
                 artifacts=snapshot_artifacts,
@@ -2762,6 +2810,7 @@ def create_app(
             "blueprints": await store.list_project_blueprints(project_id),
             "requirements": await store.list_requirement_revisions(project_id),
             "modules": active_modules,
+            "module_visuals": module_visuals,
             "module_configurations": [item for group in configuration_groups for item in group],
             "selection_locks": await store.list_selection_locks(project_id),
             "adjustment_batches": await store.list_adjustment_batches(project_id),
@@ -2895,6 +2944,44 @@ def create_app(
 
         snapshot = await project_snapshot(project_id, session)
         return snapshot["workspace"]
+
+    @api.get("/api/projects/{project_id}/report.md", response_class=PlainTextResponse)
+    async def export_project_report(project_id: UUID, session: DbSession) -> PlainTextResponse:
+        """Export only an approved SolutionVersion and its bound evidence."""
+
+        store = PostgresDomainStore(session)
+        project = await store.get_project(project_id)
+        if project is None:
+            raise DomainNotFoundError("project not found")
+        if (
+            project.active_requirement_revision_id is None
+            or project.active_solution_version_id is None
+        ):
+            raise DomainConflictError("an approved solution is required before report export")
+        requirement = await store.get_requirement_revision(project.active_requirement_revision_id)
+        solution = await store.get_solution_version(project.active_solution_version_id)
+        if requirement is None or solution is None:
+            raise DomainConflictError("approved report inputs are unavailable")
+        report = render_project_report(
+            project=project,
+            requirement=requirement,
+            modules=await _active_modules_for_project(store, project),
+            solution=solution,
+            decisions=await store.list_decision_requests(project_id),
+            candidates=await store.list_candidates(project_id),
+            evidence=await store.list_evidence_bindings(project_id),
+            findings=await store.list_compatibility_findings(project_id),
+        )
+        return PlainTextResponse(
+            report,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="aidison-project-v{solution.version}-report.md"'
+                ),
+                "Cache-Control": "no-store",
+            },
+        )
 
     @api.get("/api/projects/{project_id}/events")
     async def list_events(
@@ -3165,8 +3252,7 @@ def create_app(
     ) -> Any:
         """Read artifact bytes with content-hash verification.
 
-        Only text/markdown and application/json media types are served
-        inline.  All others return 415.
+        Only explicitly safe, generated media types are served inline.
         """
         from aidison.infrastructure.artifacts import (
             ArtifactIntegrityError,
@@ -3184,7 +3270,7 @@ def create_app(
         if row is None:
             raise DomainNotFoundError("artifact not found")
 
-        allowed = {"text/markdown", "application/json", "text/plain"}
+        allowed = {"text/markdown", "application/json", "text/plain", "image/svg+xml"}
         if row.media_type not in allowed:
             raise HTTPException(
                 status_code=415,
@@ -3206,6 +3292,8 @@ def create_app(
             headers={
                 "Content-Disposition": f'inline; filename="{artifact_id}"',
                 "X-Content-Hash": row.content_hash,
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": "sandbox; default-src 'none'",
             },
         )
 

@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ProjectConsole } from "@/app/components/ProjectConsole";
 import { CreateProjectDialog } from "@/app/components/CreateProjectDialog";
 import { ProjectSelector } from "@/app/components/ProjectSelector";
+import { VoxelAmbientScene } from "@/app/components/VoxelAmbientScene";
 import { useProjects } from "@/app/hooks/useProjects";
 import { Button } from "@/components/ui/button";
 import { getClient } from "@/lib/api";
@@ -71,6 +72,7 @@ export default function HomePage() {
 
   return (
     <main className="launch-shell">
+      <VoxelAmbientScene />
       <div
         className="launch-grid"
         aria-hidden="true"

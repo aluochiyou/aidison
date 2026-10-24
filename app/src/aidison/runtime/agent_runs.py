@@ -37,6 +37,7 @@ class AgentRunKind(StrEnum):
     RESEARCH = "research"
     SOLUTION = "solution"
     IMPACT = "impact"
+    MODULE_VISUAL = "module_visual"
     PROJECT_VERIFICATION = "project_verification"
 
 

@@ -1624,6 +1624,54 @@ button {
   box-shadow: inset 0 0 0 3px rgba(166, 106, 55, 0.2);
 }
 
+.research-plan-settings > summary {
+  cursor: pointer;
+  color: var(--pixel-ink);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.research-plan-settings:not([open]) {
+  padding-block: 0.75rem;
+}
+
+.research-plan-settings:not([open]) > :not(summary) {
+  display: none;
+}
+
+.workbench-primary-action {
+  padding: 0.7rem;
+  border: 3px solid var(--pixel-ink);
+  background: linear-gradient(135deg, #fff5c9, #e7f4c7);
+  box-shadow: 7px 7px 0 rgba(36, 26, 18, 0.32);
+}
+
+.workbench-primary-heading {
+  display: flex;
+  gap: 0.65rem;
+  align-items: baseline;
+  margin-bottom: 0.55rem;
+  color: var(--pixel-ink);
+}
+
+.workbench-primary-heading small {
+  color: #7c4b26;
+  font-size: 0.61rem;
+  letter-spacing: 0.08em;
+}
+
+.workbench-primary-heading strong {
+  font-family: "Arial Black", Impact, sans-serif;
+  font-size: 1.05rem;
+}
+
+.workbench-primary-action .action-block {
+  margin: 0;
+  border-color: #3d672f;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 4px 4px 0 rgba(61, 103, 47, 0.42);
+}
+
 .research-plan-note {
   margin: 0;
   padding: 0.65rem 0.75rem;
@@ -2549,6 +2597,16 @@ button {
   color: var(--ink-soft);
   font: 0.56rem/1.3 "Cascadia Code", monospace;
   background: rgba(16, 27, 42, 0.05);
+}
+
+.crafting-module-visual {
+  display: block;
+  width: min(100%, 180px);
+  aspect-ratio: 16 / 9;
+  border: 2px solid var(--pixel-ink);
+  object-fit: cover;
+  image-rendering: pixelated;
+  box-shadow: 3px 3px 0 rgba(36, 26, 18, 0.28);
 }
 
 /* 模块像素方块本体（8×8） */

@@ -26,6 +26,7 @@ class AgentRunEventType(StrEnum):
     RESEARCH_QUEUED = "agent_run.queued"
     SOLUTION_QUEUED = "solution_run.queued"
     IMPACT_QUEUED = "impact_run.queued"
+    MODULE_VISUAL_QUEUED = "module_visual_run.queued"
     RUNNING = "agent_run.running"
     CHECKPOINT_ADMITTED = "agent_run.checkpoint_admitted"
     WAITING = "agent_run.waiting"
@@ -196,6 +197,8 @@ def _expected_queued_event(kind: AgentRunKind) -> AgentRunEventType:
         return AgentRunEventType.SOLUTION_QUEUED
     if kind is AgentRunKind.IMPACT:
         return AgentRunEventType.IMPACT_QUEUED
+    if kind is AgentRunKind.MODULE_VISUAL:
+        return AgentRunEventType.MODULE_VISUAL_QUEUED
     return AgentRunEventType.RESEARCH_QUEUED
 
 

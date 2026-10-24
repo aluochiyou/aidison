@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowLeft, Check, Code2, Database, RefreshCw } from "lucide-react";
+import { ArrowLeft, Check, Code2, Database, Download, RefreshCw } from "lucide-react";
 import type { Project } from "@/app/types/types";
 import { Button } from "@/components/ui/button";
+import { getClient } from "@/lib/api";
 
 const PROJECT_STAGES = [
   ["intake", "项目"],
@@ -92,6 +93,18 @@ export function ProjectConsoleHeader({
           <RefreshCw className="h-4 w-4" />
           刷新
         </Button>
+        {project.active_solution_version_id ? (
+          <Button asChild size="sm">
+            <a
+              download
+              href={getClient().getProjectReportUrl(project.id)}
+              title="导出已确认方案及其证据链"
+            >
+              <Download className="h-4 w-4" />
+              导出报告
+            </a>
+          </Button>
+        ) : null}
         <Button
           aria-pressed={developerMode}
           className="developer-mode-toggle"

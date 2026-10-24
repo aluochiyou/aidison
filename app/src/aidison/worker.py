@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from aidison.application.agent_run_application import (
     DEFAULT_IMPACT_PROPOSAL_RUNTIME_BINDING,
+    DEFAULT_MODULE_VISUAL_RUNTIME_BINDING,
     DEFAULT_RESEARCH_RUNTIME_BINDING,
     DEFAULT_SOLUTION_RUNTIME_BINDING,
 )
@@ -32,6 +33,12 @@ from aidison.config import AidisonSettings
 from aidison.impact.analyst import JsonModeImpactAnalyst
 from aidison.infrastructure.database import DatabaseSettings, create_engine, create_session_factory
 from aidison.infrastructure.model_budget_port import PostgresModelAttemptBudgetPort
+from aidison.module_visuals import (
+    ModuleVisualLangGraphWorker,
+    ModuleVisualRunExecutor,
+    ModuleVisualSettings,
+    QwenModuleVisualProvider,
+)
 from aidison.observability import (
     RuntimeModelInvocationObserver,
     RuntimeTracingSettings,
@@ -288,7 +295,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--runtime",
-        choices=("research", "solution", "impact"),
+        choices=("research", "solution", "impact", "module-visual"),
         default="research",
         help="exact modern LangGraph runtime family to consume",
     )
@@ -674,6 +681,52 @@ async def run_impact_worker(settings: WorkerSettings, *, once: bool = False) -> 
         await engine.dispose()
 
 
+async def run_module_visual_worker(settings: WorkerSettings, *, once: bool = False) -> None:
+    """Consume typed module-visual Runs without blocking project approval requests."""
+
+    settings.artifact_root.mkdir(parents=True, exist_ok=True)
+    database = DatabaseSettings()
+    engine = create_engine(database)
+    checkpoints = CheckpointRuntime(_checkpoint_settings(database))
+    runtime_tracer = build_runtime_tracer(RuntimeTracingSettings())
+    try:
+        executor = ModuleVisualRunExecutor(
+            session_factory=create_session_factory(engine),
+            artifact_root=settings.artifact_root,
+            checkpointer=await checkpoints.start(),
+            provider=QwenModuleVisualProvider(ModuleVisualSettings()),
+            runtime_tracer=runtime_tracer,
+        )
+        worker = ModuleVisualLangGraphWorker(
+            LangGraphOrchestrationWorker(
+                session_factory=create_session_factory(engine),
+                registry=GraphRegistry(
+                    (
+                        RegisteredGraph(
+                            binding=DEFAULT_MODULE_VISUAL_RUNTIME_BINDING,
+                            compiled_graph=executor,
+                        ),
+                    )
+                ),
+                worker_id=settings.worker_id,
+                lease_seconds=settings.lease_seconds,
+            )
+        )
+        if once:
+            await worker.run_once()
+            return
+        await _run_worker_pool(
+            concurrency=settings.concurrency,
+            poll_seconds=settings.poll_seconds,
+            runtime_name="module-visual",
+            run_once=worker.run_once,
+        )
+    finally:
+        runtime_tracer.flush()
+        await checkpoints.close()
+        await engine.dispose()
+
+
 def _checkpoint_settings(database: DatabaseSettings) -> CheckpointSettings:
     """Prefer the explicit checkpoint URL; otherwise share the application database endpoint."""
 
@@ -738,8 +791,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         asyncio.run(run_research_worker(settings, once=args.once, run_id=args.run_id))
     elif args.runtime == "solution":
         asyncio.run(run_solution_worker(settings, once=args.once))
-    else:
+    elif args.runtime == "impact":
         asyncio.run(run_impact_worker(settings, once=args.once))
+    else:
+        asyncio.run(run_module_visual_worker(settings, once=args.once))
     return 0
 
 
