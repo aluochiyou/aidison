@@ -57,7 +57,7 @@ class ControlledLiveCase(_FrozenModel):
     min_supported_modules: int = Field(default=1, ge=1)
     min_evidence_count: int = Field(default=1, ge=1)
     max_concurrency: int = Field(default=2, ge=1, le=4)
-    max_token_budget: int = Field(default=40_000, ge=1_000, le=250_000)
+    max_token_budget: int = Field(default=40_000, ge=1_000, le=1_000_000_000)
     max_duration_seconds: int = Field(default=900, ge=60, le=7_200)
 
     @model_validator(mode="after")

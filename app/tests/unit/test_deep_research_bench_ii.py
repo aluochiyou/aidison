@@ -43,7 +43,7 @@ def test_builds_content_addressed_engineering_subset(tmp_path) -> None:
     )
 
     assert [case.task_idx for case in manifest.cases] == [51, 88, 113]
-    assert manifest.cases[0].max_token_budget == 128_000
+    assert manifest.cases[0].max_token_budget == 1_000_000_000
     assert manifest.cases[0].rubric_counts == {
         "info_recall": 2,
         "analysis": 1,

@@ -12,6 +12,10 @@ RESEARCH_DEFAULT_ALLOWED_TOOL_CLASSES = (
 )
 RESEARCH_DEFAULT_MAX_CONCURRENCY = 8
 RESEARCH_DEFAULT_MAX_TOKEN_BUDGET = 128_000
+# Durable budget rows require a finite integer. Controlled live evaluations
+# use this sentinel to mean "do not stop for ordinary model usage" while still
+# retaining a final runaway guard and complete usage accounting.
+RESEARCH_UNBOUNDED_EVALUATION_TOKEN_CAP = 1_000_000_000
 RESEARCH_DEFAULT_MAX_DURATION_SECONDS = 36_000
 
 # This remains a per-physical-call context reservation, rather than a Run

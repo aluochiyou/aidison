@@ -18,6 +18,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from aidison.research.defaults import RESEARCH_UNBOUNDED_EVALUATION_TOKEN_CAP
+
 DRB2_SOURCE_URL = (
     "https://github.com/imlrz/DeepResearch-Bench-II/"
     "blob/main/tasks_and_rubrics.jsonl"
@@ -86,7 +88,9 @@ class DeepResearchBenchRunCase(BaseModel):
     blocked_urls: tuple[str, ...]
     rubric_counts: dict[str, int]
     report_path: str
-    max_token_budget: int = 128_000
+    # Public benchmark runs measure Token usage but do not use it as a stop
+    # condition. The finite sentinel is required by the durable SQL ledger.
+    max_token_budget: int = RESEARCH_UNBOUNDED_EVALUATION_TOKEN_CAP
     required_metrics: tuple[str, ...] = (
         "drb2_info_recall",
         "drb2_analysis",
