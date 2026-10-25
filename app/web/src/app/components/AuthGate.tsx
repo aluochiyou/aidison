@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
-import { LogIn, LogOut, ShieldCheck } from "lucide-react";
+import { LogIn, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -94,7 +94,10 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
             className="auth-mark"
             aria-hidden="true"
           >
-            <ShieldCheck />
+            <img
+              src="/art/mc/chest.png"
+              alt=""
+            />
           </div>
           <div className="auth-heading">
             <span>AIDISON · 私人项目空间</span>

@@ -2224,16 +2224,16 @@ export function ProjectConsole({
                   <img
                     alt=""
                     className="workbench-action-art"
-                    src={`/art/kenney/${
+                    src={`/art/mc/${
                       project.stage === "intake" ||
                       project.stage === "requirements"
-                        ? "notepad_write"
+                        ? "book"
                         : project.stage === "research"
-                        ? "puzzle"
+                        ? "compass"
                         : project.stage === "comparing" ||
                           project.stage === "deciding"
-                        ? "cards_seek"
-                        : "book_open"
+                        ? "crafting-table"
+                        : "chest"
                     }.png`}
                   />
                 </div>

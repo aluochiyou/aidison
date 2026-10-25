@@ -87,6 +87,8 @@ textarea:focus-visible {
 }
 .launch-copy {
   max-width: 690px;
+  border: 0;
+  box-shadow: none;
 }
 .launch-kicker {
   margin-bottom: 1.6rem;
@@ -488,6 +490,251 @@ textarea:focus-visible {
   box-shadow: 0 5px 18px rgba(21, 54, 55, 0.12);
 }
 
+/* Minecraft assets identify the actions; the crafting slots contain real modules. */
+.launch-workflow {
+  color: #292521;
+  background: #c8c8c8;
+  border: 4px solid #2d2d2d;
+  border-radius: 4px;
+  box-shadow: inset 4px 4px #f7f7f7, inset -4px -4px #555, 8px 8px #8f9d96;
+}
+.launch-workflow-title small,
+.launch-step-copy small {
+  color: #4d4b47;
+}
+.launch-workflow-step {
+  border-top-color: #989898;
+}
+.launch-step-number {
+  color: #66502f;
+}
+.launch-step-icon,
+.workbench-action-art {
+  border: 3px solid #343434;
+  border-radius: 2px;
+  background: #8b8b8b;
+  box-shadow: inset 3px 3px #555, inset -3px -3px #efefef;
+}
+.launch-step-icon img,
+.workbench-action-art,
+.crafting-title-icon,
+.crafting-module-fallback,
+.crafting-output-icon img,
+.auth-mark img {
+  image-rendering: pixelated;
+}
+.launch-crafting-preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 2.52;
+  margin: 0.5rem 0 1rem;
+  background: #c6c6c6 url("/art/mc/crafting-gui.png") top center / 100% auto
+    no-repeat;
+  image-rendering: pixelated;
+  border: 2px solid #454545;
+  overflow: hidden;
+}
+.launch-preview-item {
+  position: absolute;
+  width: 9%;
+  height: auto;
+  image-rendering: pixelated;
+  filter: drop-shadow(2px 3px 0 rgba(0, 0, 0, 0.35));
+}
+.launch-preview-item.is-book {
+  left: 15.5%;
+  top: 20%;
+}
+.launch-preview-item.is-table {
+  left: 25%;
+  top: 20%;
+}
+.launch-preview-item.is-compass {
+  left: 15.5%;
+  top: 44%;
+}
+.launch-preview-item.is-result {
+  left: 64.5%;
+  top: 40%;
+  width: 10%;
+}
+
+.crafting-workbench {
+  border: 4px solid #3b2618;
+  border-radius: 4px;
+  background: #5c3a24;
+  box-shadow: inset 4px 4px #9a6941, inset -4px -4px #2e1c14;
+}
+.crafting-title-icon {
+  width: 2rem;
+  height: 2rem;
+  object-fit: contain;
+}
+.crafting-table {
+  border: 4px solid #3b2618;
+  border-radius: 3px;
+  background: #8b5a35;
+  box-shadow: inset 3px 3px #b17d4d, inset -3px -3px #55351f;
+}
+.crafting-table-layout {
+  grid-template-columns: minmax(0, 550px) 2.6rem minmax(200px, 1fr);
+  gap: 1rem;
+  align-items: center;
+  padding: clamp(0.8rem, 2vw, 1.5rem);
+  border: 4px solid #2c2c2c;
+  border-radius: 2px;
+  background: #c6c6c6;
+  box-shadow: inset 4px 4px #f4f4f4, inset -4px -4px #5a5a5a;
+}
+.crafting-table-layout::before {
+  content: "➜";
+  grid-column: 2;
+  grid-row: 1;
+  color: #777;
+  font-size: 2.6rem;
+  text-align: center;
+  text-shadow: 2px 2px #eee;
+}
+.crafting-table-layout .crafting-grid {
+  grid-column: 1;
+  grid-row: 1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  min-height: 0;
+  padding: 5px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.crafting-empty-slot,
+.crafting-block {
+  border: 3px solid #373737 !important;
+  border-radius: 0 !important;
+  background: #8b8b8b;
+  box-shadow: inset 3px 3px #555, inset -3px -3px #eee !important;
+}
+.crafting-empty-slot {
+  min-height: 142px;
+}
+.crafting-block {
+  min-height: 142px;
+  height: 100%;
+  padding: 0.5rem;
+  color: #fff;
+  text-shadow: 1px 1px #3a3a3a;
+}
+.crafting-block:hover:not(:disabled),
+.crafting-block.is-open {
+  background: #777;
+  outline: 3px solid #f8d674;
+  outline-offset: -5px;
+  transform: none;
+}
+.crafting-block-pixel {
+  width: 3.8rem;
+  height: 3.8rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.crafting-module-fallback {
+  width: 3.8rem;
+  height: 3.8rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.crafting-block-name code,
+.crafting-block-selection > span:last-child,
+.crafting-block-selection small {
+  color: #f6e6bd;
+}
+.crafting-block-name code {
+  background: transparent;
+  font-size: 0.66rem;
+}
+.crafting-block-name strong {
+  color: #fff;
+}
+.crafting-depends {
+  color: #3b3025;
+  background: #e2dccd;
+}
+.crafting-table-layout .crafting-output {
+  grid-column: 3;
+  grid-row: 1;
+  align-content: center;
+  justify-items: center;
+  min-height: 215px;
+  padding: 1rem;
+  border: 3px solid #373737;
+  border-radius: 0;
+  background: #8b8b8b;
+  box-shadow: inset 4px 4px #555, inset -4px -4px #eee;
+  text-align: center;
+}
+.crafting-output-icon {
+  width: 5.2rem;
+  height: 5.2rem;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.crafting-output-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.crafting-output-copy small,
+.crafting-output-copy strong,
+.crafting-output-copy span,
+.crafting-output-meta {
+  color: #fff;
+  text-shadow: 1px 1px #333;
+}
+.crafting-output-copy span {
+  max-width: 25ch;
+}
+.crafting-graph-node-pixel,
+.auth-mark {
+  border: 2px solid #343434;
+  border-radius: 2px;
+  background: #8b8b8b;
+  box-shadow: inset 2px 2px #555, inset -2px -2px #eee;
+}
+.auth-mark img {
+  width: 2.5rem;
+  height: 2.5rem;
+  object-fit: contain;
+}
+.activity-status-avatar img {
+  width: 2.7rem;
+  height: 2.7rem;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+@media (max-width: 950px) {
+  .crafting-table-layout {
+    grid-template-columns: 1fr;
+  }
+  .crafting-table-layout .crafting-grid {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .crafting-table-layout::before {
+    grid-column: 1;
+    grid-row: 2;
+    transform: rotate(90deg);
+  }
+  .crafting-table-layout .crafting-output {
+    grid-column: 1;
+    grid-row: 3;
+  }
+}
+
 @media (max-width: 900px) {
   .launch-shell {
     grid-template-columns: 1fr;
@@ -520,5 +767,27 @@ textarea:focus-visible {
   }
   .workbench-primary-heading {
     flex-wrap: wrap;
+  }
+  .crafting-block,
+  .crafting-empty-slot {
+    min-height: 112px;
+  }
+  .crafting-block {
+    padding: 0.3rem;
+    align-items: center;
+  }
+  .crafting-block-pixel,
+  .crafting-module-fallback {
+    width: 3rem;
+    height: 3rem;
+  }
+  .crafting-block-name code,
+  .crafting-block-selection,
+  .crafting-depends {
+    display: none;
+  }
+  .crafting-block-name strong {
+    font-size: 0.7rem;
+    text-align: center;
   }
 }

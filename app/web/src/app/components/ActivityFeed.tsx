@@ -2,7 +2,6 @@
 
 import { useMemo, type ReactNode } from "react";
 import {
-  Bot,
   CircleAlert,
   FileCheck2,
   GitBranch,
@@ -184,7 +183,10 @@ export function ActivityFeed({
           className="activity-status-avatar"
           aria-hidden="true"
         >
-          <Bot className="h-5 w-5" />
+          <img
+            src="/art/mc/allay.webp"
+            alt=""
+          />
         </div>
         <div className="activity-status-copy">
           <small>AI 状态</small>

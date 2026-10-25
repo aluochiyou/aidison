@@ -4,11 +4,9 @@ import { useMemo, useRef, useState, useCallback } from "react";
 import { toast } from "sonner";
 import {
   Box,
-  Boxes,
   Check,
   CircleAlert,
   GitBranch,
-  Hammer,
   History,
   LayoutGrid,
   LockKeyhole,
@@ -325,7 +323,7 @@ function ModuleInspector({
           <img
             alt=""
             className="crafting-module-fallback"
-            src="/art/kenney/puzzle.png"
+            src="/art/mc/crafting-table.png"
           />
           <div>
             <code>{module.key}</code>
@@ -981,7 +979,11 @@ export function DraftWorkbench({
         <div className="crafting-head-title">
           <small>你的 DIY 工程工作台</small>
           <h2>
-            <Hammer className="h-5 w-5" />
+            <img
+              className="crafting-title-icon"
+              src="/art/mc/crafting-table.png"
+              alt=""
+            />
             从模块开始完善方案
           </h2>
           <p>选择模块查看候选和参数。你的修改会保留，是否采用建议由你决定。</p>
@@ -1059,7 +1061,10 @@ export function DraftWorkbench({
                 className="crafting-output-icon"
                 aria-hidden="true"
               >
-                <Boxes className="h-5 w-5" />
+                <img
+                  src="/art/mc/chest.png"
+                  alt=""
+                />
               </div>
               <div className="crafting-output-copy">
                 <small>{developerMode ? "当前项目" : "你正在制作"}</small>
@@ -1118,7 +1123,7 @@ export function DraftWorkbench({
                           <img
                             alt=""
                             className="crafting-module-fallback"
-                            src="/art/kenney/puzzle.png"
+                            src="/art/mc/crafting-table.png"
                           />
                         )}
                         {locked ? (
@@ -1142,6 +1147,16 @@ export function DraftWorkbench({
                   </div>
                 );
               })}
+              {Array.from(
+                { length: Math.max(0, 9 - snapshot.modules.length) },
+                (_, index) => (
+                  <div
+                    className="crafting-empty-slot"
+                    aria-hidden="true"
+                    key={`empty-${index}`}
+                  />
+                )
+              )}
             </div>
           </div>
         ) : (

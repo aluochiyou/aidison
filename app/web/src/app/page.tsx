@@ -109,27 +109,52 @@ export default function HomePage() {
         aria-label="项目会经历的四步"
       >
         <div className="launch-workflow-title">
-          <span>项目路线</span>
-          <small>所有进度都保存在同一个项目中</small>
+          <span>工程合成台</span>
+          <small>把资料和模块装进同一个项目</small>
+        </div>
+        <div
+          className="launch-crafting-preview"
+          aria-hidden="true"
+        >
+          <img
+            className="launch-preview-item is-book"
+            src="/art/mc/book.png"
+            alt=""
+          />
+          <img
+            className="launch-preview-item is-table"
+            src="/art/mc/crafting-table.png"
+            alt=""
+          />
+          <img
+            className="launch-preview-item is-compass"
+            src="/art/mc/compass.png"
+            alt=""
+          />
+          <img
+            className="launch-preview-item is-result"
+            src="/art/mc/chest.png"
+            alt=""
+          />
         </div>
         {[
           {
-            icon: "notepad_write",
+            icon: "book",
             title: "创建需求单",
             detail: "写下目标、预算和必须满足的条件",
           },
           {
-            icon: "puzzle",
+            icon: "crafting-table",
             title: "拆分模块",
             detail: "确认各部分的职责与依赖",
           },
           {
-            icon: "cards_seek",
+            icon: "compass",
             title: "研究与选型",
             detail: "对照来源，比较候选的得失",
           },
           {
-            icon: "book_open",
+            icon: "chest",
             title: "确认并导出",
             detail: "定下方案，保留证据和修改记录",
           },
@@ -143,7 +168,7 @@ export default function HomePage() {
             </span>
             <span className="launch-step-icon">
               <img
-                src={`/art/kenney/${step.icon}.png`}
+                src={`/art/mc/${step.icon}.png`}
                 alt=""
               />
             </span>

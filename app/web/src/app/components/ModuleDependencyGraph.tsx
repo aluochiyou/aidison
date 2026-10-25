@@ -135,7 +135,7 @@ function buildGraph(modules: Module[]): BuiltGraph {
   return { nodes, edges, canonicalEdges };
 }
 
-/** Use the same licensed module icon as the workbench cards. */
+/** Module nodes use the same item icon as the crafting slots. */
 function ModuleGraphNodeView({ data, selected }: NodeProps<ModuleGraphNode>) {
   const { module, tone, selectionLabel, locked } = data;
   return (
@@ -152,7 +152,7 @@ function ModuleGraphNodeView({ data, selected }: NodeProps<ModuleGraphNode>) {
       <span className={`crafting-graph-node-pixel ${tone}`}>
         <img
           alt=""
-          src="/art/kenney/puzzle.png"
+          src="/art/mc/crafting-table.png"
         />
         {locked ? (
           <LockKeyhole
