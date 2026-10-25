@@ -6,10 +6,15 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
+from httpx import Request, Response
+from openai import APIStatusError
 from pydantic import ValidationError
 
 from aidison.application.conversation import (
+    FALLBACK_BILLING_REPLY,
+    FALLBACK_REPLY,
     ConversationModelResponse,
+    _fallback_reply_for_error,
     _normalize_model_response_payload,
 )
 from aidison.domain.models import (
@@ -25,6 +30,18 @@ from aidison.domain.models import (
     ConversationTurn,
     ConversationTurnRole,
 )
+
+
+def test_billing_failure_has_actionable_safe_conversation_reply() -> None:
+    error = APIStatusError(
+        "provider details must not leak",
+        response=Response(402, request=Request("POST", "https://provider.invalid/chat")),
+        body={"error": "provider details must not leak"},
+    )
+
+    assert _fallback_reply_for_error(error) == FALLBACK_BILLING_REPLY
+    assert "provider details" not in _fallback_reply_for_error(error)
+    assert _fallback_reply_for_error(RuntimeError("unrelated")) == FALLBACK_REPLY
 
 
 class TestConversationSession:

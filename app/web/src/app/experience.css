@@ -281,8 +281,22 @@ textarea:focus-visible {
 }
 .console-body.is-player {
   display: block;
+  position: relative;
   max-width: 1360px;
   padding: 1.25rem;
+}
+/* A small scene in the unused desktop gutter, never over project controls. */
+@media (min-width: 1550px) {
+  .console-body.is-player::after {
+    content: "";
+    position: absolute;
+    top: 255px;
+    left: calc(100% + 6px);
+    width: min(260px, calc(100vw - 1380px));
+    aspect-ratio: 2 / 3;
+    background: url("/art/mc/steve-pig-foreground.png") center / contain no-repeat;
+    pointer-events: none;
+  }
 }
 .workbench {
   background-image: none;

@@ -1,6 +1,6 @@
 # Minecraft-style interface assets
 
-Downloaded from the [Honghe Minecraft icon library](https://honghemc.cn/app/?ver=26.3), as requested by the project owner. These files are used only for the Aidison interface; this note does not claim that the assets are public domain or that Aidison is an official Minecraft product.
+Most assets were downloaded from the [Honghe Minecraft icon library](https://honghemc.cn/app/?ver=26.3), as requested by the project owner. These files are used only for the Aidison interface; this note does not claim that the assets are public domain or that Aidison is an official Minecraft product.
 
 | Local file | Source path |
 | --- | --- |
@@ -15,3 +15,4 @@ Downloaded from the [Honghe Minecraft icon library](https://honghemc.cn/app/?ver
 | `oak-planks.webp` | `https://honghemc.cn/thumbs/textures/oak_planks.png.webp` |
 | `stone.webp` | `https://honghemc.cn/thumbs/textures/stone.png.webp` |
 | `grass-block-side.webp` | `https://honghemc.cn/thumbs/textures/grass_block_side.png.webp` |
+| `steve-pig-foreground.png` | Generated with the built-in image tool for Aidison's project-page decoration; transparent RGBA cutout. |

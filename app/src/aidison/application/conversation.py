@@ -23,6 +23,7 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
+from openai import APIStatusError
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -47,6 +48,16 @@ from aidison.domain.models import (
 _logger = logging.getLogger(__name__)
 
 FALLBACK_REPLY = "抱歉，我暂时无法回复。请稍后再试。"
+FALLBACK_BILLING_REPLY = "当前模型服务余额不足，暂时无法生成回复。请检查模型账户余额后重试。"
+
+
+def _fallback_reply_for_error(error: Exception) -> str:
+    # Never include the provider payload: it may contain account or request details.
+    if isinstance(error, APIStatusError) and error.status_code == 402:
+        return FALLBACK_BILLING_REPLY
+    return FALLBACK_REPLY
+
+
 _MAX_CONTEXT_CHARS = 8_000  # Hard budget per spec; future slice may derive from config
 _MAX_CONTEXT_CANDIDATES = 80  # Bounded candidate ids so payloads reference real ids
 # Two independent questions keep intake conversational while avoiding an
@@ -932,9 +943,15 @@ class ConversationApplication:
                 context_text,
                 content,
             )
-        except Exception:
+        except Exception as error:
             _logger.warning("conversation model call failed", exc_info=True)
-            return await self._write_fallback(store, project_id, session.id, user_turn)
+            return await self._write_fallback(
+                store,
+                project_id,
+                session.id,
+                user_turn,
+                reply=_fallback_reply_for_error(error),
+            )
 
         assistant_turn = await self._persist_model_response(
             store,
@@ -977,6 +994,8 @@ class ConversationApplication:
         project_id: UUID,
         session_id: UUID,
         user_turn: ConversationTurn,
+        *,
+        reply: str = FALLBACK_REPLY,
     ) -> dict[str, Any]:
         await store.lock_conversation_session(session_id)
         existing = await store.get_conversation_reply_to_turn(user_turn.id)
@@ -991,7 +1010,7 @@ class ConversationApplication:
             session_id=session_id,
             sequence=next_seq,
             role=ConversationTurnRole.ASSISTANT,
-            content=FALLBACK_REPLY,
+            content=reply,
             model_profile="fallback",
             turn_type=ConversationTurnType.MESSAGE,
             in_reply_to_turn_id=user_turn.id,
@@ -1397,10 +1416,14 @@ class ConversationApplication:
                 context_text,
                 response,
             )
-        except Exception:
+        except Exception as error:
             _logger.warning("conversation follow-up model call failed", exc_info=True)
             return await self._write_fallback(
-                store, project_id, turn.session_id, resolution_turn
+                store,
+                project_id,
+                turn.session_id,
+                resolution_turn,
+                reply=_fallback_reply_for_error(error),
             )
 
         assistant_turn = await self._persist_model_response(
