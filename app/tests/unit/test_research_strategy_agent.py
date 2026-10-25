@@ -126,7 +126,7 @@ async def test_responses_strategy_planner_requests_closed_json_schema() -> None:
     assert strategy.tasks[0].task_key == "power.constraints"
     request = client.responses.create.await_args.kwargs
     assert request["reasoning"] == {"effort": "high"}
-    assert request["max_output_tokens"] == 12_000
+    assert request["max_output_tokens"] == 32_000
     assert request["text"]["format"]["type"] == "json_schema"
     schema = request["text"]["format"]["schema"]
     assert schema["additionalProperties"] is False

@@ -270,10 +270,11 @@ class ResponsesJsonSchemaResearchStrategyPlanner:
         client: Any,
         model: str,
         timeout_seconds: float,
-        # DeepSeek counts reasoning and visible JSON together.  A deep
-        # hierarchical plan can legitimately need more than 4k before it
-        # reaches the final schema-constrained message.
-        max_output_tokens: int = 12_000,
+        # DeepSeek counts hidden reasoning and visible JSON together. A
+        # hierarchical skeleton across several modules can exhaust 12k before
+        # emitting the schema-constrained object, so planning gets a wider
+        # response window. This is an output/context limit, not a Run budget.
+        max_output_tokens: int = 32_000,
     ) -> None:
         self._client = client
         self._model = model
