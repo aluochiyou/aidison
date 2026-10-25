@@ -652,5 +652,27 @@ def _research_requirement_context(requirement: object) -> tuple[str, ...]:
         ("Available resources", "; ".join(getattr(requirement, "available_resources", ()))),
     )
     return tuple(
-        f"{label}: {text}" for label, text in values if isinstance(text, str) and text.strip()
+        _bounded_coverage_context_line(label=label, text=text)
+        for label, text in values
+        if isinstance(text, str) and text.strip()
     )
+
+
+def _bounded_coverage_context_line(*, label: str, text: str, limit: int = 300) -> str:
+    """Normalize one approved fact into the compiler's closed line contract.
+
+    Requirement goals may legitimately be much larger than the coverage
+    compiler's per-line ceiling (for example public deep-research prompts).
+    The boundary adapter owns that mismatch: it keeps the source label,
+    normalizes whitespace and deterministically truncates the value instead of
+    allowing a Pydantic validation error to escape as HTTP 500.
+    """
+
+    prefix = f"{label}: "
+    normalized = " ".join(text.split())
+    available = limit - len(prefix)
+    if available < 2:
+        raise ValueError("coverage context label leaves no room for a value")
+    if len(normalized) <= available:
+        return prefix + normalized
+    return prefix + normalized[: available - 1].rstrip() + "…"
