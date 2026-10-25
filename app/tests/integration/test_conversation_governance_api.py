@@ -116,13 +116,6 @@ async def test_conversation_rewrite_requirements_accept_creates_unapplied_propos
                 proposed_payload={
                     "goal": "Build a controlled project with explicit safety limits",
                     "hard_constraints": ["Must be safe"],
-                    "modules": [
-                        {
-                            "key": "core",
-                            "name": "Core",
-                            "responsibility": "Core logic",
-                        }
-                    ],
                 },
             )
             async with factory() as session:
@@ -149,6 +142,7 @@ async def test_conversation_rewrite_requirements_accept_creates_unapplied_propos
                 )
                 assert change is not None and change.status.value == "proposed"
                 assert change.target_goal.endswith("explicit safety limits")
+                assert [module.key for module in change.modules] == ["core"]
     finally:
         await engine.dispose()
 

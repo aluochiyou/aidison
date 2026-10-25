@@ -655,7 +655,8 @@ export function ConversationPanel({
                 </p>
               ) : null}
               <div className="proposal-actions">
-                {isRequirementsFormDraft(proposal) ? (
+                {isRequirementsFormDraft(proposal) &&
+                !hasApprovedRequirements ? (
                   onUseRequirementsDraft && proposal.proposed_payload ? (
                     <Button
                       disabled={busy}

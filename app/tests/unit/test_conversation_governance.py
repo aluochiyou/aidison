@@ -153,6 +153,42 @@ async def test_rewrite_requirements_accept_creates_unapplied_proposal() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rewrite_without_modules_preserves_active_blueprint() -> None:
+    store = InMemoryDomainStore()
+    project, conv = await _project_and_conv(store)
+    project, _ = await bootstrap_initial_modules(
+        store=store,
+        application=ProjectApplication(store),
+        project=project,
+        modules=({"key": "core", "name": "Core", "responsibility": "Core logic"},),
+        idempotency_key_prefix="rewrite-preserve-blueprint",
+    )
+    proposal = await _proposal(
+        store,
+        project.id,
+        conv,
+        ConversationActionProposalKind.REWRITE_REQUIREMENTS,
+        {
+            "goal": "A safer rewritten project goal",
+            "hard_constraints": ["Must preserve the current architecture"],
+        },
+    )
+
+    result = await conv.accept_action_proposal(
+        proposal_id=proposal.id,
+        project_id=project.id,
+        expected_project_revision=project.revision,
+    )
+    stored = await store.get_requirements_change_proposal(
+        UUID(result["result_ref"].removeprefix("requirements_change:"))
+    )
+
+    assert stored is not None
+    assert [module.key for module in stored.modules] == ["core"]
+    assert stored.modules[0].responsibility == "Core logic"
+
+
+@pytest.mark.asyncio
 async def test_rewrite_preserves_clarified_context_without_budget_side_effect() -> None:
     store = InMemoryDomainStore()
     project, conv = await _project_and_conv(store)

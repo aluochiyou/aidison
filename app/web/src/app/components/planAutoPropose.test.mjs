@@ -80,7 +80,7 @@ test("对话研究提案也展示服务端冻结的深度默认值", () => {
   assert.ok(conversationSrc.includes("优先官方资料"));
 });
 
-test("缺少模块结构的需求改写只能进入需求单，不能直接接受", () => {
+test("初始需求缺少模块时进入需求单，已有项目则由后端保留现有结构", () => {
   const conversationSrc = readFileSync(
     join(dir, "ConversationPanel.tsx"),
     "utf8"
@@ -90,6 +90,7 @@ test("缺少模块结构的需求改写只能进入需求单，不能直接接�
     conversationSrc.includes("!Array.isArray(modules) || modules.length === 0")
   );
   assert.ok(conversationSrc.includes("使用这份需求草案"));
+  assert.ok(conversationSrc.includes("!hasApprovedRequirements"));
   assert.ok(conversationSrc.includes("这份 AI 草案还缺少可执行字段（422）"));
 });
 

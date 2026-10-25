@@ -10,6 +10,7 @@ import {
   Database,
   FlaskConical,
   GitBranch,
+  RefreshCw,
   Search,
   ShieldCheck,
   Wrench,
@@ -1566,6 +1567,52 @@ function ActionNotice({
   );
 }
 
+function RetryModuleVisualAction({
+  snapshot,
+  onDone,
+}: {
+  snapshot: ProjectSnapshot;
+  onDone: () => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const retry = async () => {
+    setBusy(true);
+    try {
+      await getClient().generateModuleVisuals(
+        snapshot.project.id,
+        snapshot.project.revision
+      );
+      toast.success("新的模块配图任务已提交，旧失败记录会保留用于审计");
+      await onDone();
+    } catch (error) {
+      toast.error(displayError(error, "无法重新生成模块配图"));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="action-block">
+      <div className="action-title">
+        <RefreshCw className={busy ? "h-5 w-5 animate-spin" : "h-5 w-5"} />
+        <div>
+          <small>可恢复任务</small>
+          <h2>重新生成模块配图</h2>
+        </div>
+      </div>
+      <p>
+        当前模块事实不变；系统会创建新的 AgentRun，保留旧失败轨迹，并使用当前配图模型配置重新执行。
+      </p>
+      <Button
+        disabled={busy}
+        onClick={() => void retry()}
+      >
+        {busy ? "正在提交…" : "重新生成配图"}
+      </Button>
+    </div>
+  );
+}
+
 function ClarifyHint({
   onOpenRequirementsForm,
 }: {
@@ -1655,6 +1702,20 @@ function NextAction({
           run.kind === "research" &&
           run.status === "failed"
       );
+      const hasFailedModuleVisualRun = (snapshot.agent_runs ?? []).some(
+        (run) =>
+          run.id === actionSourceId(action, "agent_run") &&
+          run.kind === "module_visual" &&
+          run.status === "failed"
+      );
+      if (hasFailedModuleVisualRun) {
+        return (
+          <RetryModuleVisualAction
+            snapshot={snapshot}
+            onDone={onDone}
+          />
+        );
+      }
       return hasFailedResearchRun ? (
         <ResearchAction
           snapshot={snapshot}

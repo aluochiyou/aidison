@@ -415,6 +415,81 @@ def _evidence_claims(
 
 
 @pytest.mark.asyncio
+async def test_module_visual_attempt_is_idempotent_and_can_be_retried(
+    tmp_path: Path,
+) -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE projects CASCADE"))
+            await session.commit()
+        key = str(uuid4())
+        api = create_app(
+            factory,
+            artifact_root=tmp_path,
+            module_discovery_model_factory=_module_discovery_model,
+        )
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=api), base_url="http://test"
+        ) as client:
+            created = await client.post(
+                "/api/projects",
+                json={"name": "Visual retry fixture", "goal": "Render one module"},
+                headers={"Idempotency-Key": f"{key}:project"},
+            )
+            project_id = created.json()["id"]
+            requirements = await client.post(
+                f"/api/projects/{project_id}/requirements",
+                json={"goal": "Render one approved module"},
+                headers={"Idempotency-Key": f"{key}:requirements", "If-Match": '"1"'},
+            )
+            assert requirements.status_code == 200, requirements.text
+            discovery = await client.post(
+                f"/api/projects/{project_id}/module-discovery",
+                headers={"Idempotency-Key": f"{key}:discover", "If-Match": '"2"'},
+            )
+            assert discovery.status_code == 201, discovery.text
+            applied = await client.post(
+                f"/api/reshape-proposals/{discovery.json()['reshape_proposal']['id']}/resolve",
+                json={"decision": "applied"},
+                headers={"Idempotency-Key": f"{key}:apply", "If-Match": '"2"'},
+            )
+            assert applied.status_code == 200, applied.text
+
+            first_headers = {
+                "Idempotency-Key": f"{key}:visual:first",
+                "If-Match": '"3"',
+            }
+            first = await client.post(
+                f"/api/projects/{project_id}/module-visuals", headers=first_headers
+            )
+            replay = await client.post(
+                f"/api/projects/{project_id}/module-visuals", headers=first_headers
+            )
+            retry = await client.post(
+                f"/api/projects/{project_id}/module-visuals",
+                headers={
+                    "Idempotency-Key": f"{key}:visual:retry",
+                    "If-Match": '"3"',
+                },
+            )
+
+            assert first.status_code == replay.status_code == retry.status_code == 202
+            assert first.json()["agent_run"]["id"] == replay.json()["agent_run"]["id"]
+            assert first.json()["agent_run"]["id"] != retry.json()["agent_run"]["id"]
+            assert (
+                first.json()["agent_run"]["basis_hash"]
+                == retry.json()["agent_run"]["basis_hash"]
+            )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_default_research_run_blocks_before_model_when_no_source_adapter_is_configured(
     tmp_path: Path,
 ) -> None:

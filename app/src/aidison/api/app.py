@@ -2052,6 +2052,7 @@ def create_app(
     async def generate_module_visuals(
         project_id: UUID,
         if_match: IfMatch,
+        idempotency_key: IdempotencyKey,
         response: Response,
         session: DbSession,
     ) -> dict[str, Any]:
@@ -2064,6 +2065,7 @@ def create_app(
         ).enqueue_module_visual_run(
             project_id=project_id,
             expected_project_revision=revision,
+            idempotency_key=idempotency_key,
             runtime_binding=DEFAULT_MODULE_VISUAL_RUNTIME_BINDING,
         )
         response.headers["ETag"] = f'"{revision}"'

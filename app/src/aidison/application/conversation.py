@@ -1799,13 +1799,40 @@ class ConversationApplication:
         payload = proposal.proposed_payload or {}
 
         if proposal.kind is ConversationActionProposalKind.REWRITE_REQUIREMENTS:
-            if not {"goal", "modules"}.issubset(set(payload)):
-                raise ConversationConflictError(
-                    "rewrite_requirements payload missing goal or modules"
-                )
+            if "goal" not in payload:
+                raise ConversationConflictError("rewrite_requirements payload missing goal")
             project = await store.get_project(project_id)
             if project is None:
                 raise ConversationConflictError("project not found")
+            raw_modules = payload.get("modules")
+            if raw_modules is None:
+                # A requirements-only rewrite is allowed to omit module text.
+                # Preserve the currently approved blueprint deterministically;
+                # never ask the model to reconstruct it from prose.
+                active_modules = await app._active_modules(project)
+                key_by_id = {module.id: module.key for module in active_modules}
+                proposed_modules = tuple(
+                    ProposedModule(
+                        key=module.key,
+                        name=module.name,
+                        responsibility=module.responsibility,
+                        dependency_keys=tuple(
+                            key_by_id[dependency_id]
+                            for dependency_id in module.dependency_ids
+                        ),
+                        acceptance=module.acceptance,
+                        open_questions=module.open_questions,
+                    )
+                    for module in active_modules
+                )
+                if not proposed_modules:
+                    raise ConversationConflictError(
+                        "rewrite_requirements without modules requires an active blueprint"
+                    )
+            else:
+                proposed_modules = tuple(
+                    ProposedModule.model_validate(item) for item in raw_modules
+                )
             change = await app.propose_requirements_change(
                 proposal=RequirementsChangeProposal(
                     project_id=project_id,
@@ -1823,9 +1850,7 @@ class ConversationApplication:
                     skill_context=str(payload.get("skill_context", "") or ""),
                     unknowns=tuple(payload.get("unknowns", ())),
                     summary=str(payload.get("summary") or proposal.summary),
-                    modules=tuple(
-                        ProposedModule.model_validate(item) for item in payload["modules"]
-                    ),
+                    modules=proposed_modules,
                 ),
                 expected_project_revision=expected_project_revision,
                 idempotency_key=f"conv-reqchange:{proposal.id}",
@@ -2080,15 +2105,18 @@ class ConversationApplication:
         payload = proposal.proposed_payload or {}
 
         if kind is ConversationActionProposalKind.REWRITE_REQUIREMENTS:
-            required = {"goal", "modules"}
+            required = {"goal"}
             if not required <= set(payload):
-                raise ValueError("rewrite_requirements requires goal and modules in payload")
+                raise ValueError("rewrite_requirements requires goal in payload")
             if not isinstance(payload["goal"], str) or not payload["goal"].strip():
                 raise ValueError("rewrite_requirements goal must be a non-empty string")
-            if not isinstance(payload["modules"], (list, tuple)) or not payload["modules"]:
-                raise ValueError("rewrite_requirements modules must be a non-empty list")
-            for module in payload["modules"]:
-                ProposedModule.model_validate(module)
+            if "modules" in payload:
+                if not isinstance(payload["modules"], (list, tuple)) or not payload[
+                    "modules"
+                ]:
+                    raise ValueError("rewrite_requirements modules must be a non-empty list")
+                for module in payload["modules"]:
+                    ProposedModule.model_validate(module)
             for field in ("usage_context", "budget_context", "skill_context"):
                 value = payload.get(field)
                 if value is not None and (not isinstance(value, str) or len(value) > 4_000):

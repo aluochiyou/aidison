@@ -438,9 +438,14 @@ class AgentRunApplication:
         *,
         project_id: UUID,
         expected_project_revision: int,
+        idempotency_key: str,
         runtime_binding: RuntimeBinding = DEFAULT_MODULE_VISUAL_RUNTIME_BINDING,
     ) -> AgentRun:
-        """Queue one idempotent visual Agent for the active module blueprint."""
+        """Queue one idempotent visual Agent attempt for the active blueprint.
+
+        Reusing the caller key returns the same Run, while a deliberate retry
+        uses a new key and therefore never mutates the failed historical Run.
+        """
 
         project = await self._store.get_project(project_id)
         if project is None:
@@ -453,7 +458,11 @@ class AgentRunApplication:
         if not modules:
             raise DomainConflictError("module visuals require active modules")
         basis_hash = canonical_hash("module_visual", project.active_blueprint_id, modules)
-        key = f"module-visual-blueprint:{project.active_blueprint_id}"
+        request_hash = canonical_hash("module_visual_request", idempotency_key)[:24]
+        key = (
+            f"module-visual-blueprint:{project.active_blueprint_id}:"
+            f"request:{request_hash}"
+        )
         run_id = uuid5(NAMESPACE_URL, f"aidison://agent-run/{key}")
         run = AgentRun(
             id=run_id,
