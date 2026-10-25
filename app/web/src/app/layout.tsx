@@ -3,7 +3,6 @@ import { Toaster } from "sonner";
 import { AuthGate } from "@/app/components/AuthGate";
 import "./globals.css";
 import "./views.css";
-import "./minecraft.css";
 import "./experience.css";
 
 export default function RootLayout({

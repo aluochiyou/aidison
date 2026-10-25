@@ -24,7 +24,16 @@ export default function HomePage() {
   const [restoringProject, setRestoringProject] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [showSelector, setShowSelector] = useState(false);
+  const [playWorldIntro, setPlayWorldIntro] = useState(false);
   const { createProject, loadProject, loading, error } = useProjects();
+
+  useEffect(() => {
+    setPlayWorldIntro(
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
+        !(navigator as Navigator & { connection?: { saveData?: boolean } })
+          .connection?.saveData
+    );
+  }, []);
 
   useEffect(() => {
     const projectId = new URLSearchParams(window.location.search).get(
@@ -71,6 +80,19 @@ export default function HomePage() {
 
   return (
     <main className="launch-shell">
+      <div className="launch-scene" aria-hidden="true">
+        {playWorldIntro ? (
+          <video
+            autoPlay
+            muted
+            playsInline
+            preload="metadata"
+            poster="/art/mc/village-55412.webp"
+          >
+            <source src="/art/mc/village-intro-55412.webm" type="video/webm" />
+          </video>
+        ) : null}
+      </div>
       <section className="launch-copy">
         <div className="launch-kicker">
           <span className="status-lamp" />

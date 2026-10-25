@@ -10,3 +10,8 @@ Downloaded from the [Honghe Minecraft icon library](https://honghemc.cn/app/?ver
 | `chest.png` | `/images/20.%20Blocks/33.%20Workplaces/Chest.png` |
 | `crafting-gui.png` | `/images/75.%24%20GUI/crafting_table.png` |
 | `allay.webp` | `/images/15.%24%20Mobs/1.%20Passive/Allay.webp` |
+| `village-55412.webp` | [视频底图：平原村庄，seed 55412，导出 WebP](https://honghemc.cn/app/textures.html?seed=55412&scene=village&fmt=WEBP) |
+| `village-intro-55412.webm` | [视频底图：平原村庄，seed 55412，720p，入场层层堆叠、无出场](https://honghemc.cn/app/textures.html?seed=55412&scene=village&res=720p&outro=none) |
+| `oak-planks.webp` | `https://honghemc.cn/thumbs/textures/oak_planks.png.webp` |
+| `stone.webp` | `https://honghemc.cn/thumbs/textures/stone.png.webp` |
+| `grass-block-side.webp` | `https://honghemc.cn/thumbs/textures/grass_block_side.png.webp` |
