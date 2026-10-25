@@ -54,6 +54,7 @@ from aidison.research.adaptive_planning import (
     AdaptivePlanningInput,
     AdaptivePlanningPolicy,
     VerifierRoutingInput,
+    VerifierRoutingPolicy,
     build_bounded_gap_patch,
     route_verifier_tasks,
 )
@@ -1549,6 +1550,11 @@ class ResearchRunExecutor:
                 snapshot=snapshot,
                 allowed_tool_ids=self._source_tool_ids,
                 budget_ref=f"budget://agent-run/{run.id}",
+                # Verification is explicitly approved with the module plan.
+                # Keep the router bounded by that approved scope instead of a
+                # fixed global value that rejects otherwise valid projects
+                # containing more than four modules.
+                policy=VerifierRoutingPolicy(max_verifier_tasks=len(modules)),
             )
         )
         if not route.tasks:

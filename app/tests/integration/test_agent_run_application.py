@@ -1364,7 +1364,7 @@ async def test_research_run_executes_one_bounded_gap_patch_before_waiting_for_de
 async def test_user_authorized_independent_research_verifier_is_admitted_before_decision(
     tmp_path: Path,
 ) -> None:
-    """The extra model call is opt-in, isolated, admitted, and retained as evidence."""
+    """Every approved module can receive an isolated admitted verifier task."""
 
     database_url = os.getenv("TEST_DATABASE_URL")
     if database_url is None:
@@ -1380,15 +1380,16 @@ async def test_user_authorized_independent_research_verifier_is_admitted_before_
             factory,
             artifact_root=tmp_path,
             module_discovery_model_factory=lambda: _module_discovery_model(
-                (
+                tuple(
                     {
-                        "key": "drive",
-                        "name": "Drive",
-                        "responsibility": "Choose a safe motor characteristic",
+                        "key": f"module_{index}",
+                        "name": f"Module {index}",
+                        "responsibility": f"Choose a safe characteristic for module {index}",
                         "acceptance": (
                             "Identify an external documented electrical characteristic.",
                         ),
-                    },
+                    }
+                    for index in range(1, 6)
                 )
             ),
             research_strategy_model_factory=_research_strategy_model,
@@ -1472,7 +1473,9 @@ async def test_user_authorized_independent_research_verifier_is_admitted_before_
         assert execution is not None
         assert execution.readiness == "ready"
         assert execution.agent_decision is not None
-        assert researcher.call_count == 2
+        # Five primary tasks plus five independent verifier tasks. This
+        # guards against the former fixed four-verifier routing ceiling.
+        assert researcher.call_count == 10
         async with factory() as session:
             run = await AgentRunControl(session).get(run_id)
             assert run is not None and run.status.value == "waiting"
