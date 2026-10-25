@@ -293,7 +293,7 @@ def test_run_contract_rejects_strategy_scope_that_differs_from_frozen_scope() ->
         )
 
 
-def test_initial_task_token_caps_are_deterministic_and_do_not_favor_completion_order() -> None:
+def test_initial_task_token_caps_are_sized_from_bounded_concurrency() -> None:
     basis_hash = _hash("fair-budget")
     run_id = uuid4()
     task_a = TaskEnvelope(
@@ -319,9 +319,46 @@ def test_initial_task_token_caps_are_deterministic_and_do_not_favor_completion_o
     caps = ResearchRunExecutor._allocate_initial_task_token_caps(
         tasks=(task_c, task_a, task_b),
         max_token_budget=10,
+        max_concurrency=2,
     )
 
-    assert caps == {task_a.id: 4, task_b.id: 3, task_c.id: 3}
+    assert caps == {task_a.id: 5, task_b.id: 5, task_c.id: 5}
+
+
+def test_initial_task_token_caps_preserve_the_run_ceiling_across_active_slots() -> None:
+    basis_hash = _hash("concurrency-budget")
+    run_id = uuid4()
+    first = TaskEnvelope(
+        run_id=run_id,
+        task_key="research.first",
+        basis_hash=basis_hash,
+        plan_revision=1,
+        capability="research",
+        input_refs=(),
+        dependency_task_ids=(),
+        coverage_keys=("first",),
+        allowed_tool_ids=(),
+        budget_ref=f"budget://agent-run/{run_id}",
+        idempotency_key="first",
+    )
+    tasks = tuple(
+        first.model_copy(
+            update={
+                "id": uuid4(),
+                "task_key": f"research.task-{index}",
+                "idempotency_key": f"task-{index}",
+            }
+        )
+        for index in range(16)
+    )
+
+    caps = ResearchRunExecutor._allocate_initial_task_token_caps(
+        tasks=tasks,
+        max_token_budget=128_000,
+        max_concurrency=8,
+    )
+
+    assert set(caps.values()) == {16_000}
 
 
 @pytest.mark.parametrize(

@@ -562,6 +562,7 @@ class ResearchRunExecutor:
             model_token_caps = self._allocate_initial_task_token_caps(
                 tasks=tasks,
                 max_token_budget=max_token_budget,
+                max_concurrency=max_concurrency,
             )
             graph = build_admitted_ready_set_graph(
                 checkpointer=self._checkpointer,
@@ -691,26 +692,29 @@ class ResearchRunExecutor:
         *,
         tasks: tuple[TaskEnvelope, ...],
         max_token_budget: int,
+        max_concurrency: int,
     ) -> dict[UUID, int]:
-        """Divide the approved initial-call budget deterministically.
+        """Assign one deterministic token slice to each active concurrency slot.
 
-        Parallel branches cannot reserve a first-completion-wins share.  The
-        deterministic initial allocation leaves any settled remainder for
-        later bounded gap/verification tasks, which continue to use the
-        ledger's actual remaining balance.
+        Dividing the Run ceiling by every task makes a large DAG artificially
+        shrink each model call even though only a bounded ready set can execute
+        at once.  Divide by the maximum number of simultaneous branches
+        instead.  Every task receives the same per-call ceiling, while the
+        durable ledger remains the authority that prevents all waves together
+        from exceeding the approved Run budget.
         """
 
         if max_token_budget < 1:
             raise ValueError("max_token_budget must be positive")
+        if max_concurrency < 1:
+            raise ValueError("max_concurrency must be positive")
         if not tasks:
             return {}
-        if max_token_budget < len(tasks):
+        active_slots = min(max_concurrency, len(tasks))
+        if max_token_budget < active_slots:
             raise ResearchContextBudgetError("research_initial_task_budget_is_insufficient")
-        ordered = tuple(sorted(tasks, key=lambda item: (item.task_key, str(item.id))))
-        base, remainder = divmod(max_token_budget, len(ordered))
-        return {
-            task.id: base + (1 if index < remainder else 0) for index, task in enumerate(ordered)
-        }
+        per_call_cap = max_token_budget // active_slots
+        return {task.id: per_call_cap for task in tasks}
 
     @staticmethod
     def _build_module_tasks(
