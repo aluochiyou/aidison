@@ -143,14 +143,6 @@ function humanizeActionTitle(kind: string, title: string): string {
   return labels[kind] ?? title;
 }
 
-/** 把后端的开发黑话错误说明，替换成用户可理解的提示。 */
-function humanizeActionExplanation(kind: string, explanation: string): string {
-  if (kind === "inspect_failure") {
-    return "AI 在查找资料时遇到问题，这次没有写入任何修改。你可以查看工作记录了解详情，或重新发起。";
-  }
-  return explanation;
-}
-
 const TOOL_CLASS_LABELS: Record<string, string> = {
   web_search: "网页搜索",
   github_read: "GitHub 读取",
@@ -1553,7 +1545,7 @@ function ActionNotice({
       </div>
       <p>
         {action
-          ? humanizeActionExplanation(action.kind, action.explanation)
+          ? action.explanation
           : "当前没有可安全执行的下一步，请刷新项目状态。"}
       </p>
       {action ? (
@@ -1657,7 +1649,10 @@ function NextAction({
       // 失败的 research run 已经具备 successor/retry 入口时，复用研究操作面板。
       // 只有没有可重试的 research run 时，才退回审计提示。
       const hasFailedResearchRun = (snapshot.agent_runs ?? []).some(
-        (run) => run.kind === "research" && run.status === "failed"
+        (run) =>
+          run.id === actionSourceId(action, "agent_run") &&
+          run.kind === "research" &&
+          run.status === "failed"
       );
       return hasFailedResearchRun ? (
         <ResearchAction
@@ -1995,6 +1990,10 @@ export function ProjectConsole({
   const [consolePage, setConsolePage] = useState<"activity" | "workbench">(
     "activity"
   );
+  const [sceneCue, setSceneCue] = useState<{
+    kind: "explore" | "craft" | "inspect";
+    sequence: number;
+  }>({ kind: "explore", sequence: 0 });
   const [requirementsDraft, setRequirementsDraft] = useState<Record<
     string,
     unknown
@@ -2084,7 +2083,24 @@ export function ProjectConsole({
   }
 
   return (
-    <main className="console-shell">
+    <main
+      className="console-shell"
+      onClickCapture={(event) => {
+        const button = (event.target as HTMLElement).closest("button");
+        if (!button || button.disabled) return;
+        const kind =
+          button.dataset.worldAction === "craft"
+            ? "craft"
+            : button.dataset.worldAction === "explore"
+            ? "explore"
+            : button.closest(".module-board")
+            ? "inspect"
+            : button.closest(".workbench-primary-action, .crafting-workbench")
+            ? "craft"
+            : "explore";
+        setSceneCue((previous) => ({ kind, sequence: previous.sequence + 1 }));
+      }}
+    >
       <ProjectConsoleHeader
         project={project}
         connected={connected}
@@ -2098,7 +2114,21 @@ export function ProjectConsole({
         className={`console-body ${
           developerMode ? "is-developer" : "is-player"
         }`}
+        data-scene-cue={sceneCue.kind}
       >
+        <div
+          className="console-world"
+          aria-hidden="true"
+        >
+          <span
+            className="console-world-beam"
+            key={sceneCue.sequence}
+          />
+          <span
+            className="console-world-characters"
+            key={`characters-${sceneCue.sequence}`}
+          />
+        </div>
         {/* 作品与模块的日常操作集中在像素工程台；传统模块列表只在开发者模式保留。 */}
         {developerMode ? (
           <aside className="module-board">
@@ -2135,6 +2165,11 @@ export function ProjectConsole({
           <div className="goal-strip">
             <span>项目目标</span>
             <p>{project.goal}</p>
+            <i
+              className="goal-mascot"
+              key={sceneCue.sequence}
+              aria-hidden="true"
+            />
           </div>
 
           <div
@@ -2144,6 +2179,7 @@ export function ProjectConsole({
           >
             <button
               className={consolePage === "activity" ? "is-active" : ""}
+              data-world-action="explore"
               aria-pressed={consolePage === "activity"}
               onClick={() => setConsolePage("activity")}
               type="button"
@@ -2152,6 +2188,7 @@ export function ProjectConsole({
             </button>
             <button
               className={consolePage === "workbench" ? "is-active" : ""}
+              data-world-action="craft"
               aria-pressed={consolePage === "workbench"}
               onClick={() => setConsolePage("workbench")}
               type="button"
@@ -2355,7 +2392,13 @@ export function ProjectConsole({
                     <StatusTag status={item.state} />
                   </div>
                   <p>
-                    {item.total_units
+                    {item.kind !== "research"
+                      ? item.state === "failed"
+                        ? "这项工作未完成，请查看失败原因"
+                        : item.state === "succeeded"
+                        ? "已完成"
+                        : "正在处理"
+                      : item.total_units
                       ? `${item.completed_units} / ${item.total_units} 个子任务证据完成`
                       : "正在准备工作范围"}
                   </p>

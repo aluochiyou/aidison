@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const runCenterSrc = readFileSync(join(dir, "RunCenter.tsx"), "utf8");
+const projectConsoleSrc = readFileSync(join(dir, "ProjectConsole.tsx"), "utf8");
 const apiSrc = readFileSync(join(dir, "../../lib/api.ts"), "utf8");
 
 test("运行中心接入唯一的暂停、继续与运行态引导 API", () => {
@@ -24,4 +25,11 @@ test("没有全模块已准入证据的研究预览不能被采纳", () => {
     runCenterSrc.includes("!decision.proposal_preview?.adoption_allowed")
   );
   assert.ok(runCenterSrc.includes("证据不足，无法采纳"));
+});
+
+test("失败任务只按当前 AgentRun 选择操作面板", () => {
+  assert.ok(
+    projectConsoleSrc.includes('run.id === actionSourceId(action, "agent_run")')
+  );
+  assert.ok(projectConsoleSrc.includes("action.explanation"));
 });

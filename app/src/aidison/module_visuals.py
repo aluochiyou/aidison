@@ -63,6 +63,17 @@ class ModuleVisualSettings(AidisonSettings):
         return value
 
 
+def _visual_failure_code(error: Exception) -> str:
+    """Keep provider details out of persisted user-facing failure state."""
+
+    status_code = getattr(error, "status_code", None)
+    if status_code in {401, 403}:
+        return "module_visual_auth_failed"
+    if status_code in {402, 429}:
+        return "module_visual_quota_unavailable"
+    return "module_visual_generation_failed"
+
+
 class ModuleVisualInput(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -297,11 +308,13 @@ class ModuleVisualRunExecutor:
                 initial: ModuleVisualGraphState = {"run_id": str(run.id)}
                 result = await graph.ainvoke(initial, config)
                 return dict(result)
-        except Exception:
+        except Exception as error:
             async with session_scope(self._session_factory) as session:
                 try:
                     await AgentRunControl(session).complete(
-                        claim=claim, status=AgentRunStatus.FAILED
+                        claim=claim,
+                        status=AgentRunStatus.FAILED,
+                        failure_code=_visual_failure_code(error),
                     )
                 except Exception:
                     pass

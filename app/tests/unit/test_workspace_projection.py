@@ -159,6 +159,31 @@ def test_workspace_research_progress_is_read_only_projection_of_plan_and_admissi
     assert work.partial_units == 2
 
 
+def test_workspace_module_visual_failure_is_not_presented_as_research_failure() -> None:
+    projection = build_workspace_projection(
+        _snapshot(
+            active_blueprint_id="blueprint-1",
+            agent_runs=[
+                {
+                    "id": "visual-run-1",
+                    "kind": "module_visual",
+                    "status": "failed",
+                    "created_at": "2026-08-07T00:00:00Z",
+                    "updated_at": "2026-08-07T00:01:00Z",
+                    "completed_at": "2026-08-07T00:01:00Z",
+                }
+            ],
+        ),
+        event_cursor=3,
+        generated_at=NOW,
+    )
+
+    assert projection.work[0].user_label == "绘制模块配图"
+    assert projection.next_actions[0].kind == "inspect_failure"
+    assert "模块配图未生成" in projection.next_actions[0].explanation
+    assert "重新发起研究" not in projection.next_actions[0].explanation
+
+
 def test_workspace_projection_presents_pending_requirements_change() -> None:
     projection = build_workspace_projection(
         _snapshot(

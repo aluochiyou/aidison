@@ -11,8 +11,20 @@ from aidison.module_visuals import (
     ModuleVisualSettings,
     ModuleVisualSpec,
     QwenModuleVisualProvider,
+    _visual_failure_code,
     render_module_visual_svg,
 )
+
+
+def test_module_visual_failure_codes_do_not_persist_provider_messages() -> None:
+    auth_error = type("ProviderAuthError", (Exception,), {"status_code": 401})()
+    quota_error = type("ProviderQuotaError", (Exception,), {"status_code": 429})()
+    assert _visual_failure_code(auth_error) == "module_visual_auth_failed"
+    assert _visual_failure_code(quota_error) == "module_visual_quota_unavailable"
+    assert (
+        _visual_failure_code(RuntimeError("private provider detail"))
+        == "module_visual_generation_failed"
+    )
 
 
 def test_module_visual_svg_is_rendered_only_from_validated_safe_scalars() -> None:

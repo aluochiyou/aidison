@@ -429,15 +429,26 @@ async def _agent_run_failure_summaries(
         )
     )
     summaries: dict[UUID, str] = {}
+    visual_failure_labels = {
+        "module_visual_auth_failed": "模块配图模型认证失败，请检查配图服务的 API Key。",
+        "module_visual_quota_unavailable": "模块配图模型额度或限流不可用，请检查额度后再试。",
+        "module_visual_generation_failed": "模块配图生成失败，请查看运行记录。",
+    }
     for row in rows:
         payload = row.payload if isinstance(row.payload, dict) else {}
+        nested_run = payload.get("run")
+        raw_run_id = payload.get("agent_run_id")
+        if raw_run_id is None and isinstance(nested_run, dict):
+            raw_run_id = nested_run.get("id")
         try:
-            run_id = UUID(str(payload.get("agent_run_id", "")))
+            run_id = UUID(str(raw_run_id or ""))
         except (TypeError, ValueError):
             continue
         summary = payload.get("failure_summary")
         if run_id in run_ids and isinstance(summary, str) and summary.strip():
             summaries[run_id] = summary.strip()[:500]
+        elif run_id in run_ids and payload.get("failure_code") in visual_failure_labels:
+            summaries[run_id] = visual_failure_labels[payload["failure_code"]]
     return summaries
 
 

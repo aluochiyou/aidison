@@ -166,6 +166,7 @@ def _agent_run_work_summaries(
         "research": "查找并核对资料",
         "solution": "整理可执行方案",
         "impact": "分析现场变化",
+        "module_visual": "绘制模块配图",
     }
     summaries: list[WorkspaceWorkSummary] = []
     for run in ordered_runs:
@@ -573,16 +574,25 @@ def build_workspace_projection(
             affected_module_ids=latest_work.affected_module_ids,
             source_refs=refs,
         )
+        if latest_work.kind == "module_visual":
+            failure_explanation = (
+                "模块配图未生成，原有模块和研究结果没有被改写。"
+                "请在工作记录中查看原因，并检查配图模型的配置与额度。"
+            )
+            safe_action = "查看配图任务记录"
+        else:
+            failure_explanation = (
+                "研究运行失败，项目事实没有被改写。工作记录会展示覆盖缺口和未准入论断；"
+                "你可以核对后重新发起研究。"
+            )
+            safe_action = "查看工作记录或重新发起研究"
         actions = (
             _action(
                 kind="inspect_failure",
                 subject_id=latest_work.run_id,
                 title="查看失败原因",
-                explanation=(
-                    "研究运行失败，项目事实没有被改写。工作记录会展示覆盖缺口和未准入论断；"
-                    "你可以核对后重新发起研究。"
-                ),
-                safe_action="查看工作记录或重新发起研究",
+                explanation=failure_explanation,
+                safe_action=safe_action,
                 source_refs=refs,
             ),
         )

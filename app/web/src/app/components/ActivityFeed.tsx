@@ -256,7 +256,11 @@ export function ActivityFeed({
                   ? "分析影响"
                   : work.user_label || work.kind);
               const progress =
-                work.total_units > 0
+                work.kind !== "research"
+                  ? work.state === "succeeded"
+                    ? 100
+                    : null
+                  : work.total_units > 0
                   ? Math.round((work.completed_units / work.total_units) * 100)
                   : work.state === "succeeded"
                   ? 100
@@ -271,7 +275,13 @@ export function ActivityFeed({
                   <div className="activity-work-main">
                     <strong>{label}</strong>
                     <span>
-                      {work.total_units > 0
+                      {work.kind !== "research"
+                        ? work.state === "succeeded"
+                          ? "已完成"
+                          : work.state === "failed"
+                          ? "需要检查"
+                          : "进行中"
+                        : work.total_units > 0
                         ? `${work.completed_units}/${work.total_units} 完成`
                         : work.state === "succeeded"
                         ? "已完成"
