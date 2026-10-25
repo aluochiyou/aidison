@@ -175,6 +175,7 @@ class AgentRunApplication:
             tool_call_cap=compile_research_tool_call_cap(
                 execution_policy=execution_policy,
                 requires_independent_verification=plan.requires_independent_verification,
+                strategy_task_count=len(strategy.tasks),
             ),
         )
         run_contract = ResearchRunContract(

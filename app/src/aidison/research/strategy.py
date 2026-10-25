@@ -126,11 +126,33 @@ def compile_research_tool_call_cap(
     *,
     execution_policy: ResearchExecutionPolicy,
     requires_independent_verification: bool,
+    strategy_task_count: int = 0,
 ) -> int:
-    """Reserve the complete source budget, including an independent verifier pass."""
+    """Reserve source calls for both policy breadth and the compiled task DAG.
+
+    A fixed depth-level allowance is insufficient when the approved strategy
+    contains many independent tasks: every task can execute its own bounded
+    search/read sequence.  Compile the larger of the policy floor and the DAG
+    worst case, while retaining the global hard ceiling.
+    """
+
+    if strategy_task_count < 0:
+        raise ValueError("strategy_task_count must be nonnegative")
 
     multiplier = 2 if requires_independent_verification else 1
-    return min(128, execution_policy.max_trusted_source_collection_calls * multiplier)
+    policy_floor = execution_policy.max_trusted_source_collection_calls * multiplier
+    task_bound = strategy_task_count * _maximum_source_calls_per_task(execution_policy)
+    return min(128, max(policy_floor, task_bound))
+
+
+def _maximum_source_calls_per_task(execution_policy: ResearchExecutionPolicy) -> int:
+    collection = execution_policy.collection
+    # Search and reader calls are separate physical effects for providers such
+    # as Tavily + Firecrawl. Deep mode keeps provider breadth open, so use a
+    # conservative bounded ceiling instead of pretending it is unbounded.
+    if collection.max_queries is None or collection.max_documents_total is None:
+        return 8
+    return collection.max_queries + collection.max_documents_total
 
 
 class ResearchRunContract(FrozenModel):

@@ -369,3 +369,23 @@ def test_tool_call_cap_reserves_a_complete_independent_verifier_pass(
         execution_policy=policy,
         requires_independent_verification=True,
     ) == with_verifier
+
+
+def test_tool_call_cap_covers_compiled_strategy_dag_worst_case() -> None:
+    policy = compile_research_execution_policy(research_depth="standard")
+
+    assert compile_research_tool_call_cap(
+        execution_policy=policy,
+        requires_independent_verification=True,
+        strategy_task_count=16,
+    ) == 96
+
+
+def test_tool_call_cap_keeps_global_ceiling_for_large_deep_strategy() -> None:
+    policy = compile_research_execution_policy(research_depth="deep")
+
+    assert compile_research_tool_call_cap(
+        execution_policy=policy,
+        requires_independent_verification=True,
+        strategy_task_count=64,
+    ) == 128
