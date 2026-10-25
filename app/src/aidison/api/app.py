@@ -6,7 +6,7 @@ import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, cast
@@ -1023,26 +1023,59 @@ def create_app(
     async def integration_health(request: Request) -> dict[str, Any]:
         provider = getattr(request.app.state, "shopping_provider", None)
         if provider is None:
-            return {
-                "status": "ok",
-                "shopping": {
-                    "provider": "none",
-                    "available": False,
-                    "search": False,
-                    "handoff_kinds": [],
-                },
+            shopping = {
+                "provider": "none",
+                "available": False,
+                "search": False,
+                "handoff_kinds": [],
             }
-        capabilities = provider.capabilities
-        return {
-            "status": "ok",
-            "shopping": {
+        else:
+            capabilities = provider.capabilities
+            shopping = {
                 "provider": provider.name,
                 "available": provider.available,
                 # Search-only providers (e.g. Taobao) declare search with an
                 # empty handoff_kinds; cart-capable providers list their kinds.
                 "search": capabilities.search,
-                "handoff_kinds": sorted(kind.value for kind in capabilities.handoff_kinds),
-            },
+                "handoff_kinds": sorted(
+                    kind.value for kind in capabilities.handoff_kinds
+                ),
+            }
+
+        tracer = cast(RuntimeTracer, request.app.state.runtime_tracer)
+        langfuse = dict(tracer.health_snapshot())
+        langfuse_reachable: bool | None = None
+        langfuse_status = "disabled"
+        errors: list[dict[str, str]] = []
+        if tracer.enabled:
+            try:
+                langfuse_reachable = await asyncio.wait_for(
+                    asyncio.to_thread(tracer.probe_connection),
+                    timeout=4.0,
+                )
+            except TimeoutError:
+                langfuse_reachable = False
+            langfuse_status = "healthy" if langfuse_reachable else "degraded"
+            if not langfuse_reachable:
+                errors.append(
+                    {
+                        "code": "LANGFUSE_UNREACHABLE",
+                        "severity": "warning",
+                        "message": "Langfuse 凭据验证或网络连接失败，业务运行不受影响。",
+                    }
+                )
+        langfuse.update(
+            {
+                "status": langfuse_status,
+                "reachable": langfuse_reachable,
+            }
+        )
+        return {
+            "status": "degraded" if errors else "ok",
+            "shopping": shopping,
+            "langfuse": langfuse,
+            "last_checked_at": datetime.now(UTC).isoformat(),
+            "errors": errors,
         }
 
     # ── Helper ─────────────────────────────────────────────────────

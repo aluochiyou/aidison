@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
 from threading import RLock
 from typing import Any, Literal, Protocol
+from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from langchain_core.callbacks import BaseCallbackHandler
@@ -108,6 +109,10 @@ class RuntimeTracer(Protocol):
 
     def flush(self) -> None: ...
 
+    def health_snapshot(self) -> dict[str, _TraceScalar]: ...
+
+    def probe_connection(self) -> bool: ...
+
 
 class _NoopTraceSpan(AbstractContextManager[None]):
     def __enter__(self) -> None:
@@ -136,6 +141,18 @@ class DisabledRuntimeTracer:
 
     def flush(self) -> None:
         return None
+
+    def health_snapshot(self) -> dict[str, _TraceScalar]:
+        return {
+            "enabled": False,
+            "configured": False,
+            "endpoint": None,
+            "environment": None,
+            "release": None,
+        }
+
+    def probe_connection(self) -> bool:
+        return False
 
 
 class _LangfuseTraceSpan(AbstractContextManager[None]):
@@ -290,6 +307,28 @@ class LangfuseRuntimeTracer:
                 client.flush()
         except Exception:
             return None
+
+    def health_snapshot(self) -> dict[str, _TraceScalar]:
+        """Return only non-secret deployment metadata for the developer UI."""
+
+        parsed = urlsplit(self._base_url)
+        endpoint = parsed.netloc or parsed.path.split("/")[0]
+        return {
+            "enabled": True,
+            "configured": True,
+            "endpoint": endpoint or "unknown",
+            "environment": self._environment,
+            "release": self.release,
+        }
+
+    def probe_connection(self) -> bool:
+        """Verify credentials and network reachability without exporting data."""
+
+        try:
+            client = self._client_or_none()
+            return bool(client is not None and client.auth_check())
+        except Exception:
+            return False
 
     def _client_or_none(self) -> Any | None:
         if self._client_failed:

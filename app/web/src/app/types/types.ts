@@ -1030,6 +1030,15 @@ export interface IntegrationHealth {
     search: boolean;
     handoff_kinds: string[];
   };
+  langfuse?: {
+    enabled: boolean;
+    configured: boolean;
+    status: "disabled" | "healthy" | "degraded";
+    reachable: boolean | null;
+    endpoint: string | null;
+    environment: string | null;
+    release: string | null;
+  };
   last_checked_at?: string;
   errors?: IntegrationHealthError[];
 }

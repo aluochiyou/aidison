@@ -142,6 +142,20 @@ function isInitialRequirementsDraft(
   );
 }
 
+/**
+ * 需求改写只有同时携带模块结构，才满足后端的直接提交契约。
+ * 缺少 modules 的模型草案必须先进入需求单由用户补齐，不能暴露一个
+ * 注定返回 422 的“接受提案”按钮。
+ */
+function isRequirementsFormDraft(
+  proposal: ConversationActionProposal
+): boolean {
+  if (proposal.kind !== "rewrite_requirements") return false;
+  if (isInitialRequirementsDraft(proposal)) return true;
+  const modules = proposal.proposed_payload?.modules;
+  return !Array.isArray(modules) || modules.length === 0;
+}
+
 function friendlyError(error: unknown): string {
   const status = (error as { status?: number } | null)?.status;
   const detail = (error as { detail?: unknown } | null)?.detail;
@@ -164,6 +178,11 @@ function friendlyError(error: unknown): string {
     return `项目版本已更新（412）：${
       message || "revision 不匹配"
     }。请刷新后重试。`;
+  }
+  if (status === 422) {
+    return `这份 AI 草案还缺少可执行字段（422）：${
+      message || "无法直接提交"
+    }。项目事实没有改变，请先在需求单中补齐并确认。`;
   }
   return message || "操作失败，请稍后重试。";
 }
@@ -623,7 +642,7 @@ export function ConversationPanel({
                 </div>
               </div>
               {proposal.explanation ? <p>{proposal.explanation}</p> : null}
-              {isInitialRequirementsDraft(proposal) ? (
+              {isRequirementsFormDraft(proposal) ? (
                 <RequirementsDraftPreviewCard
                   payload={proposal.proposed_payload}
                 />
@@ -636,8 +655,7 @@ export function ConversationPanel({
                 </p>
               ) : null}
               <div className="proposal-actions">
-                {isInitialRequirementsDraft(proposal) &&
-                !hasApprovedRequirements ? (
+                {isRequirementsFormDraft(proposal) ? (
                   onUseRequirementsDraft && proposal.proposed_payload ? (
                     <Button
                       disabled={busy}
@@ -650,7 +668,7 @@ export function ConversationPanel({
                     </Button>
                   ) : (
                     <span className="run-callout">
-                      草案需在工作台的需求单里确认后生效。
+                      这份草案还不能直接提交，需在工作台需求单中补齐并确认。
                     </span>
                   )
                 ) : (

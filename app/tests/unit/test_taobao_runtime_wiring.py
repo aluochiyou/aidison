@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 import httpx
 import pytest
 
@@ -83,3 +85,48 @@ async def test_integration_health_declares_disabled_without_provider() -> None:
         assert shopping["available"] is False
         assert shopping["search"] is False
         assert shopping["handoff_kinds"] == []
+        assert response.json()["langfuse"]["status"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_integration_health_probes_langfuse_without_exposing_credentials() -> None:
+    class HealthyTracer:
+        enabled = True
+
+        def flush(self) -> None:
+            return None
+
+        def health_snapshot(self) -> dict[str, object]:
+            return {
+                "enabled": True,
+                "configured": True,
+                "endpoint": "jp.cloud.langfuse.com",
+                "environment": "test",
+                "release": "r-test",
+            }
+
+        def probe_connection(self) -> bool:
+            return True
+
+        def span(self, **_: object):
+            return nullcontext()
+
+    api = create_app(runtime_tracer=HealthyTracer())
+    transport = httpx.ASGITransport(app=api)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get("/api/integration-health")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["langfuse"] == {
+        "enabled": True,
+        "configured": True,
+        "endpoint": "jp.cloud.langfuse.com",
+        "environment": "test",
+        "release": "r-test",
+        "status": "healthy",
+        "reachable": True,
+    }
+    assert "public_key" not in str(payload)
+    assert "secret_key" not in str(payload)

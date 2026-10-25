@@ -80,6 +80,19 @@ test("对话研究提案也展示服务端冻结的深度默认值", () => {
   assert.ok(conversationSrc.includes("优先官方资料"));
 });
 
+test("缺少模块结构的需求改写只能进入需求单，不能直接接受", () => {
+  const conversationSrc = readFileSync(
+    join(dir, "ConversationPanel.tsx"),
+    "utf8"
+  );
+  assert.ok(conversationSrc.includes("function isRequirementsFormDraft"));
+  assert.ok(
+    conversationSrc.includes("!Array.isArray(modules) || modules.length === 0")
+  );
+  assert.ok(conversationSrc.includes("使用这份需求草案"));
+  assert.ok(conversationSrc.includes("这份 AI 草案还缺少可执行字段（422）"));
+});
+
 test("新策略草案优先于旧批准计划，用户可在首次运行前重新规划", () => {
   assert.ok(consoleSrc.includes("const latestResearchPlan"));
   assert.ok(

@@ -235,7 +235,13 @@ textarea:focus-visible {
 }
 
 .console-shell {
-  background: linear-gradient(180deg, #e7e2d4 0, #f1ecdf 420px, #eee9dc 100%);
+  background: linear-gradient(
+      180deg,
+      rgba(231, 226, 212, 0.94) 0,
+      rgba(241, 236, 223, 0.96) 520px,
+      rgba(238, 233, 220, 0.97) 100%
+    ),
+    url("/art/mc/village-55412.webp") center top / cover fixed no-repeat;
 }
 .console-header {
   position: sticky;
@@ -354,11 +360,11 @@ textarea:focus-visible {
 }
 .goal-world-characters {
   position: absolute;
-  right: 4%;
-  bottom: -18px;
-  width: 166px;
-  height: 210px;
-  background: url("/art/mc/steve-pig-foreground.png") center bottom / contain
+  right: 2%;
+  bottom: -32px;
+  width: 178px;
+  height: 238px;
+  background: url("/art/mc/steve-pig-cutout.png") center bottom / contain
     no-repeat;
   filter: drop-shadow(5px 6px 0 rgba(30, 30, 20, 0.28));
 }
@@ -430,12 +436,291 @@ textarea:focus-visible {
   background-image: none;
 }
 .console-page-switch {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.35rem;
   padding: 0.35rem;
   border: 3px solid #3f382d;
   border-radius: 2px;
   background: #a79f8e;
   box-shadow: inset 3px 3px #696154, inset -3px -3px #e5dcc6;
+}
+
+.developer-execution-map {
+  grid-column: 1 / -1;
+  min-width: 0;
+  margin: 1.25rem 1.25rem 0;
+  padding: 1rem;
+  border: 4px solid #2f3829;
+  background: linear-gradient(135deg, rgba(18, 42, 35, 0.96), rgba(27, 53, 44, 0.95)),
+    url("/art/mc/stone.webp") 0 0 / 128px 128px repeat;
+  box-shadow: inset 3px 3px rgba(255, 255, 255, 0.08),
+    6px 6px rgba(34, 28, 19, 0.28);
+  color: #edf7e4;
+}
+.developer-map-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1.2rem;
+  align-items: flex-start;
+  padding-bottom: 0.9rem;
+  border-bottom: 2px solid rgba(211, 232, 187, 0.22);
+}
+.developer-map-heading h2 {
+  margin: 0.15rem 0 0.4rem;
+  color: #fff7df;
+  font-size: 1.1rem;
+}
+.developer-map-heading small {
+  color: #a9d276;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.developer-map-heading p {
+  max-width: 68ch;
+  margin: 0;
+  color: #cbd9c4;
+  font-size: 0.76rem;
+  line-height: 1.6;
+}
+.developer-live-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  max-width: 31rem;
+}
+.developer-live-badges span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid rgba(225, 242, 204, 0.3);
+  background: rgba(8, 23, 19, 0.55);
+  color: #dbe8d2;
+  font: 0.68rem "Cascadia Code", Consolas, monospace;
+}
+.developer-live-badges i {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: #d6a33e;
+}
+.developer-live-badges .is-online i {
+  background: #7bc85c;
+  box-shadow: 0 0 0 3px rgba(123, 200, 92, 0.16);
+}
+.developer-live-badges .is-offline i {
+  background: #d85d50;
+}
+.developer-flow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0;
+  padding: 1rem 0;
+}
+.developer-flow-step-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1.1rem;
+  align-items: center;
+  min-width: 0;
+}
+.developer-flow-step-wrap:last-child {
+  grid-template-columns: minmax(0, 1fr);
+}
+.developer-flow-step {
+  position: relative;
+  min-height: 148px;
+  padding: 0.75rem;
+  border: 2px solid #48584a;
+  background: rgba(13, 28, 24, 0.82);
+  box-shadow: inset 2px 2px rgba(255, 255, 255, 0.05);
+}
+.developer-flow-step.is-complete {
+  border-color: #6ca852;
+}
+.developer-flow-step.is-active {
+  border-color: #d2a342;
+  background: rgba(61, 53, 25, 0.78);
+}
+.developer-flow-step.is-error {
+  border-color: #cc6154;
+}
+.developer-flow-step > small {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.55rem;
+  color: #78927d;
+  font: 0.62rem "Cascadia Code", Consolas, monospace;
+}
+.developer-flow-icon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  margin-bottom: 0.55rem;
+  place-items: center;
+  border: 1px solid rgba(224, 241, 204, 0.32);
+  background: #263d31;
+  color: #bfe58e;
+}
+.developer-flow-step strong,
+.developer-flow-step p,
+.developer-flow-step span {
+  display: block;
+}
+.developer-flow-step strong {
+  color: #fff5dc;
+  font-size: 0.82rem;
+}
+.developer-flow-step p {
+  min-height: 2.5rem;
+  margin: 0.35rem 0 0.6rem;
+  color: #aebfaf;
+  font-size: 0.66rem;
+  line-height: 1.45;
+}
+.developer-flow-step span {
+  color: #d8e8c8;
+  font: 0.64rem "Cascadia Code", Consolas, monospace;
+}
+.developer-flow-arrow {
+  color: #92b169;
+  font-size: 1rem;
+  text-align: center;
+}
+.developer-map-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.32fr);
+  gap: 0.8rem;
+}
+.developer-agent-pool,
+.developer-legend {
+  border: 2px solid rgba(210, 230, 190, 0.24);
+  background: rgba(7, 21, 18, 0.52);
+}
+.developer-agent-pool {
+  padding: 0.75rem;
+}
+.developer-subheading {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: center;
+  margin-bottom: 0.65rem;
+}
+.developer-subheading > div {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+}
+.developer-subheading small {
+  color: #9fb69f;
+  font-size: 0.65rem;
+}
+.developer-agent-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.55rem;
+}
+.developer-agent-card {
+  min-width: 0;
+  padding: 0.65rem;
+  border-left: 4px solid #789d58;
+  background: rgba(39, 59, 46, 0.78);
+}
+.developer-agent-card > div {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.developer-agent-card strong {
+  min-width: 0;
+  flex: 1;
+  color: #fff4d9;
+  font-size: 0.72rem;
+}
+.developer-agent-card span {
+  padding: 0.18rem 0.3rem;
+  border: 1px solid currentColor;
+  color: #b5c5b7;
+  font-size: 0.58rem;
+}
+.developer-agent-card span.is-complete {
+  color: #9ed17f;
+}
+.developer-agent-card span.is-active {
+  color: #f1c864;
+}
+.developer-agent-card span.is-error,
+.developer-agent-error {
+  color: #ff9e8d !important;
+}
+.developer-agent-card p,
+.developer-agent-card small {
+  display: block;
+  margin: 0.35rem 0 0;
+  color: #b7c7b8;
+  font-size: 0.62rem;
+  line-height: 1.45;
+}
+.developer-empty-agent {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  color: #b7c7b8;
+  font-size: 0.7rem;
+}
+.developer-legend {
+  padding: 0.75rem;
+}
+.developer-legend > strong {
+  color: #fff4d9;
+  font-size: 0.78rem;
+}
+.developer-legend p {
+  display: grid;
+  grid-template-columns: 1rem minmax(0, 1fr);
+  gap: 0.45rem;
+  margin: 0.7rem 0 0;
+  color: #bdccbd;
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+.developer-legend b {
+  color: #dceccd;
+}
+
+@media (max-width: 1180px) {
+  .developer-flow {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.55rem;
+  }
+  .developer-flow-step-wrap {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .developer-flow-arrow {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .console-page-switch {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .developer-execution-map {
+    margin: 0.7rem 0.7rem 0;
+  }
+  .developer-map-heading,
+  .developer-subheading {
+    display: grid;
+  }
+  .developer-live-badges {
+    justify-content: flex-start;
+  }
+  .developer-flow,
+  .developer-map-bottom {
+    grid-template-columns: 1fr;
+  }
 }
 .console-page-switch button {
   min-height: 2.35rem;

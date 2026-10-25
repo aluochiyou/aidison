@@ -22,6 +22,7 @@ import { ActivityFeed } from "@/app/components/ActivityFeed";
 import { RequirementsRevisionForm } from "@/app/components/RequirementsRevisionForm";
 import { ConversationPanel } from "@/app/components/ConversationPanel";
 import { ProjectConsoleHeader } from "@/app/components/ProjectConsoleHeader";
+import { DeveloperExecutionMap } from "@/app/components/DeveloperExecutionMap";
 import {
   ModuleCard,
   ProjectPulse,
@@ -2116,6 +2117,13 @@ export function ProjectConsole({
         }`}
         data-scene-cue={sceneCue.kind}
       >
+        {developerMode ? (
+          <DeveloperExecutionMap
+            snapshot={snapshot}
+            eventConnected={connected}
+          />
+        ) : null}
+
         {/* 作品与模块的日常操作集中在像素工程台；传统模块列表只在开发者模式保留。 */}
         {developerMode ? (
           <aside className="module-board">
@@ -2191,6 +2199,31 @@ export function ProjectConsole({
               type="button"
             >
               模块与方案
+            </button>
+            <button
+              className={developerMode && auditOpen ? "is-active" : ""}
+              data-world-action="inspect"
+              aria-pressed={developerMode && auditOpen}
+              onClick={() => {
+                setDeveloperMode(true);
+                setAuditOpen(true);
+              }}
+              type="button"
+            >
+              运行链路
+            </button>
+            <button
+              className={view === "integration-health" ? "is-active" : ""}
+              data-world-action="inspect"
+              aria-pressed={view === "integration-health"}
+              onClick={() => {
+                setDeveloperMode(true);
+                setConsolePage("workbench");
+                setView("integration-health");
+              }}
+              type="button"
+            >
+              集成监控
             </button>
           </div>
 
@@ -2435,15 +2468,15 @@ export function ProjectConsole({
                     >
                       <article>
                         <div>
-                          <strong>Run budget</strong>
+                          <strong>运行预算</strong>
                           <StatusTag status={budget.state} />
                         </div>
                         <small>
-                          tokens {budget.token_consumed.toLocaleString()} used +{" "}
-                          {budget.token_reserved.toLocaleString()} reserved /{" "}
+                          Token 已用 {budget.token_consumed.toLocaleString()} + 预留{" "}
+                          {budget.token_reserved.toLocaleString()} / 上限{" "}
                           {budget.token_cap.toLocaleString()}
-                          {" · "}tools {budget.tool_calls_consumed} used +{" "}
-                          {budget.tool_calls_reserved} reserved /{" "}
+                          {" · "}工具调用已用 {budget.tool_calls_consumed} + 预留{" "}
+                          {budget.tool_calls_reserved} / 上限{" "}
                           {budget.tool_call_cap}
                         </small>
                       </article>
@@ -2455,7 +2488,7 @@ export function ProjectConsole({
                       <article key={run.id}>
                         <div>
                           <Bot className="h-4 w-4" />
-                          <strong>{run.kind} AgentRun</strong>
+                          <strong>{run.kind} · Agent 运行</strong>
                           <StatusTag status={run.status} />
                         </div>
                         <small>
@@ -2469,7 +2502,7 @@ export function ProjectConsole({
 
                 <div className="panel-heading timeline-heading">
                   <div>
-                    <small>PROJECT CURSOR</small>
+                    <small>项目事件游标</small>
                     <h2>因果事件</h2>
                   </div>
                   <span>{events.length}</span>

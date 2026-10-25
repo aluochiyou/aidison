@@ -2,6 +2,7 @@
 
 import useSWR from "swr";
 import {
+  Activity,
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
@@ -85,6 +86,18 @@ export function IntegrationHealthCard() {
       <SignalLow className="tone-live h-4 w-4" />
     );
 
+  const langfuse = health.langfuse;
+  const langfuseLabel = !langfuse?.enabled
+    ? "未启用"
+    : langfuse.reachable
+    ? "已连接"
+    : "连接异常";
+  const langfuseTone = !langfuse?.enabled
+    ? "tone-muted"
+    : langfuse.reachable
+    ? "tone-good"
+    : "tone-live";
+
   const lastChecked = health.last_checked_at
     ? new Date(health.last_checked_at).toLocaleString("zh-CN")
     : "未知";
@@ -128,6 +141,21 @@ export function IntegrationHealthCard() {
             style={{ fontSize: "0.62rem", color: "var(--ink-soft)" }}
           >
             provider: {health.shopping?.provider ?? "N/A"}
+          </span>
+        </div>
+
+        <div className="health-indicator">
+          <div className="health-indicator-label">
+            <Activity className={`${langfuseTone} h-4 w-4`} />
+            <span>Langfuse 追踪</span>
+          </div>
+          <span className={`status-tag ${langfuseTone}`}>{langfuseLabel}</span>
+          <span
+            className="health-timestamp ml-2"
+            style={{ fontSize: "0.62rem", color: "var(--ink-soft)" }}
+          >
+            {langfuse?.endpoint ?? "未配置端点"}
+            {langfuse?.environment ? ` · ${langfuse.environment}` : ""}
           </span>
         </div>
 
