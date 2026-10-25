@@ -351,6 +351,10 @@ class GatewayJsonModeSingleTaskResearcher:
             invocation_token_cap,
             assembly.manifest.input_token_estimate
             + max_output_tokens
+            + _provider_reasoning_token_reserve(
+                target=self._target,
+                max_output_tokens=max_output_tokens,
+            )
             + assembly.manifest.safety_margin_tokens,
         )
         async with session_scope(self._session_factory) as session:
@@ -664,6 +668,26 @@ def _conservative_token_estimate(messages: list[dict[str, str]]) -> int:
 
 def _conservative_text_tokens(text: str) -> int:
     return len(text)
+
+
+def _provider_reasoning_token_reserve(
+    *,
+    target: ModelTarget,
+    max_output_tokens: int,
+) -> int:
+    """Reserve provider-reported hidden reasoning before physical dispatch.
+
+    DeepSeek-compatible thinking responses meter reasoning tokens in addition
+    to the visible JSON answer, and that hidden usage can exceed the requested
+    answer-token ceiling.  The run ledger must reserve it up front or a valid
+    response becomes an ambiguous budget operation after dispatch.  Unused
+    reservation is released during settlement, so this bounds concurrency
+    without inflating consumed Token metrics.
+    """
+
+    if target.provider.casefold() == "deepseek":
+        return max_output_tokens * 8
+    return 0
 
 
 def _sha256(value: str) -> str:

@@ -141,7 +141,7 @@ def _research_failure_summary(failure_code: str, error: Exception | None) -> str
         "runtime_cost_without_progress": "本轮持续消耗 Token，但没有产生新的准入结果",
         "runtime_provider_stall": "模型服务连续失败，且本轮没有形成有效进展",
         "runtime_no_progress": "运行健康检查发现本轮没有形成有效进展",
-        "research_model_usage_unverified": "模型没有返回可核验的 Token 用量，已停止继续计费调用",
+        "research_model_usage_unverified": "模型用量无法在预留预算内安全结算，已停止继续计费调用",
         "research_model_timeout": "模型调用超过本轮允许时限，已停止等待",
         "research_run_duration_exceeded": "研究运行超过了已批准的最长时长，已停止继续派发",
         "research_model_provider_failed": "模型服务未能完成本次受控研究调用",

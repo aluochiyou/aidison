@@ -29,6 +29,7 @@ from aidison.research.researcher import (
     JsonModeResearchProviderAdapter,
     JsonModeSingleTaskResearcher,
     _conservative_text_tokens,
+    _provider_reasoning_token_reserve,
     _provider_receipt,
     _provider_usage_tokens,
     _research_messages,
@@ -51,6 +52,38 @@ def _task(*, coverage_keys: tuple[str, ...]) -> TaskEnvelope:
         budget_ref="budget://test",
         idempotency_key="research-status-test",
     )
+
+
+def test_deepseek_thinking_reserves_hidden_reasoning_tokens() -> None:
+    target = ModelTarget(
+        provider="deepseek",
+        model="deepseek-v4-pro",
+        revision="configured-v1",
+        credential_pool_id="deepseek-default",
+        quota_group="research",
+        capabilities=("structured_output",),
+    )
+
+    assert _provider_reasoning_token_reserve(
+        target=target,
+        max_output_tokens=1_000,
+    ) == 8_000
+
+
+def test_non_thinking_provider_does_not_inflate_token_reservation() -> None:
+    target = ModelTarget(
+        provider="fixture",
+        model="fixture-model",
+        revision="v1",
+        credential_pool_id="fixture-pool",
+        quota_group="research",
+        capabilities=("structured_output",),
+    )
+
+    assert _provider_reasoning_token_reserve(
+        target=target,
+        max_output_tokens=1_000,
+    ) == 0
 
 
 def test_research_result_status_is_partial_until_every_authorized_coverage_key_has_evidence(
