@@ -2116,19 +2116,6 @@ export function ProjectConsole({
         }`}
         data-scene-cue={sceneCue.kind}
       >
-        <div
-          className="console-world"
-          aria-hidden="true"
-        >
-          <span
-            className="console-world-beam"
-            key={sceneCue.sequence}
-          />
-          <span
-            className="console-world-characters"
-            key={`characters-${sceneCue.sequence}`}
-          />
-        </div>
         {/* 作品与模块的日常操作集中在像素工程台；传统模块列表只在开发者模式保留。 */}
         {developerMode ? (
           <aside className="module-board">
@@ -2163,13 +2150,23 @@ export function ProjectConsole({
             <ProjectPulse workspace={snapshot.workspace} />
           ) : null}
           <div className="goal-strip">
-            <span>项目目标</span>
-            <p>{project.goal}</p>
-            <i
-              className="goal-mascot"
-              key={sceneCue.sequence}
+            <div className="goal-copy">
+              <span>当前项目 · 工程目标</span>
+              <p>{project.goal}</p>
+            </div>
+            <div
+              className="goal-world"
               aria-hidden="true"
-            />
+            >
+              <span
+                className="goal-world-light"
+                key={`light-${sceneCue.sequence}`}
+              />
+              <span
+                className="goal-world-characters"
+                key={`characters-${sceneCue.sequence}`}
+              />
+            </div>
           </div>
 
           <div

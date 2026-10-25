@@ -235,11 +235,7 @@ textarea:focus-visible {
 }
 
 .console-shell {
-  background: linear-gradient(
-      rgba(225, 221, 209, 0.82),
-      rgba(225, 221, 209, 0.82)
-    ),
-    url("/art/mc/stone.webp") 0 0 / 192px 192px repeat;
+  background: linear-gradient(180deg, #e7e2d4 0, #f1ecdf 420px, #eee9dc 100%);
 }
 .console-header {
   position: sticky;
@@ -292,108 +288,91 @@ textarea:focus-visible {
 .console-body.is-player {
   display: block;
   position: relative;
-  isolation: isolate;
   max-width: 1360px;
+  margin-inline: auto;
   padding: 1.25rem;
 }
 .console-body.is-developer {
   position: relative;
-  isolation: isolate;
 }
-.console-world {
-  position: absolute;
-  z-index: -1;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: min(720px, 80vh);
-  overflow: visible;
-  pointer-events: none;
+.goal-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 164px;
+  overflow: hidden;
+  padding: 1.5rem min(29%, 19rem) 1.5rem 1.8rem;
+  border: 4px solid #2a3424;
+  border-bottom: 8px solid #719c38;
   background: linear-gradient(
-      180deg,
-      rgba(255, 250, 224, 0.44) 0%,
-      rgba(225, 221, 209, 0.72) 60%,
-      #e1ddd1 100%
+      90deg,
+      rgba(18, 35, 25, 0.94),
+      rgba(18, 35, 25, 0.78) 52%,
+      rgba(18, 35, 25, 0.12)
     ),
-    url("/art/mc/village-55412.webp") center top / cover no-repeat;
+    url("/art/mc/village-55412.webp") center 46% / cover no-repeat;
+  box-shadow: inset 4px 4px rgba(255, 255, 255, 0.16),
+    6px 6px rgba(55, 43, 25, 0.22);
 }
-.console-body.is-developer .console-world {
-  opacity: 0.42;
-}
-.console-world::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  height: 12px;
-  background: url("/art/mc/grass-block-side.webp") left top / 32px 32px repeat-x;
-}
-.console-world-beam {
-  position: absolute;
-  top: 2rem;
-  left: 10%;
-  width: 35%;
-  height: 4px;
-  opacity: 0;
-  background: linear-gradient(90deg, transparent, #fff7ca, transparent);
-}
-.console-body[data-scene-cue="explore"] .console-world-beam {
-  animation: world-scan 900ms ease-out;
-}
-.console-body[data-scene-cue="craft"] .console-world-beam {
-  background: linear-gradient(90deg, transparent, #e7b44c, transparent);
-  animation: world-scan 900ms ease-out;
-}
-.console-body[data-scene-cue="inspect"] .console-world-beam {
-  background: linear-gradient(90deg, transparent, #9adcf0, transparent);
-  animation: world-scan 900ms ease-out;
-}
-.console-body > .module-board,
-.console-body > .workbench,
-.console-body > .audit-board {
+.goal-copy {
   position: relative;
-  z-index: 1;
+  z-index: 2;
+  min-width: 0;
 }
-.console-body.is-player .goal-strip {
-  position: relative;
-  padding-right: 5.5rem;
+.goal-copy > span {
+  color: #c9e593;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
 }
-.console-body.is-player .goal-mascot {
+.goal-strip .goal-copy > p {
+  margin-top: 0.65rem;
+  color: #fff8e8;
+  font-size: clamp(1.3rem, 2vw, 1.9rem);
+  font-weight: 700;
+  line-height: 1.4;
+  text-shadow: 2px 2px 0 rgba(20, 29, 18, 0.7);
+}
+.goal-world {
   position: absolute;
-  right: 0.8rem;
-  bottom: 0.2rem;
-  width: 3.4rem;
-  height: 3.4rem;
-  background: url("/art/mc/allay.webp") center / contain no-repeat;
-  image-rendering: pixelated;
+  inset: 0;
   pointer-events: none;
 }
-.console-body[data-scene-cue="craft"] .goal-mascot {
-  animation: world-hop 620ms ease-out;
+.goal-world-light {
+  position: absolute;
+  top: 0;
+  left: 32%;
+  width: 28%;
+  height: 100%;
+  opacity: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 246, 181, 0.35),
+    transparent
+  );
 }
-.console-body[data-scene-cue="explore"] .goal-mascot,
-.console-body[data-scene-cue="inspect"] .goal-mascot {
-  animation: world-look 650ms ease-out;
+.goal-world-characters {
+  position: absolute;
+  right: 4%;
+  bottom: -18px;
+  width: 166px;
+  height: 210px;
+  background: url("/art/mc/steve-pig-foreground.png") center bottom / contain
+    no-repeat;
+  filter: drop-shadow(5px 6px 0 rgba(30, 30, 20, 0.28));
 }
-@media (min-width: 1550px) {
-  .console-world-characters {
-    position: absolute;
-    top: 215px;
-    left: calc(100% + 8px);
-    width: min(260px, calc(100vw - 1380px));
-    aspect-ratio: 2 / 3;
-    background: url("/art/mc/steve-pig-foreground.png") center / contain
-      no-repeat;
-    filter: drop-shadow(8px 12px 0 rgba(46, 42, 27, 0.24));
-  }
-  .console-body[data-scene-cue="craft"] .console-world-characters {
-    animation: world-hop 650ms ease-out;
-  }
-  .console-body[data-scene-cue="explore"] .console-world-characters,
-  .console-body[data-scene-cue="inspect"] .console-world-characters {
-    animation: world-look 700ms ease-out;
-  }
+.console-body[data-scene-cue="explore"] .goal-world-light,
+.console-body[data-scene-cue="craft"] .goal-world-light,
+.console-body[data-scene-cue="inspect"] .goal-world-light {
+  animation: world-scan 800ms ease-out;
+}
+.console-body[data-scene-cue="craft"] .goal-world-characters {
+  animation: world-hop 650ms ease-out;
+}
+.console-body[data-scene-cue="explore"] .goal-world-characters,
+.console-body[data-scene-cue="inspect"] .goal-world-characters {
+  animation: world-look 700ms ease-out;
 }
 @keyframes world-scan {
   0% {
@@ -440,26 +419,15 @@ textarea:focus-visible {
   .console-body.is-developer {
     display: block;
   }
-  .console-world {
-    height: 480px;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .console-world-beam,
-  .console-world-characters,
-  .console-body .goal-mascot {
+  .goal-world-light,
+  .goal-world-characters {
     animation: none !important;
   }
 }
 .workbench {
   background-image: none;
-}
-.goal-strip {
-  border: 3px solid #4f4130;
-  border-left: 9px solid #74a43d;
-  border-radius: 2px;
-  background: #f3ecd8;
-  box-shadow: inset 3px 3px #fff9e9, 4px 4px rgba(30, 22, 12, 0.28);
 }
 .console-page-switch {
   gap: 0.35rem;
@@ -1065,6 +1033,18 @@ textarea:focus-visible {
   }
   .console-body.is-player {
     padding: 0.7rem;
+  }
+  .goal-strip {
+    min-height: 142px;
+    padding: 1rem 6.5rem 1rem 1rem;
+  }
+  .goal-strip .goal-copy > p {
+    font-size: 1.1rem;
+  }
+  .goal-world-characters {
+    right: 0;
+    width: 112px;
+    height: 150px;
   }
   .workbench-primary-heading {
     flex-wrap: wrap;
