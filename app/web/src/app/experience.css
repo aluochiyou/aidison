@@ -235,13 +235,73 @@ textarea:focus-visible {
 }
 
 .console-shell {
+  --scene-pan: 0px;
+  position: relative;
+  isolation: isolate;
   background: linear-gradient(
       180deg,
-      rgba(231, 226, 212, 0.94) 0,
-      rgba(241, 236, 223, 0.96) 520px,
-      rgba(238, 233, 220, 0.97) 100%
+      rgba(231, 226, 212, 0.46) 0,
+      rgba(241, 236, 223, 0.61) 520px,
+      rgba(238, 233, 220, 0.75) 100%
     ),
     url("/art/mc/village-55412.webp") center top / cover fixed no-repeat;
+  background-position: center, calc(50% + var(--scene-pan)) top;
+  transition: background-position 700ms ease;
+}
+.console-shell[data-scene-cue="explore"] {
+  --scene-pan: -18px;
+}
+.console-shell[data-scene-cue="craft"] {
+  --scene-pan: 18px;
+}
+.console-shell[data-scene-cue="inspect"] {
+  --scene-pan: 7px;
+}
+.console-shell::before {
+  content: "";
+  position: fixed;
+  z-index: 0;
+  top: 48%;
+  left: clamp(12px, 1.2vw, 24px);
+  width: 76px;
+  aspect-ratio: 1;
+  transform: translateY(-50%);
+  background: url("/art/mc/allay.webp") center / contain no-repeat;
+  filter: drop-shadow(3px 4px 0 rgba(42, 48, 31, 0.28));
+  opacity: 0.92;
+  pointer-events: none;
+  animation: allay-hover 5.5s steps(8, end) infinite;
+  transition: translate 650ms steps(8, end), filter 500ms ease;
+}
+.console-shell[data-scene-cue="explore"]::before {
+  translate: 10px -3px;
+}
+.console-shell[data-scene-cue="craft"]::before {
+  translate: 22px -9px;
+  filter: drop-shadow(0 0 12px rgba(255, 226, 125, 0.7));
+}
+.console-shell[data-scene-cue="inspect"]::before {
+  translate: -5px 5px;
+  filter: drop-shadow(0 0 9px rgba(181, 219, 130, 0.72));
+}
+@keyframes allay-hover {
+  0%,
+  100% {
+    transform: translateY(-50%);
+  }
+  50% {
+    transform: translateY(calc(-50% - 7px));
+  }
+}
+@media (max-width: 1599px) {
+  .console-shell::before {
+    display: none;
+  }
+}
+.console-header,
+.console-body {
+  position: relative;
+  z-index: 1;
 }
 .console-header {
   position: sticky;
@@ -425,11 +485,19 @@ textarea:focus-visible {
   .console-body.is-developer {
     display: block;
   }
+  .console-shell::before {
+    display: none;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .goal-world-light,
-  .goal-world-characters {
+  .goal-world-characters,
+  .console-shell::before {
     animation: none !important;
+    transition: none !important;
+  }
+  .console-shell {
+    transition: none !important;
   }
 }
 .workbench {
@@ -452,7 +520,11 @@ textarea:focus-visible {
   margin: 1.25rem 1.25rem 0;
   padding: 1rem;
   border: 4px solid #2f3829;
-  background: linear-gradient(135deg, rgba(18, 42, 35, 0.96), rgba(27, 53, 44, 0.95)),
+  background: linear-gradient(
+      135deg,
+      rgba(18, 42, 35, 0.96),
+      rgba(27, 53, 44, 0.95)
+    ),
     url("/art/mc/stone.webp") 0 0 / 128px 128px repeat;
   box-shadow: inset 3px 3px rgba(255, 255, 255, 0.08),
     6px 6px rgba(34, 28, 19, 0.28);
@@ -588,6 +660,135 @@ textarea:focus-visible {
   font-size: 1rem;
   text-align: center;
 }
+.developer-agent-anatomy {
+  margin: 0.15rem 0 1rem;
+  padding: 0.85rem;
+  border: 2px solid rgba(210, 230, 190, 0.24);
+  background: rgba(7, 21, 18, 0.48);
+}
+.developer-agent-anatomy .developer-subheading {
+  margin-bottom: 0.75rem;
+}
+.developer-anatomy-flow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1rem minmax(0, 1fr) 1rem minmax(0, 1fr) 1rem minmax(
+      0,
+      1fr
+    );
+  gap: 0.45rem;
+  align-items: stretch;
+}
+.developer-anatomy-flow article {
+  min-width: 0;
+  padding: 0.7rem;
+  border: 1px solid rgba(210, 230, 190, 0.28);
+  background: rgba(35, 57, 43, 0.8);
+}
+.developer-anatomy-flow article > small,
+.developer-anatomy-flow article > strong {
+  display: block;
+}
+.developer-anatomy-flow article > small {
+  margin-bottom: 0.25rem;
+  color: #a9d276;
+  font-size: 0.62rem;
+}
+.developer-anatomy-flow article > strong {
+  color: #fff4d9;
+  font-size: 0.75rem;
+}
+.developer-anatomy-flow article > p {
+  margin: 0.35rem 0 0;
+  color: #bdccbd;
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
+.developer-anatomy-flow > span {
+  display: grid;
+  place-items: center;
+  color: #a9d276;
+}
+.developer-collaboration-strip {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  margin-top: 0.65rem;
+  padding: 0.6rem 0.7rem;
+  border-left: 4px solid #7bc85c;
+  background: rgba(8, 23, 19, 0.58);
+  color: #d4e3d1;
+}
+.developer-collaboration-strip > svg {
+  flex: 0 0 auto;
+  margin-top: 0.12rem;
+  color: #bfe58e;
+}
+.developer-collaboration-strip p {
+  margin: 0;
+  font-size: 0.67rem;
+  line-height: 1.55;
+}
+.developer-collaboration-strip strong {
+  color: #fff4d9;
+}
+.developer-plan-task-list {
+  margin-top: 0.65rem;
+  padding-top: 0.65rem;
+  border-top: 1px solid rgba(211, 232, 187, 0.2);
+}
+.developer-plan-task-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.55rem;
+  color: #fff4d9;
+  font-size: 0.72rem;
+}
+.developer-plan-task-heading span {
+  color: #a9d276;
+  font-size: 0.64rem;
+}
+.developer-plan-task-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.45rem;
+}
+.developer-plan-task-grid article {
+  min-width: 0;
+  padding: 0.55rem;
+  border: 1px solid rgba(210, 230, 190, 0.2);
+  background: rgba(39, 59, 46, 0.7);
+}
+.developer-plan-task-grid article strong,
+.developer-plan-task-grid article small {
+  display: block;
+}
+.developer-plan-task-grid article strong {
+  overflow: hidden;
+  color: #fff4d9;
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.developer-plan-task-grid article small {
+  margin-top: 0.25rem;
+  color: #bdccbd;
+  font-size: 0.6rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.developer-plan-task-more {
+  align-self: center;
+  color: #a9d276;
+  font-size: 0.64rem;
+}
+.developer-plan-task-empty {
+  margin: 0;
+  color: #bdccbd;
+  font-size: 0.66rem;
+  line-height: 1.5;
+}
 .developer-map-bottom {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(220px, 0.32fr);
@@ -701,6 +902,12 @@ textarea:focus-visible {
   .developer-flow-arrow {
     display: none;
   }
+  .developer-anatomy-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .developer-anatomy-flow > span {
+    display: none;
+  }
 }
 
 @media (max-width: 760px) {
@@ -718,7 +925,8 @@ textarea:focus-visible {
     justify-content: flex-start;
   }
   .developer-flow,
-  .developer-map-bottom {
+  .developer-map-bottom,
+  .developer-anatomy-flow {
     grid-template-columns: 1fr;
   }
 }

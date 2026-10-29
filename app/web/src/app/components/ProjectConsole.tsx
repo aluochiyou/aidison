@@ -1601,7 +1601,8 @@ function RetryModuleVisualAction({
         </div>
       </div>
       <p>
-        当前模块事实不变；系统会创建新的 AgentRun，保留旧失败轨迹，并使用当前配图模型配置重新执行。
+        当前模块事实不变；系统会创建新的
+        AgentRun，保留旧失败轨迹，并使用当前配图模型配置重新执行。
       </p>
       <Button
         disabled={busy}
@@ -2147,6 +2148,7 @@ export function ProjectConsole({
   return (
     <main
       className="console-shell"
+      data-scene-cue={sceneCue.kind}
       onClickCapture={(event) => {
         const button = (event.target as HTMLElement).closest("button");
         if (!button || button.disabled) return;
@@ -2533,11 +2535,11 @@ export function ProjectConsole({
                           <StatusTag status={budget.state} />
                         </div>
                         <small>
-                          Token 已用 {budget.token_consumed.toLocaleString()} + 预留{" "}
-                          {budget.token_reserved.toLocaleString()} / 上限{" "}
+                          Token 已用 {budget.token_consumed.toLocaleString()} +
+                          预留 {budget.token_reserved.toLocaleString()} / 上限{" "}
                           {budget.token_cap.toLocaleString()}
-                          {" · "}工具调用已用 {budget.tool_calls_consumed} + 预留{" "}
-                          {budget.tool_calls_reserved} / 上限{" "}
+                          {" · "}工具调用已用 {budget.tool_calls_consumed} +
+                          预留 {budget.tool_calls_reserved} / 上限{" "}
                           {budget.tool_call_cap}
                         </small>
                       </article>
