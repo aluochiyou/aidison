@@ -47,6 +47,7 @@ interface Feedback {
   kind: "success" | "conflict" | "forbidden" | "error";
   title: string;
   message: string;
+  reference?: string;
 }
 
 const KIND_LABEL: Record<string, string> = {
@@ -120,31 +121,47 @@ function stageLabel(stage: string): string {
 }
 
 function describeApiError(error: unknown): Feedback {
-  const payload = (error as { error?: { code?: string; message?: string } })
-    ?.error;
+  const payload = (
+    error as {
+      error?: {
+        code?: string;
+        message?: string;
+        correlation_id?: string;
+      };
+    }
+  )?.error;
   const code = payload?.code ?? "unknown";
   const message = payload?.message ?? "未知错误，请刷新后重试";
+  const reference = payload?.correlation_id;
+  const withReference = (feedback: Feedback): Feedback => ({
+    ...feedback,
+    reference,
+  });
   if (code === "DOMAIN_CONFLICT" && /lock|锁定|protected/i.test(message)) {
-    return {
+    return withReference({
       kind: "forbidden",
       title: "该选择受用户锁保护",
       message: `${message}（前端仅作提示，服务端强制拒绝）`,
-    };
+    });
   }
   if (code === "DOMAIN_CONFLICT" || code === "IDEMPOTENCY_CONFLICT") {
-    return { kind: "conflict", title: "操作冲突", message };
+    return withReference({ kind: "conflict", title: "操作冲突", message });
   }
   if (code === "STALE_PROJECT_REVISION") {
-    return {
+    return withReference({
       kind: "conflict",
       title: "草稿修订已过期",
       message: `${message}（快照已更新，界面已同步最新状态）`,
-    };
+    });
   }
   if (code === "INVALID_COMMAND" || code === "RESOURCE_NOT_FOUND") {
-    return { kind: "forbidden", title: "操作不被允许", message };
+    return withReference({
+      kind: "forbidden",
+      title: "操作不被允许",
+      message,
+    });
   }
-  return { kind: "error", title: "操作失败", message };
+  return withReference({ kind: "error", title: "操作失败", message });
 }
 
 function optionEntries(options: Record<string, unknown>): [string, unknown][] {
@@ -549,6 +566,9 @@ function FeedbackChip({ feedback }: { feedback: Feedback }) {
       <div>
         <strong>{feedback.title}</strong>
         <span>{feedback.message}</span>
+        {feedback.reference ? (
+          <small>追踪编号：{feedback.reference}</small>
+        ) : null}
       </div>
     </div>
   );

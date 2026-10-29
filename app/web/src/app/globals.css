@@ -3565,6 +3565,12 @@ button {
   line-height: 1.45;
 }
 
+.feedback-chip small {
+  color: var(--ink-soft);
+  font: 0.58rem "Cascadia Code", monospace;
+  overflow-wrap: anywhere;
+}
+
 .feedback-chip.is-success {
   border-left-color: var(--safe);
   color: var(--safe);

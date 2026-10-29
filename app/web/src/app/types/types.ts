@@ -917,6 +917,8 @@ export interface ApiError {
   error: {
     code: string;
     message: string;
+    correlation_id?: string;
+    retryable?: boolean;
     details?: unknown;
   };
 }

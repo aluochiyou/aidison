@@ -59,6 +59,17 @@ function shortId(value: string): string {
   return value.slice(0, 8);
 }
 
+const PROJECT_STAGE_LABELS: Record<Project["stage"], string> = {
+  intake: "刚刚开工",
+  requirements: "确认需求",
+  research: "资料研究",
+  comparing: "比较方案",
+  deciding: "等待决策",
+  approved: "方案已批准",
+  verifying: "验证方案",
+  revising: "方案调整",
+};
+
 function normalizedDecisionOption(
   option: DecisionOption | string
 ): DecisionOption {
@@ -2233,17 +2244,13 @@ export function ProjectConsole({
                 className="goal-world-light"
                 key={`light-${sceneCue.sequence}`}
               />
-              <span
-                className="goal-world-characters"
-                key={`characters-${sceneCue.sequence}`}
-              />
             </div>
           </div>
 
           <div
             className="console-page-switch"
             role="group"
-            aria-label="项目页面"
+            aria-label="主要工作区"
           >
             <button
               className={consolePage === "activity" ? "is-active" : ""}
@@ -2262,31 +2269,6 @@ export function ProjectConsole({
               type="button"
             >
               模块与方案
-            </button>
-            <button
-              className={developerMode && auditOpen ? "is-active" : ""}
-              data-world-action="inspect"
-              aria-pressed={developerMode && auditOpen}
-              onClick={() => {
-                setDeveloperMode(true);
-                setAuditOpen(true);
-              }}
-              type="button"
-            >
-              运行链路
-            </button>
-            <button
-              className={view === "integration-health" ? "is-active" : ""}
-              data-world-action="inspect"
-              aria-pressed={view === "integration-health"}
-              onClick={() => {
-                setDeveloperMode(true);
-                setConsolePage("workbench");
-                setView("integration-health");
-              }}
-              type="button"
-            >
-              集成监控
             </button>
           </div>
 
@@ -2466,6 +2448,125 @@ export function ProjectConsole({
             </>
           )}
         </section>
+
+        {!developerMode ? (
+          <aside
+            className="project-world-rail"
+            aria-label="项目状态与快捷入口"
+          >
+            <section className="project-world-scene">
+              <div className="project-world-scene-copy">
+                <small>工程进度</small>
+                <strong>{PROJECT_STAGE_LABELS[project.stage]}</strong>
+                <span>{project.name}</span>
+              </div>
+              <div
+                className="project-world-art"
+                aria-hidden="true"
+              >
+                <img
+                  src="/art/mc/steve-pig-cutout.png"
+                  alt=""
+                  draggable={false}
+                />
+              </div>
+              <span
+                className="project-world-ground"
+                aria-hidden="true"
+              />
+            </section>
+
+            <section
+              className="project-world-metrics"
+              aria-label="项目数据"
+            >
+              <div>
+                <strong>{snapshot.modules.length}</strong>
+                <span>模块</span>
+              </div>
+              <div>
+                <strong>{snapshot.evidence.length}</strong>
+                <span>证据</span>
+              </div>
+              <div>
+                <strong>{snapshot.solutions.length}</strong>
+                <span>方案</span>
+              </div>
+            </section>
+
+            <nav
+              className="project-world-actions"
+              aria-label="快捷操作"
+            >
+              <small>快捷入口</small>
+              <button
+                className="project-world-action"
+                data-world-action="explore"
+                aria-pressed={consolePage === "activity"}
+                onClick={() => setConsolePage("activity")}
+                type="button"
+              >
+                <Search className="h-4 w-4" />
+                <span>
+                  <strong>继续讨论</strong>
+                  <small>补充需求与研究方向</small>
+                </span>
+              </button>
+              <button
+                className="project-world-action"
+                data-world-action="craft"
+                aria-pressed={consolePage === "workbench"}
+                onClick={() => setConsolePage("workbench")}
+                type="button"
+              >
+                <Wrench className="h-4 w-4" />
+                <span>
+                  <strong>模块与方案</strong>
+                  <small>查看模块、选型和版本</small>
+                </span>
+              </button>
+              <button
+                className="project-world-action"
+                data-world-action="inspect"
+                onClick={() => {
+                  setDeveloperMode(true);
+                  setAuditOpen(true);
+                }}
+                type="button"
+              >
+                <GitBranch className="h-4 w-4" />
+                <span>
+                  <strong>运行链路</strong>
+                  <small>查看任务依赖与 Agent 流转</small>
+                </span>
+              </button>
+              <button
+                className="project-world-action"
+                data-world-action="inspect"
+                onClick={() => {
+                  setDeveloperMode(true);
+                  setConsolePage("workbench");
+                  setView("integration-health");
+                }}
+                type="button"
+              >
+                <Activity className="h-4 w-4" />
+                <span>
+                  <strong>后端与追踪</strong>
+                  <small>查看 API、模型和 Langfuse</small>
+                </span>
+              </button>
+            </nav>
+
+            <div className="project-world-connection">
+              <span className={connected ? "is-online" : "is-offline"}>
+                <i />
+                事件流{connected ? "在线" : "断开"}
+              </span>
+              <small>项目记录序号 #{snapshot.event_cursor}</small>
+            </div>
+          </aside>
+        ) : null}
 
         {/* 运行预算、Agent 及事件流属于工程审计，不占普通用户的工作台。 */}
         {developerMode ? (

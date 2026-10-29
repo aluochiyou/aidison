@@ -240,12 +240,12 @@ textarea:focus-visible {
   isolation: isolate;
   background: linear-gradient(
       180deg,
-      rgba(231, 226, 212, 0.16) 0,
-      rgba(241, 236, 223, 0.3) 520px,
-      rgba(238, 233, 220, 0.48) 100%
+      rgba(25, 35, 24, 0.08) 0,
+      rgba(221, 215, 197, 0.1) 42%,
+      rgba(31, 28, 21, 0.24) 100%
     ),
-    url("/art/mc/village-55412.webp") center top / cover fixed no-repeat;
-  background-position: center, calc(50% + var(--scene-pan)) 20%;
+    url("/art/mc/village-55412.webp") center center / cover fixed no-repeat;
+  background-position: center, calc(50% + var(--scene-pan)) 25%;
   transition: background-position 850ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .console-shell[data-scene-cue="explore"] {
@@ -256,42 +256,6 @@ textarea:focus-visible {
 }
 .console-shell[data-scene-cue="inspect"] {
   --scene-pan: 16px;
-}
-.console-shell::before {
-  content: "";
-  position: fixed;
-  z-index: 0;
-  right: clamp(0.75rem, 2.2vw, 2.5rem);
-  bottom: clamp(3rem, 7vh, 5.5rem);
-  width: clamp(190px, 25vw, 390px);
-  height: min(56vh, 460px);
-  background: url("/art/mc/steve-pig-cutout.png") right bottom / contain
-    no-repeat;
-  filter: drop-shadow(5px 7px 0 rgba(42, 48, 31, 0.3));
-  opacity: 0.96;
-  pointer-events: none;
-  animation: scene-pair-idle 5.8s steps(8, end) infinite;
-  transition: translate 680ms steps(8, end), filter 450ms ease;
-}
-.console-shell[data-scene-cue="explore"]::before {
-  translate: -24px -3px;
-}
-.console-shell[data-scene-cue="craft"]::before {
-  translate: -36px -15px;
-  filter: drop-shadow(0 0 12px rgba(255, 226, 125, 0.7));
-}
-.console-shell[data-scene-cue="inspect"]::before {
-  translate: -12px 4px;
-  filter: drop-shadow(0 0 9px rgba(181, 219, 130, 0.72));
-}
-@keyframes scene-pair-idle {
-  0%,
-  100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-6px);
-  }
 }
 .console-header,
 .console-body {
@@ -347,11 +311,221 @@ textarea:focus-visible {
   color: #30291d;
 }
 .console-body.is-player {
-  display: block;
+  display: grid;
+  grid-template-areas: "workbench rail";
+  grid-template-columns: minmax(0, 1fr) minmax(258px, 292px);
+  align-items: start;
+  gap: 1.1rem;
   position: relative;
-  max-width: 1360px;
+  max-width: 1600px;
   margin-inline: auto;
   padding: 1.25rem;
+}
+.console-body.is-player > .workbench {
+  grid-area: workbench;
+  min-width: 0;
+}
+.project-world-rail {
+  grid-area: rail;
+  position: sticky;
+  top: 5.5rem;
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  align-self: start;
+}
+.project-world-scene {
+  position: relative;
+  min-height: 220px;
+  overflow: hidden;
+  border: 3px solid #342a1d;
+  border-bottom: 7px solid #688d35;
+  background: linear-gradient(
+      115deg,
+      rgba(21, 39, 26, 0.93) 0,
+      rgba(21, 39, 26, 0.72) 45%,
+      rgba(21, 39, 26, 0.08) 100%
+    ),
+    url("/art/mc/village-55412.webp") 61% 53% / cover no-repeat;
+  box-shadow: inset 3px 3px rgba(255, 255, 255, 0.14),
+    5px 5px rgba(35, 27, 18, 0.3);
+}
+.project-world-scene-copy {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  gap: 0.35rem;
+  max-width: 70%;
+  padding: 0.8rem;
+  color: #fff6df;
+  text-shadow: 2px 2px rgba(29, 30, 19, 0.8);
+}
+.project-world-scene-copy small {
+  color: #c9e593;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.project-world-scene-copy strong {
+  font-size: 1.15rem;
+}
+.project-world-scene-copy span {
+  overflow: hidden;
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-world-art {
+  position: absolute;
+  z-index: 1;
+  inset: 0 -0.4rem 0.25rem 2.7rem;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  pointer-events: none;
+  transform-origin: bottom right;
+}
+.project-world-art img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: right bottom;
+  filter: drop-shadow(3px 4px 0 rgba(21, 25, 17, 0.42));
+  user-select: none;
+}
+.project-world-ground {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 0.5rem;
+  background: url("/art/mc/grass-block-side.webp") left top / 32px 32px repeat-x;
+  pointer-events: none;
+}
+.project-world-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 2px solid #4c4435;
+  background: #e6dcc4;
+  box-shadow: 3px 3px rgba(35, 27, 18, 0.22);
+}
+.project-world-metrics > div {
+  display: grid;
+  justify-items: center;
+  gap: 0.1rem;
+  padding: 0.55rem 0.25rem;
+  border-right: 1px solid #a49a84;
+}
+.project-world-metrics > div:last-child {
+  border-right: 0;
+}
+.project-world-metrics strong {
+  color: #365d25;
+  font-size: 1.1rem;
+  line-height: 1.1;
+}
+.project-world-metrics span {
+  color: #625a4a;
+  font-size: 0.68rem;
+}
+.project-world-actions {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.65rem;
+  border: 3px solid #3e382c;
+  background: rgba(226, 218, 198, 0.97);
+  box-shadow: inset 3px 3px #f8f0de, inset -3px -3px #aaa08d,
+    4px 4px rgba(35, 27, 18, 0.24);
+}
+.project-world-actions > small {
+  padding: 0.1rem 0.15rem 0.25rem;
+  color: #537a30;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+.project-world-action {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+  min-height: 3.35rem;
+  padding: 0.45rem 0.5rem;
+  border: 2px solid #645a46 !important;
+  background: #f4ecd8;
+  color: #30291d;
+  text-align: left;
+  box-shadow: inset 2px 2px #fff8e8, inset -2px -2px #c9bea5 !important;
+  transition: background-color 140ms ease, transform 140ms ease,
+    box-shadow 140ms ease;
+}
+.project-world-action > svg {
+  justify-self: center;
+  color: #4c8428;
+}
+.project-world-action > span {
+  display: grid;
+  gap: 0.08rem;
+  min-width: 0;
+}
+.project-world-action strong {
+  font-size: 0.79rem;
+}
+.project-world-action small {
+  color: #625a4a;
+  font-size: 0.64rem;
+  line-height: 1.3;
+}
+.project-world-action:hover {
+  background: #fff6df;
+  transform: translateX(2px);
+}
+.project-world-action[aria-pressed="true"] {
+  border-color: #416f29 !important;
+  background: #dce9c7;
+}
+.project-world-connection {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem 0.7rem;
+  padding: 0.55rem 0.65rem;
+  border-left: 4px solid #6c923a;
+  background: rgba(246, 239, 221, 0.94);
+  box-shadow: 2px 2px rgba(35, 27, 18, 0.16);
+}
+.project-world-connection > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: #3a672b;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.project-world-connection > span.is-offline {
+  color: #8c542a;
+}
+.project-world-connection i {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 16%, transparent);
+}
+.project-world-connection small {
+  color: #665d4d;
+  font-size: 0.64rem;
+}
+.console-body[data-scene-cue="craft"] .project-world-art {
+  animation: world-hop 650ms ease-out;
+}
+.console-body[data-scene-cue="explore"] .project-world-art,
+.console-body[data-scene-cue="inspect"] .project-world-art {
+  animation: world-look 700ms ease-out;
 }
 .console-body.is-developer {
   position: relative;
@@ -362,7 +536,7 @@ textarea:focus-visible {
   align-items: center;
   min-height: 180px;
   overflow: hidden;
-  padding: 1.5rem min(29%, 19rem) 1.5rem 1.8rem;
+  padding: 1.5rem 1.8rem;
   border: 4px solid #2a3424;
   border-bottom: 8px solid #719c38;
   background: linear-gradient(
@@ -413,27 +587,10 @@ textarea:focus-visible {
     transparent
   );
 }
-.goal-world-characters {
-  position: absolute;
-  right: 1%;
-  bottom: -46px;
-  width: 210px;
-  height: 278px;
-  background: url("/art/mc/steve-pig-cutout.png") center bottom / contain
-    no-repeat;
-  filter: drop-shadow(5px 6px 0 rgba(30, 30, 20, 0.28));
-}
 .console-body[data-scene-cue="explore"] .goal-world-light,
 .console-body[data-scene-cue="craft"] .goal-world-light,
 .console-body[data-scene-cue="inspect"] .goal-world-light {
   animation: world-scan 800ms ease-out;
-}
-.console-body[data-scene-cue="craft"] .goal-world-characters {
-  animation: world-hop 650ms ease-out;
-}
-.console-body[data-scene-cue="explore"] .goal-world-characters,
-.console-body[data-scene-cue="inspect"] .goal-world-characters {
-  animation: world-look 700ms ease-out;
 }
 @keyframes world-scan {
   0% {
@@ -476,18 +633,48 @@ textarea:focus-visible {
     border-left: 0;
   }
 }
+@media (max-width: 1120px) and (min-width: 761px) {
+  .console-body.is-player {
+    grid-template-areas: "workbench" "rail";
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .project-world-rail {
+    position: static;
+    grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+    align-items: stretch;
+  }
+  .project-world-scene {
+    grid-column: 1;
+    grid-row: 1 / span 3;
+    min-height: 100%;
+  }
+  .project-world-metrics,
+  .project-world-actions,
+  .project-world-connection {
+    grid-column: 2;
+  }
+  .project-world-metrics {
+    grid-row: 1;
+  }
+  .project-world-actions {
+    grid-row: 2;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .project-world-actions > small {
+    grid-column: 1 / -1;
+  }
+  .project-world-connection {
+    grid-row: 3;
+  }
+}
 @media (max-width: 820px) {
   .console-body.is-developer {
     display: block;
   }
-  .console-shell::before {
-    display: none;
-  }
 }
 @media (prefers-reduced-motion: reduce) {
   .goal-world-light,
-  .goal-world-characters,
-  .console-shell::before {
+  .project-world-art {
     animation: none !important;
     transition: none !important;
   }
@@ -500,7 +687,7 @@ textarea:focus-visible {
 }
 .console-page-switch {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0.35rem;
   padding: 0.35rem;
   border: 3px solid #3f382d;
@@ -923,6 +1110,33 @@ textarea:focus-visible {
   .developer-map-bottom,
   .developer-anatomy-flow {
     grid-template-columns: 1fr;
+  }
+  .console-body.is-player {
+    grid-template-areas: "workbench" "rail";
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.8rem;
+    padding: 0.7rem;
+  }
+  .project-world-rail {
+    position: static;
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .project-world-scene {
+    grid-column: 1;
+    grid-row: auto;
+    min-height: 156px;
+  }
+  .project-world-metrics,
+  .project-world-actions,
+  .project-world-connection {
+    grid-column: 1;
+    grid-row: auto;
+  }
+  .project-world-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .project-world-actions > small {
+    grid-column: 1 / -1;
   }
 }
 .console-page-switch button {
@@ -1524,15 +1738,10 @@ textarea:focus-visible {
   }
   .goal-strip {
     min-height: 142px;
-    padding: 1rem 6.5rem 1rem 1rem;
+    padding: 1rem;
   }
   .goal-strip .goal-copy > p {
     font-size: 1.1rem;
-  }
-  .goal-world-characters {
-    right: 0;
-    width: 112px;
-    height: 150px;
   }
   .workbench-primary-heading {
     flex-wrap: wrap;

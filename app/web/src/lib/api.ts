@@ -1,5 +1,11 @@
 ﻿export interface ApiError {
-  error: { code: string; message: string; details?: unknown };
+  error: {
+    code: string;
+    message: string;
+    correlation_id?: string;
+    retryable?: boolean;
+    details?: unknown;
+  };
 }
 
 export interface AuthSession {
@@ -75,6 +81,10 @@ class AidisonClient {
         err = await res.json();
       } catch {
         err = { error: { code: "unknown", message: `HTTP ${res.status}` } };
+      }
+      const requestId = res.headers.get("x-request-id");
+      if (requestId && !err.error.correlation_id) {
+        err.error.correlation_id = requestId;
       }
       err.status = res.status;
       throw err;
