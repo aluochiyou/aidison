@@ -7,13 +7,14 @@ from uuid import uuid4
 
 import pytest
 from httpx import Request, Response
-from openai import APIStatusError
+from openai import APIConnectionError, APIStatusError, APITimeoutError
 from pydantic import ValidationError
 
 from aidison.application.conversation import (
     FALLBACK_BILLING_REPLY,
     FALLBACK_REPLY,
     ConversationModelResponse,
+    _conversation_failure_code,
     _fallback_reply_for_error,
     _normalize_model_response_payload,
 )
@@ -42,6 +43,46 @@ def test_billing_failure_has_actionable_safe_conversation_reply() -> None:
     assert _fallback_reply_for_error(error) == FALLBACK_BILLING_REPLY
     assert "provider details" not in _fallback_reply_for_error(error)
     assert _fallback_reply_for_error(RuntimeError("unrelated")) == FALLBACK_REPLY
+
+
+@pytest.mark.parametrize(
+    ("status", "failure_code", "message_fragment"),
+    [
+        (401, "conversation_model_authentication_failed", "401"),
+        (403, "conversation_model_permission_denied", "403"),
+        (408, "conversation_model_timeout", "超时"),
+        (413, "conversation_model_request_rejected", "输入长度"),
+        (429, "conversation_model_rate_limited", "429"),
+        (503, "conversation_model_provider_unavailable", "5xx"),
+    ],
+)
+def test_provider_status_failures_are_actionable_without_leaking_payload(
+    status: int, failure_code: str, message_fragment: str
+) -> None:
+    error = APIStatusError(
+        "private provider response must not leak",
+        response=Response(
+            status,
+            request=Request("POST", "https://provider.invalid/chat"),
+        ),
+        body={"error": "private provider response must not leak"},
+    )
+
+    reply = _fallback_reply_for_error(error)
+    assert _conversation_failure_code(error) == failure_code
+    assert message_fragment in reply
+    assert "private provider response" not in reply
+
+
+def test_network_and_timeout_failures_have_distinct_codes() -> None:
+    request = Request("POST", "https://provider.invalid/chat")
+
+    assert _conversation_failure_code(APITimeoutError(request=request)) == (
+        "conversation_model_timeout"
+    )
+    assert _conversation_failure_code(APIConnectionError(request=request)) == (
+        "conversation_model_connection_failed"
+    )
 
 
 class TestConversationSession:

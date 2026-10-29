@@ -72,6 +72,40 @@ def _make_project(
     return project, session
 
 
+@pytest.mark.asyncio
+async def test_model_failure_returns_safe_message_and_persists_failure_category() -> None:
+    store = InMemoryDomainStore()
+    project, session = _make_project(store)
+
+    class FailingModel:
+        def bind(self, **_kwargs: object) -> FailingModel:
+            return self
+
+        async def ainvoke(self, _messages: object) -> None:
+            raise RuntimeError("private provider response must not leak")
+
+    app = ConversationApplication(
+        store_factory=lambda: store,
+        model_factory=FailingModel,
+    )
+    result = await app.post_message(
+        project_id=project.id,
+        session_id=session.id,
+        content="帮我整理初始需求",
+        idempotency_key="model-failure:diagnostic",
+    )
+
+    assert result["assistant_turn"].is_fallback is True
+    assert "模型服务未能完成这次回复" in result["assistant_turn"].content
+    assert "private provider response" not in result["assistant_turn"].content
+    fallback_event = next(
+        event
+        for event in reversed(store.events)
+        if event[2] == "conversation.assistant_reply_ready"
+    )
+    assert fallback_event[3]["failure_code"] == "conversation_model_failed"
+
+
 def _question(
     text: str,
     kind: ConversationClarificationKind = ConversationClarificationKind.OTHER,
@@ -595,9 +629,7 @@ class TestConvergenceToInitialDraft:
             _response(
                 reply="还需要确认预算。",
                 coverage=_covered(budget=False),
-                clarifications=(
-                    _question("预算是多少？", ConversationClarificationKind.BUDGET),
-                ),
+                clarifications=(_question("预算是多少？", ConversationClarificationKind.BUDGET),),
                 action_proposals=(_start_research_proposal(), _draft_proposal()),
             ),
         )

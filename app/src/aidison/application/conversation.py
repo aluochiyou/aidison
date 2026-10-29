@@ -23,8 +23,8 @@ from typing import Any, Literal, cast
 from uuid import UUID
 
 from langchain_core.language_models import BaseChatModel
-from openai import APIStatusError
-from pydantic import BaseModel, ConfigDict, Field
+from openai import APIConnectionError, APIStatusError, APITimeoutError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.exc import IntegrityError
 
 from aidison.application.ports import DomainStore
@@ -47,15 +47,68 @@ from aidison.domain.models import (
 
 _logger = logging.getLogger(__name__)
 
-FALLBACK_REPLY = "抱歉，我暂时无法回复。请稍后再试。"
+FALLBACK_REPLY = (
+    "模型服务未能完成这次回复；本轮消息已保留，项目事实尚未修改。"
+    "请重试，若持续发生，请查看开发者模式中的服务状态。"
+)
 FALLBACK_BILLING_REPLY = "当前模型服务余额不足，暂时无法生成回复。请检查模型账户余额后重试。"
+FALLBACK_INTERRUPTED_REPLY = "上次回复因服务中断没有完成，请重新发送这条消息。"
+
+
+def _conversation_failure_code(error: Exception) -> str:
+    """Classify a chat failure without retaining provider response bodies."""
+    if isinstance(error, APITimeoutError):
+        return "conversation_model_timeout"
+    if isinstance(error, APIConnectionError):
+        return "conversation_model_connection_failed"
+    if isinstance(error, APIStatusError):
+        status = error.status_code
+        if status == 402:
+            return "conversation_model_quota_unavailable"
+        if status == 401:
+            return "conversation_model_authentication_failed"
+        if status == 403:
+            return "conversation_model_permission_denied"
+        if status == 429:
+            return "conversation_model_rate_limited"
+        if status in {408, 504}:
+            return "conversation_model_timeout"
+        if status in {400, 404, 413, 422}:
+            return "conversation_model_request_rejected"
+        if 500 <= status <= 599:
+            return "conversation_model_provider_unavailable"
+    if isinstance(error, ValidationError):
+        return "conversation_model_response_invalid"
+    return "conversation_model_failed"
 
 
 def _fallback_reply_for_error(error: Exception) -> str:
     # Never include the provider payload: it may contain account or request details.
-    if isinstance(error, APIStatusError) and error.status_code == 402:
-        return FALLBACK_BILLING_REPLY
-    return FALLBACK_REPLY
+    failure_code = _conversation_failure_code(error)
+    replies = {
+        "conversation_model_quota_unavailable": FALLBACK_BILLING_REPLY,
+        "conversation_model_authentication_failed": (
+            "模型服务认证失败（401）。请检查后端配置的模型 API 凭据。"
+        ),
+        "conversation_model_permission_denied": (
+            "当前模型凭据没有调用权限（403）。请检查模型授权和服务地址配置。"
+        ),
+        "conversation_model_rate_limited": (
+            "模型服务触发限流（429），本次没有生成回复；请稍后重试。"
+        ),
+        "conversation_model_timeout": ("模型服务响应超时，本次没有生成回复；请稍后重试。"),
+        "conversation_model_connection_failed": (
+            "无法连接模型服务，请检查后端网络和模型服务地址。"
+        ),
+        "conversation_model_request_rejected": (
+            "模型服务拒绝了本次请求（400/404/413/422）。请检查模型名称、接口兼容性或输入长度。"
+        ),
+        "conversation_model_provider_unavailable": ("模型上游服务暂时不可用（5xx），请稍后重试。"),
+        "conversation_model_response_invalid": (
+            "模型返回内容不符合 Aidison 的回复格式；请重试，若重复出现请检查模型结构化输出兼容性。"
+        ),
+    }
+    return replies.get(failure_code, FALLBACK_REPLY)
 
 
 _MAX_CONTEXT_CHARS = 8_000  # Hard budget per spec; future slice may derive from config
@@ -198,9 +251,7 @@ def _normalize_clarification_kind(value: object) -> object:
     normalized = "_".join(value.strip().lower().replace("-", " ").split())
     if normalized in {kind.value for kind in ConversationClarificationKind}:
         return normalized
-    return _CLARIFICATION_KIND_ALIASES.get(
-        normalized, ConversationClarificationKind.OTHER.value
-    )
+    return _CLARIFICATION_KIND_ALIASES.get(normalized, ConversationClarificationKind.OTHER.value)
 
 
 def _normalize_clarification_question(question: str) -> str:
@@ -937,6 +988,14 @@ class ConversationApplication:
                 store, project_id, session.id, max_turns=self._max_turns
             )
             await store.commit()
+        except Exception as error:
+            _logger.warning(
+                "conversation context assembly failed: exception_type=%s",
+                type(error).__name__,
+            )
+            raise
+
+        try:
             response = await _invoke_conversation_model(
                 self._model_factory(),
                 _build_conversation_system_prompt(),
@@ -944,13 +1003,19 @@ class ConversationApplication:
                 content,
             )
         except Exception as error:
-            _logger.warning("conversation model call failed", exc_info=True)
+            failure_code = _conversation_failure_code(error)
+            _logger.warning(
+                "conversation model call failed: failure_code=%s exception_type=%s",
+                failure_code,
+                type(error).__name__,
+            )
             return await self._write_fallback(
                 store,
                 project_id,
                 session.id,
                 user_turn,
                 reply=_fallback_reply_for_error(error),
+                failure_code=failure_code,
             )
 
         assistant_turn = await self._persist_model_response(
@@ -986,7 +1051,13 @@ class ConversationApplication:
                 "session_id": str(session_id),
             }
         # crash window: user wrote, model failed → write fallback now
-        return await self._write_fallback(store, project_id, session_id, user_turn)
+        return await self._write_fallback(
+            store,
+            project_id,
+            session_id,
+            user_turn,
+            reply=FALLBACK_INTERRUPTED_REPLY,
+        )
 
     async def _write_fallback(
         self,
@@ -996,6 +1067,7 @@ class ConversationApplication:
         user_turn: ConversationTurn,
         *,
         reply: str = FALLBACK_REPLY,
+        failure_code: str = "conversation_interrupted",
     ) -> dict[str, Any]:
         await store.lock_conversation_session(session_id)
         existing = await store.get_conversation_reply_to_turn(user_turn.id)
@@ -1024,6 +1096,7 @@ class ConversationApplication:
                 "session_id": str(session_id),
                 "turn_id": str(fallback.id),
                 "fallback": True,
+                "failure_code": failure_code,
             },
         )
         return {"user_turn": user_turn, "assistant_turn": fallback, "session_id": str(session_id)}
@@ -1174,8 +1247,8 @@ class ConversationApplication:
         clarifications = response.clarifications
         action_proposals = response.action_proposals
         if is_initial_requirements_phase:
-            clarifications, action_proposals = (
-                await self._gate_initial_clarification_output(store, session_id, response)
+            clarifications, action_proposals = await self._gate_initial_clarification_output(
+                store, session_id, response
             )
 
         for c_draft in clarifications:
@@ -1361,9 +1434,7 @@ class ConversationApplication:
                 raise ConversationConflictError(
                     "idempotency key is already bound to another conversation turn"
                 )
-            return await self._replay_existing(
-                store, project_id, turn.session_id, existing_answer
-            )
+            return await self._replay_existing(store, project_id, turn.session_id, existing_answer)
 
         if clarification.status is not ConversationClarificationStatus.PENDING:
             raise ConversationConflictError("clarification is not pending")
@@ -1410,6 +1481,14 @@ class ConversationApplication:
                 store, project_id, turn.session_id, max_turns=self._max_turns
             )
             await store.commit()
+        except Exception as error:
+            _logger.warning(
+                "conversation follow-up context assembly failed: exception_type=%s",
+                type(error).__name__,
+            )
+            raise
+
+        try:
             model_response = await _invoke_conversation_model(
                 self._model_factory(),
                 _build_conversation_system_prompt(),
@@ -1417,13 +1496,19 @@ class ConversationApplication:
                 response,
             )
         except Exception as error:
-            _logger.warning("conversation follow-up model call failed", exc_info=True)
+            failure_code = _conversation_failure_code(error)
+            _logger.warning(
+                "conversation follow-up model call failed: failure_code=%s exception_type=%s",
+                failure_code,
+                type(error).__name__,
+            )
             return await self._write_fallback(
                 store,
                 project_id,
                 turn.session_id,
                 resolution_turn,
                 reply=_fallback_reply_for_error(error),
+                failure_code=failure_code,
             )
 
         assistant_turn = await self._persist_model_response(
@@ -1817,8 +1902,7 @@ class ConversationApplication:
                         name=module.name,
                         responsibility=module.responsibility,
                         dependency_keys=tuple(
-                            key_by_id[dependency_id]
-                            for dependency_id in module.dependency_ids
+                            key_by_id[dependency_id] for dependency_id in module.dependency_ids
                         ),
                         acceptance=module.acceptance,
                         open_questions=module.open_questions,
@@ -1918,9 +2002,7 @@ class ConversationApplication:
                 )
             # The plan's basis always covers the whole active module graph, so a
             # scoped re-research cannot smuggle a stale basis past the CAS guard.
-            basis_hash = canonical_hash(
-                project.active_requirement_revision_id, active_modules
-            )
+            basis_hash = canonical_hash(project.active_requirement_revision_id, active_modules)
             requested_ids = payload.get("module_ids")
             if requested_ids:
                 parsed_ids = [str(UUID(str(item).strip())) for item in requested_ids]
@@ -1934,8 +2016,7 @@ class ConversationApplication:
                 objective = payload.get("objective")
                 if objective is None:
                     objective = (
-                        "Re-research evidence and candidate options for the "
-                        "requested modules."
+                        "Re-research evidence and candidate options for the requested modules."
                     )
             else:
                 modules = active_modules
@@ -1978,8 +2059,7 @@ class ConversationApplication:
                     max_concurrency=child_count,
                     max_token_budget=requested_token_budget or RESEARCH_DEFAULT_MAX_TOKEN_BUDGET,
                     max_duration_seconds=(
-                        payload.get("max_duration_seconds")
-                        or RESEARCH_DEFAULT_MAX_DURATION_SECONDS
+                        payload.get("max_duration_seconds") or RESEARCH_DEFAULT_MAX_DURATION_SECONDS
                     ),
                     research_depth=research_depth,
                     allowed_tool_classes=RESEARCH_DEFAULT_ALLOWED_TOOL_CLASSES,
@@ -2111,9 +2191,7 @@ class ConversationApplication:
             if not isinstance(payload["goal"], str) or not payload["goal"].strip():
                 raise ValueError("rewrite_requirements goal must be a non-empty string")
             if "modules" in payload:
-                if not isinstance(payload["modules"], (list, tuple)) or not payload[
-                    "modules"
-                ]:
+                if not isinstance(payload["modules"], (list, tuple)) or not payload["modules"]:
                     raise ValueError("rewrite_requirements modules must be a non-empty list")
                 for module in payload["modules"]:
                     ProposedModule.model_validate(module)
@@ -2151,9 +2229,7 @@ class ConversationApplication:
             module_ids = payload.get("module_ids")
             if module_ids is not None:
                 if not isinstance(module_ids, (list, tuple)) or not module_ids:
-                    raise ValueError(
-                        "start_research module_ids must be a non-empty list of UUIDs"
-                    )
+                    raise ValueError("start_research module_ids must be a non-empty list of UUIDs")
                 seen: set[str] = set()
                 for item in module_ids:
                     if not isinstance(item, str) or not item.strip():
@@ -2203,9 +2279,7 @@ class ConversationApplication:
                 "standard",
                 "deep",
             }:
-                raise ValueError(
-                    "start_research research_depth must be focused, standard, or deep"
-                )
+                raise ValueError("start_research research_depth must be focused, standard, or deep")
             source_strategy = payload.get("source_strategy")
             if source_strategy is not None and source_strategy not in {
                 "primary",
