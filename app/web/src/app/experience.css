@@ -240,62 +240,57 @@ textarea:focus-visible {
   isolation: isolate;
   background: linear-gradient(
       180deg,
-      rgba(231, 226, 212, 0.46) 0,
-      rgba(241, 236, 223, 0.61) 520px,
-      rgba(238, 233, 220, 0.75) 100%
+      rgba(231, 226, 212, 0.16) 0,
+      rgba(241, 236, 223, 0.3) 520px,
+      rgba(238, 233, 220, 0.48) 100%
     ),
     url("/art/mc/village-55412.webp") center top / cover fixed no-repeat;
-  background-position: center, calc(50% + var(--scene-pan)) top;
-  transition: background-position 700ms ease;
+  background-position: center, calc(50% + var(--scene-pan)) 20%;
+  transition: background-position 850ms cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 .console-shell[data-scene-cue="explore"] {
-  --scene-pan: -18px;
+  --scene-pan: -42px;
 }
 .console-shell[data-scene-cue="craft"] {
-  --scene-pan: 18px;
+  --scene-pan: 46px;
 }
 .console-shell[data-scene-cue="inspect"] {
-  --scene-pan: 7px;
+  --scene-pan: 16px;
 }
 .console-shell::before {
   content: "";
   position: fixed;
   z-index: 0;
-  top: 48%;
-  left: clamp(12px, 1.2vw, 24px);
-  width: 76px;
-  aspect-ratio: 1;
-  transform: translateY(-50%);
-  background: url("/art/mc/allay.webp") center / contain no-repeat;
-  filter: drop-shadow(3px 4px 0 rgba(42, 48, 31, 0.28));
-  opacity: 0.92;
+  right: clamp(0.75rem, 2.2vw, 2.5rem);
+  bottom: clamp(3rem, 7vh, 5.5rem);
+  width: clamp(190px, 25vw, 390px);
+  height: min(56vh, 460px);
+  background: url("/art/mc/steve-pig-cutout.png") right bottom / contain
+    no-repeat;
+  filter: drop-shadow(5px 7px 0 rgba(42, 48, 31, 0.3));
+  opacity: 0.96;
   pointer-events: none;
-  animation: allay-hover 5.5s steps(8, end) infinite;
-  transition: translate 650ms steps(8, end), filter 500ms ease;
+  animation: scene-pair-idle 5.8s steps(8, end) infinite;
+  transition: translate 680ms steps(8, end), filter 450ms ease;
 }
 .console-shell[data-scene-cue="explore"]::before {
-  translate: 10px -3px;
+  translate: -24px -3px;
 }
 .console-shell[data-scene-cue="craft"]::before {
-  translate: 22px -9px;
+  translate: -36px -15px;
   filter: drop-shadow(0 0 12px rgba(255, 226, 125, 0.7));
 }
 .console-shell[data-scene-cue="inspect"]::before {
-  translate: -5px 5px;
+  translate: -12px 4px;
   filter: drop-shadow(0 0 9px rgba(181, 219, 130, 0.72));
 }
-@keyframes allay-hover {
+@keyframes scene-pair-idle {
   0%,
   100% {
-    transform: translateY(-50%);
+    transform: translateY(0);
   }
   50% {
-    transform: translateY(calc(-50% - 7px));
-  }
-}
-@media (max-width: 1599px) {
-  .console-shell::before {
-    display: none;
+    transform: translateY(-6px);
   }
 }
 .console-header,
@@ -365,7 +360,7 @@ textarea:focus-visible {
   position: relative;
   display: flex;
   align-items: center;
-  min-height: 164px;
+  min-height: 180px;
   overflow: hidden;
   padding: 1.5rem min(29%, 19rem) 1.5rem 1.8rem;
   border: 4px solid #2a3424;
@@ -420,10 +415,10 @@ textarea:focus-visible {
 }
 .goal-world-characters {
   position: absolute;
-  right: 2%;
-  bottom: -32px;
-  width: 178px;
-  height: 238px;
+  right: 1%;
+  bottom: -46px;
+  width: 210px;
+  height: 278px;
   background: url("/art/mc/steve-pig-cutout.png") center bottom / contain
     no-repeat;
   filter: drop-shadow(5px 6px 0 rgba(30, 30, 20, 0.28));
