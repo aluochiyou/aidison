@@ -32,6 +32,7 @@ from aidison.providers.model_gateway import (
     ModelTarget,
     RetryPolicy,
 )
+from aidison.research.defaults import RESEARCH_UNBOUNDED_EVALUATION_TOKEN_CAP
 from aidison.runtime.agent_run_budget import AgentRunBudgetOperationKind, AgentRunBudgetState
 from aidison.runtime.agent_runs import AgentRun, AgentRunKind, utc_now
 from aidison.runtime.identity import RuntimeBinding, RuntimeFamily
@@ -65,13 +66,16 @@ def _run(*, project_id: UUID) -> AgentRun:
 
 
 class _GatewayAdapter:
+    def __init__(self, *, usage_tokens: int = 21) -> None:
+        self.usage_tokens = usage_tokens
+
     async def invoke(
         self, *, request: ModelInvocationRequest, target: ModelTarget
     ) -> dict[str, object]:
         return {
             "response_ref": "artifact://budgeted-provider-response",
             "provider_request_id": "budgeted-provider-request",
-            "usage_tokens": 21,
+            "usage_tokens": self.usage_tokens,
         }
 
 
@@ -338,6 +342,84 @@ async def test_progress_watchdog_blocks_third_identical_physical_attempt() -> No
             operations = await AgentRunBudgetLedger(session).list_operations_for_run(run.id)
         assert len(operations) == 2
         assert all(operation.state is AgentRunBudgetState.SETTLED for operation in operations)
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unbounded_evaluation_allows_cost_before_first_progress_admission() -> None:
+    database_url = os.getenv("TEST_DATABASE_URL")
+    if database_url is None:
+        pytest.skip("TEST_DATABASE_URL is not configured")
+    engine = create_engine(DatabaseSettings(database_url=database_url))
+    factory = create_session_factory(engine)
+    try:
+        async with factory() as session:
+            await session.execute(text("TRUNCATE TABLE agent_run_budget_accounts CASCADE"))
+            await session.execute(text("TRUNCATE TABLE agent_runs CASCADE"))
+            await session.commit()
+
+            project = await ProjectApplication(PostgresDomainStore(session)).create_project(
+                name="Unbounded evaluation watchdog fixture",
+                goal="Do not stop benchmark execution at the no-progress token threshold",
+                idempotency_key=f"agent-run-unbounded-watchdog-project-{uuid4()}",
+            )
+            run = await AgentRunControl(session).create(_run(project_id=project.id))
+            claim = await AgentRunControl(session).claim_next(
+                worker_id="unbounded-watchdog-worker", lease_seconds=60
+            )
+            assert claim is not None
+            account = await AgentRunBudgetLedger(session).create_account(
+                agent_run_id=run.id,
+                token_cap=RESEARCH_UNBOUNDED_EVALUATION_TOKEN_CAP,
+                tool_call_cap=0,
+            )
+            await session.commit()
+
+        target = ModelTarget(
+            provider="provider-a",
+            model="model-a",
+            revision="2026-09",
+            credential_pool_id="pool-a",
+            quota_group="research",
+            capabilities=("structured_output",),
+        )
+        gateway = ModelGateway(
+            adapter=_GatewayAdapter(usage_tokens=25_001),
+            quota=_Quota(),
+            circuit=_Circuit(),
+            budget=PostgresModelAttemptBudgetPort(session_factory=factory),
+            dispatch_gate=AgentRunProgressWatchdog(session_factory=factory),
+        )
+
+        def request(index: int) -> ModelInvocationRequest:
+            return ModelInvocationRequest(
+                logical_invocation_id=uuid4(),
+                run_id=run.id,
+                task_id=uuid4(),
+                basis_hash=run.basis_hash,
+                prompt_ref=f"artifact+sha256://{'b' * 64}/query-{index}",
+                required_capabilities=("structured_output",),
+                targets=(target,),
+                retry_policy=RetryPolicy(max_attempts_per_target=1, base_backoff_seconds=0),
+                fallback_policy=FallbackPolicy.NONE,
+                deadline=utc_now() + timedelta(minutes=1),
+                budget_context=ModelBudgetContext(
+                    account_id=account.id,
+                    claim=claim,
+                    logical_step=f"research.unbounded-step-{index}",
+                    idempotency_prefix=f"{run.id}:unbounded-step:{index}",
+                    request_hash=sha256(f"query-{index}".encode()).hexdigest(),
+                    reserved_tokens=30_000,
+                ),
+            )
+
+        assert (await gateway.invoke(request(1))).status == "succeeded"
+        assert (await gateway.invoke(request(2))).status == "succeeded"
+        async with factory() as session:
+            operations = await AgentRunBudgetLedger(session).list_operations_for_run(run.id)
+        assert len(operations) == 2
+        assert sum(item.consumed_tokens for item in operations) == 50_002
     finally:
         await engine.dispose()
 

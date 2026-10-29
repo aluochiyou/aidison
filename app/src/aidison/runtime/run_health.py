@@ -60,7 +60,7 @@ class ProgressWatchdogPolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     max_duplicate_invocations: int = Field(default=2, ge=1, le=16)
-    max_tokens_without_progress: int = Field(default=20_000, ge=1, le=10_000_000)
+    max_tokens_without_progress: int | None = Field(default=20_000, ge=1, le=10_000_000)
     max_consecutive_provider_failures: int = Field(default=3, ge=1, le=16)
 
 
@@ -148,7 +148,11 @@ def evaluate_run_health(
             progress,
             cost,
         )
-    if window and cost > policy.max_tokens_without_progress:
+    if (
+        window
+        and policy.max_tokens_without_progress is not None
+        and cost > policy.max_tokens_without_progress
+    ):
         return _finding(
             run_id,
             RunHealth.COST_WITHOUT_PROGRESS,

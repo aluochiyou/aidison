@@ -142,3 +142,31 @@ def test_in_flight_parallel_reservation_is_not_counted_as_consumed_cost() -> Non
 
     assert events[0].token_cost == 0
     assert finding.health is RunHealth.HEALTHY
+
+
+def test_unbounded_evaluation_disables_only_the_token_cost_watchdog() -> None:
+    run_id = uuid4()
+    now = datetime.now(UTC)
+    events = (
+        ProgressEvent(
+            run_id=run_id,
+            occurred_at=now,
+            kind=ProgressEventKind.INVOCATION_DISPATCHED,
+            invocation_hash="distinct-query-a",
+            token_cost=25_001,
+        ),
+        ProgressEvent(
+            run_id=run_id,
+            occurred_at=now + timedelta(seconds=1),
+            kind=ProgressEventKind.INVOCATION_DISPATCHED,
+            invocation_hash="distinct-query-b",
+        ),
+    )
+
+    finding = evaluate_run_health(
+        events,
+        policy=ProgressWatchdogPolicy(max_tokens_without_progress=None),
+    )
+
+    assert finding.health is RunHealth.HEALTHY
+    assert finding.observed_token_cost == 25_001

@@ -13,6 +13,7 @@ from aidison.infrastructure.agent_run_budget import AgentRunBudgetLedger
 from aidison.infrastructure.database import session_scope
 from aidison.infrastructure.orm import AgentRunResultAdmissionRow
 from aidison.providers.model_gateway import ModelInvocationRequest, ModelTarget
+from aidison.research.defaults import RESEARCH_UNBOUNDED_EVALUATION_TOKEN_CAP
 from aidison.research.langgraph_contracts import AdmissionDisposition
 from aidison.runtime.agent_run_budget import AgentRunBudgetOperation, AgentRunBudgetState
 from aidison.runtime.run_health import (
@@ -69,6 +70,7 @@ class AgentRunProgressWatchdog:
 
         del ordinal  # An attempt number is audit metadata, not invocation identity.
         async with session_scope(self._session_factory) as session:
+            account = await AgentRunBudgetLedger(session).get_account_for_run(request.run_id)
             operations = await AgentRunBudgetLedger(session).list_operations_for_run(
                 request.run_id
             )
@@ -98,7 +100,10 @@ class AgentRunProgressWatchdog:
             kind=ProgressEventKind.INVOCATION_DISPATCHED,
             invocation_hash=_request_fingerprint(request=request, target=target),
         )
-        finding = evaluate_run_health((*events, candidate), policy=self._policy)
+        policy = self._policy
+        if account.token_cap >= RESEARCH_UNBOUNDED_EVALUATION_TOKEN_CAP:
+            policy = policy.model_copy(update={"max_tokens_without_progress": None})
+        finding = evaluate_run_health((*events, candidate), policy=policy)
         if finding.health is not RunHealth.HEALTHY:
             raise RunHealthViolation(finding)
 
