@@ -8,9 +8,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import httpx
 import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage
+from openai import APIStatusError
 
 from aidison.application.single_task_research import (
     SingleTaskResearchPayload,
@@ -28,6 +30,7 @@ from aidison.research.researcher import (
     GatewayJsonModeSingleTaskResearcher,
     JsonModeResearchProviderAdapter,
     JsonModeSingleTaskResearcher,
+    _classify_provider_exception,
     _conservative_text_tokens,
     _provider_reasoning_token_reserve,
     _provider_receipt,
@@ -461,3 +464,46 @@ async def test_gateway_adapter_enforces_deadline_before_hung_model_holds_lease(
         await adapter.invoke(request=request, target=target)
 
     assert raised.value.failure_class is ProviderFailureClass.TIMEOUT_AFTER_DISPATCH
+
+
+@pytest.mark.parametrize(
+    ("status_code", "body", "expected"),
+    (
+        (401, None, ProviderFailureClass.AUTHENTICATION_FAILED),
+        (403, None, ProviderFailureClass.PERMISSION_DENIED),
+        (402, None, ProviderFailureClass.QUOTA_UNAVAILABLE),
+        (429, None, ProviderFailureClass.RATE_LIMITED),
+        (400, None, ProviderFailureClass.INVALID_REQUEST),
+        (
+            400,
+            {"error": {"code": "context_length_exceeded"}},
+            ProviderFailureClass.CONTEXT_OVERFLOW,
+        ),
+        (413, None, ProviderFailureClass.CONTEXT_OVERFLOW),
+        (503, None, ProviderFailureClass.TRANSIENT_UPSTREAM),
+    ),
+)
+def test_provider_http_status_maps_to_safe_failure_class(
+    status_code: int,
+    body: dict[str, object] | None,
+    expected: ProviderFailureClass,
+) -> None:
+    request = httpx.Request("POST", "https://provider.invalid/v1/chat/completions")
+    response = httpx.Response(status_code, request=request)
+    error = APIStatusError("private provider detail", response=response, body=body)
+
+    failure = _classify_provider_exception(error)
+
+    assert failure.failure_class is expected
+    assert "private provider detail" not in str(failure)
+
+
+def test_rate_limit_retry_after_is_bounded_and_parsed() -> None:
+    request = httpx.Request("POST", "https://provider.invalid/v1/chat/completions")
+    response = httpx.Response(429, headers={"Retry-After": "4.5"}, request=request)
+    error = APIStatusError("private provider detail", response=response, body=None)
+
+    failure = _classify_provider_exception(error)
+
+    assert failure.failure_class is ProviderFailureClass.RATE_LIMITED
+    assert failure.retry_after_seconds == 4.5

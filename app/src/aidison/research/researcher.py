@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
+from openai import APIStatusError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from aidison.infrastructure.agent_run_budget import AgentRunBudgetLedger
@@ -228,10 +229,10 @@ class JsonModeResearchProviderAdapter(ProviderAdapter):
         except ProviderFailure:
             raise
         except Exception as error:
-            # The provider boundary is crossed only after ModelGateway marks
-            # the budget operation dispatched.  Unknown provider exceptions
-            # must therefore be represented as a typed, non-silent failure.
-            raise ProviderFailure(ProviderFailureClass.TRANSIENT_UPSTREAM) from error
+            # Keep actionable HTTP failures distinct. In particular, treating
+            # a provider's 402/401/429 as transient would waste retries and make
+            # the user-facing run error impossible to diagnose.
+            raise _classify_provider_exception(error) from error
 
         usage_tokens = _provider_usage_tokens(response)
         provider_request_id = _provider_request_id(response)
@@ -646,6 +647,67 @@ def _provider_receipt(
         ),
         "finish_reason": finish_reason if isinstance(finish_reason, str) else None,
     }
+
+
+def _classify_provider_exception(error: Exception) -> ProviderFailure:
+    """Map provider failures to safe, retry-aware classes without raw messages."""
+
+    if not isinstance(error, APIStatusError):
+        return ProviderFailure(ProviderFailureClass.TRANSIENT_UPSTREAM)
+
+    status_code = error.status_code
+    if status_code == 401:
+        failure_class = ProviderFailureClass.AUTHENTICATION_FAILED
+    elif status_code == 403:
+        failure_class = ProviderFailureClass.PERMISSION_DENIED
+    elif status_code == 402:
+        failure_class = ProviderFailureClass.QUOTA_UNAVAILABLE
+    elif status_code == 429:
+        return ProviderFailure(
+            ProviderFailureClass.RATE_LIMITED,
+            retry_after_seconds=_retry_after_seconds(error),
+        )
+    elif status_code in {400, 413, 422}:
+        failure_class = (
+            ProviderFailureClass.CONTEXT_OVERFLOW
+            if _is_context_overflow(error)
+            else ProviderFailureClass.INVALID_REQUEST
+        )
+    elif 500 <= status_code <= 599:
+        failure_class = ProviderFailureClass.TRANSIENT_UPSTREAM
+    else:
+        failure_class = ProviderFailureClass.INVALID_REQUEST
+    return ProviderFailure(failure_class)
+
+
+def _retry_after_seconds(error: APIStatusError) -> float | None:
+    """Accept a bounded numeric Retry-After value; ignore malformed headers."""
+
+    raw_value = error.response.headers.get("retry-after")
+    if raw_value is None:
+        return None
+    try:
+        seconds = float(raw_value)
+    except (TypeError, ValueError):
+        return None
+    if not 0 <= seconds <= 60:
+        return None
+    return seconds
+
+
+def _is_context_overflow(error: APIStatusError) -> bool:
+    body = error.body
+    if not isinstance(body, dict):
+        return error.status_code == 413
+    detail = body.get("error")
+    if not isinstance(detail, dict):
+        return error.status_code == 413
+    code = detail.get("code")
+    return error.status_code == 413 or (
+        isinstance(code, str)
+        and code.casefold()
+        in {"context_length_exceeded", "max_context_length_exceeded"}
+    )
 
 
 def _nonnegative_integer(value: object) -> int | None:

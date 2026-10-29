@@ -144,6 +144,14 @@ def _research_failure_summary(failure_code: str, error: Exception | None) -> str
         "runtime_no_progress": "运行健康检查发现本轮没有形成有效进展",
         "research_model_usage_unverified": "模型用量无法在预留预算内安全结算，已停止继续计费调用",
         "research_model_timeout": "模型调用超过本轮允许时限，已停止等待",
+        "research_model_quota_unavailable": "模型服务账户额度或配额不可用，请检查供应商账户后重试",
+        "research_model_rate_limited": "模型服务触发限流，系统已按 Retry-After 退避；可稍后重试",
+        "research_model_authentication_failed": "模型服务认证失败，请检查配置的 API 凭据",
+        "research_model_permission_denied": "模型服务拒绝当前凭据的访问权限",
+        "research_model_context_overflow": "研究上下文超过模型可接受的长度，请缩小范围或调整上下文",
+        "research_model_invalid_request": "模型服务拒绝了本次请求参数或模型配置",
+        "research_model_circuit_open": "模型服务熔断器处于打开状态，暂缓继续派发请求",
+        "research_model_provider_unavailable": "模型上游服务暂时不可用，请稍后重试",
         "research_run_duration_exceeded": "研究运行超过了已批准的最长时长，已停止继续派发",
         "research_model_provider_failed": "模型服务未能完成本次受控研究调用",
         "research_execution_contract_invalid": "已批准的研究计划无法编译为受限任务，已停止执行",
@@ -166,6 +174,19 @@ def _model_failure_code(error: ResearchModelInvocationError) -> str:
         return "research_model_usage_unverified"
     if error.result.failure is ProviderFailureClass.TIMEOUT_AFTER_DISPATCH:
         return "research_model_timeout"
+    classified = {
+        ProviderFailureClass.QUOTA_UNAVAILABLE: "research_model_quota_unavailable",
+        ProviderFailureClass.RATE_LIMITED: "research_model_rate_limited",
+        ProviderFailureClass.AUTHENTICATION_FAILED: "research_model_authentication_failed",
+        ProviderFailureClass.PERMISSION_DENIED: "research_model_permission_denied",
+        ProviderFailureClass.CONTEXT_OVERFLOW: "research_model_context_overflow",
+        ProviderFailureClass.INVALID_REQUEST: "research_model_invalid_request",
+        ProviderFailureClass.CIRCUIT_OPEN: "research_model_circuit_open",
+        ProviderFailureClass.TRANSIENT_UPSTREAM: "research_model_provider_unavailable",
+        ProviderFailureClass.CONNECTION_PRE_DISPATCH: "research_model_provider_unavailable",
+    }
+    if error.result.failure in classified:
+        return classified[error.result.failure]
     return "research_model_provider_failed"
 
 

@@ -41,6 +41,23 @@ def test_hung_model_timeout_has_a_distinct_user_visible_failure_code() -> None:
     assert _model_failure_code(error) == "research_model_timeout"
 
 
+def test_provider_quota_failure_has_a_specific_user_visible_summary() -> None:
+    error = ResearchModelInvocationError(
+        ModelInvocationResult(
+            status="failed",
+            failure=ProviderFailureClass.QUOTA_UNAVAILABLE,
+            attempts=(),
+        )
+    )
+
+    code = _model_failure_code(error)
+    summary = _research_failure_summary(code, None)
+
+    assert code == "research_model_quota_unavailable"
+    assert "额度或配额" in summary
+    assert "research_model_provider_failed" not in summary
+
+
 def test_repeated_unresolved_gap_has_a_user_steering_failure_summary() -> None:
     summary = _research_failure_summary(
         "repeated_unresolved_gap_requires_user_steering", None
